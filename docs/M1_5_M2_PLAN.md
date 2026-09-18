@@ -100,11 +100,19 @@ New candidate scenarios (e.g., from real bug bounty disclosures or synthetic gen
 4. **Graduation to New Benchmark Version**: Graduated scenarios are batched into a new benchmark version release (e.g., Benchmark v2.0 / Milestone M2.5 candidate manifest) with an independent companion checksum. New scenarios must create a new benchmark version rather than mutate the frozen M1.5 artifact.
 
 ### 2.5 Benchmark Versioning & Cryptographic Hashing `[MANDATORY]`
-M1.5 formalizes a 4-part cryptographic stamp for every benchmark run:
-- **Dataset Hash**: `SHA256(m1_5_frozen_manifest.json)` (published externally in companion checksum artifact `data/benchmarks/m1_5_frozen_manifest.json.sha256`; not recursively embedded in the hashed manifest)
-- **Config Hash**: `SHA256(default_config.yaml + scope.yaml)`
-- **Model Digest**: SHA-256 manifest digest returned by Ollama `/api/show`
-- **Harness SemVer**: `v1.5.0` git commit SHA
+The benchmark cannot be considered reproducible if the rules that compute structural predicates can change independently of the dataset. M1.5 formalizes a 5-part cryptographic stamp for every benchmark run:
+- **1. Dataset Hash**: `SHA256(m1_5_frozen_manifest.json)` (published externally in companion checksum artifact `data/benchmarks/m1_5_frozen_manifest.json.sha256`; not recursively embedded in the hashed manifest)
+- **2. Config Hash**: `SHA256(default_config.yaml + scope.yaml)`
+- **3. Model Digest**: SHA-256 manifest/content digest returned by Ollama `/api/show` (strictly distinguishing human-readable Ollama tags like `qwen2.5-coder:3b` and `qwen2.5-coder:7b` from the immutable cryptographic model digest; tags alone never constitute benchmark identity)
+- **4. Harness SemVer / Commit**: `v1.5.0` git commit SHA
+- **5. StructuralDiffEngine Version / Content Hash**: `SHA256(src/evidence/structural_diff.py)` + explicit engine version (`v2.0.0`) + implementation commit SHA when available
+
+> **StructuralDiffEngine Benchmark Identity Invariant**:  
+> StructuralDiffEngine implementation identity is bound by:  
+> 1. Explicit engine version (`v2.0.0`)  
+> 2. Source code content hash (`SHA256(src/evidence/structural_diff.py)`)  
+> 3. Implementation commit SHA when available  
+> The frozen benchmark metadata MUST record this fifth component. A post-freeze change to StructuralDiffEngine predicate logic must create a new harness/benchmark version rather than silently changing historical comparability. Do NOT rewrite historical EXP-0006 results.
 
 > **Contract & Schema Separation Invariant (M1.5 vs M2)**:  
 > - **Milestone M1.5 freezes the existing V6 evaluation contracts** (`v6.0.0` schemas for `ExperimentProposal`, `ReasoningHypothesis`, `GroundingValidator`, and `DeterministicScorer`), establishing an immutable benchmark standard.  
@@ -214,7 +222,59 @@ The cascade architecture specifies `qwen2.5-coder:3b` and `qwen2.5-coder:7b` (Q4
 
 ## 4. Lossless Evidence Handoff Contract (`EvidencePreservationGate`)
 
-### 4.1 The Two-Channel Contract `[MANDATORY]`
+### 4.1 StructuralDiffEngine: Canonical Evidence Synthesis & Predicate Authority `[MANDATORY]`
+
+The generation of structural evidence is governed by the `StructuralDiffEngine`, a deterministic and pure computational engine:
+
+```python
+class StructuralDiffEngine:
+    """
+    Deterministic, pure structural diff computation over canonical evidence.db snapshots.
+    Sole component permitted to compute Class-1 canonical-evidence predicate booleans.
+    """
+
+    @staticmethod
+    def compute(
+        raw_facts: List[Dict[str, Any]],
+        identity_matrix: List[Dict[str, Any]],
+    ) -> LosslessStructuralPack:
+        """
+        Pure deterministic computation of LosslessStructuralPack and Class-1 predicates.
+
+        INPUT:
+            - raw_facts: List[Dict[str, Any]] (Canonical evidence facts extracted from canonical evidence.db snapshot)
+            - identity_matrix: List[Dict[str, Any]] (Registered identities, roles, permissions, tenant boundaries)
+
+        OUTPUT:
+            - LosslessStructuralPack: Immutable container with canonical structural fields and all Class-1 predicate booleans.
+
+        FAILURE MODES:
+            - Missing or Corrupt Canonical Evidence: If raw_facts is empty, unparented, or missing required IDs,
+              raises CanonicalEvidenceIntegrityError -> Pipeline enters immediate HOLD/BLOCK.
+            - Incomplete Response Evidence: Follows explicit predicate missing-data rules. Never silently
+              infers a security predicate from missing evidence.
+            - Asymmetric Response Corruption: If one role's response body parses successfully as JSON and another
+              role's response body does not parse (or is truncated/unparseable), the pairwise predicate result evaluates
+              to INDETERMINATE / FALSE for that specific pair, emits the audit event EVIDENCE_PARSE_ASYMMETRY,
+              preserves evidence provenance, treats the asymmetry as a Class-1 complexity trigger
+              (has_evidence_parse_asymmetry = True), and forces escalation (MUST ESCALATE UNCONDITIONALLY).
+              Only when ALL required response bodies for an endpoint are unparseable/missing does the engine
+              raise CanonicalEvidenceIntegrityError -> Pipeline enters HOLD/BLOCK. The engine NEVER reinterprets
+              asymmetric corruption as 'no difference'.
+
+        SIDE EFFECTS:
+            - ZERO side effects. Pure deterministic function. No disk writes, no network access,
+              no dependency on 3B, no dependency on cascade state, no mutable global state.
+
+        SECURITY INVARIANTS:
+            - Sole Predicate Producer: StructuralDiffEngine is the ONLY component permitted to compute Class-1
+              predicate booleans. Downstream Router and Gate consume those booleans and do NOT independently reinterpret them.
+            - Deterministic & Reproducible: Byte-for-byte identical output for identical raw evidence snapshots.
+        """
+        pass
+```
+
+### 4.2 The Two-Channel Contract `[MANDATORY]`
 
 The handoff between the 3B triage stage and the 7B reasoning stage is governed by a strict two-channel data structure:
 
@@ -228,7 +288,7 @@ class CascadeHandoffPacket(BaseModel):
 ```
 
 #### Channel A: Lossless Structural Evidence Pack (Canonical Evidence)
-Channel A contains deterministic, structured security observations extracted directly from `evidence.db` and the `EvidenceGraph`. The 3B model cannot alter, omit, or overwrite this channel.
+Channel A contains deterministic, structured security observations extracted directly from `evidence.db` and the `EvidenceGraph` by `StructuralDiffEngine`. The 3B model cannot alter, omit, or overwrite this channel.
 
 > **Canonical Lossless Scope Invariant**:  
 > Channel A is lossless with respect to canonical structural/security facts. Raw response bodies are not necessarily lossless and may be sampled or compressed by deterministic rules, while protected canonical fields remain guaranteed.
@@ -254,7 +314,7 @@ Channel B contains strictly advisory metadata produced by `qwen2.5-coder:3b`:
 4. `suspected_missing_evidence`: Gaps noticed by 3B during initial pass.
 5. `suggested_experiment_class`: Suggested verification pattern (`ID_SWAP`, `ROLE_SWAP`, `STEP_SKIP`).
 
-### 4.2 EvidencePreservationGate Architecture & Ungrounded 3B ID Handling `[MANDATORY]`
+### 4.3 EvidencePreservationGate Architecture & Ungrounded 3B ID Handling `[MANDATORY]`
 The `EvidencePreservationGate` enforces deterministic invariants prior to 7B context construction:
 1. **Channel Separation**: Channel B prose cannot overwrite, shadow, or redefine any field in Channel A.
 2. **Ungrounded 3B ID Handling (`TRIAGE_HALLUCINATION`)**:  
@@ -269,7 +329,7 @@ The `EvidencePreservationGate` enforces deterministic invariants prior to 7B con
    - **Authoritative Validator**: The downstream [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) remains authoritative defense-in-depth on final 7B hypotheses.
 3. **No-Drop Guarantee**: The token budget controller is physically prohibited from dropping Channel A structural elements in favor of Channel B metadata or advisory RAG.
 
-### 4.3 Formal Cascade Schema Engineering Contracts `[MANDATORY]`
+### 4.4 Formal Cascade Schema Engineering Contracts `[MANDATORY]`
 Milestone M2 introduces dedicated, independently versioned cascade schemas under namespace `v2.0.0`:
 
 #### Schema 1: `LosslessStructuralPack` (`v2.0.0`)
@@ -288,6 +348,8 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `has_privilege_level_delta: bool` (Caller role lower than owner role).
   - `has_unauthenticated_success: bool` (Non-401/403 status code under unauthenticated caller).
   - `has_cross_role_response_shape_delta: bool` (Structural JSON key discrepancy across roles).
+  - `has_cross_identity_object_access_success: bool` (Class-1 predicate: observable same-role cross-object access anomaly).
+  - `has_evidence_parse_asymmetry: bool` (Class-1 complexity trigger: asymmetric response body parse failure across roles).
   - `has_unseen_endpoint_parameter: bool` (Presence of parameter unseen in historical baseline).
   - `has_numeric_path_identifier: bool` (Presence of integer/UUID path parameter).
   - `has_observed_contradictions: bool` (Presence of contradictory observation pairs).
@@ -342,7 +404,7 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - **M2 Cascade Schemas**: All cascade handoff structures exist under the `v2.x.x` schema namespace.
   - **Incompatible Changes**: Any non-additive modification requires incrementing the major schema version (`v3.0.0`). Downstream context builders MUST reject unsupported major versions with `UNSUPPORTED_SCHEMA_VERSION` rather than silently reinterpreting legacy packets.
 
-### 4.4 Function Contract: `EvidencePreservationGate.validate` `[MANDATORY]`
+### 4.5 Function Contract: `EvidencePreservationGate.validate` `[MANDATORY]`
 ```python
 class EvidencePreservationGate:
     """Enforces evidence preservation, channel separation, and ungrounded ID quarantine."""
@@ -386,6 +448,25 @@ class EvidencePreservationGate:
         """
         pass
 ```
+
+### 4.6 Category Enforcement Semantics: Taxonomy Grounding & Predicate Boundaries `[MANDATORY]`
+
+To eliminate classification ambiguity, prevent ungrounded taxonomy drift, and ensure strict isolation between observation and inference, Milestone M2 formalizes rigid Category Enforcement Semantics:
+
+1. **Taxonomy Grounding & Registration Authority**:
+   - Every candidate vulnerability category emitted by the 3B triage model (`suspected_category`) or the 7B reasoning engine (`taxonomy_category`) must strictly conform to an authorized, registered category identifier in `taxonomy/categories.yaml` (e.g., `API-BOLA-001`, `API-BFLA-002`, `STATE-MACHINE-001`, `INFO-EXPOSURE-001`).
+   - Unregistered, hallucinated, or malformed category identifiers emitted by 3B are formally classified as **`TRIAGE_CATEGORY_INVALID`**, triggering an immediate Class-2 fail-safe escalation to 7B (`escalate = True`).
+
+2. **Strict Separation: Observable Predicates vs. Taxonomy Category Labels**:
+   - The boolean predicates computed by `StructuralDiffEngine` (such as `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS`, `PRIVILEGE_LEVEL_DELTA_DETECTED`, and `ROLE_BASED_STATUS_CODE_DELTA`) represent **observable authorization and structural conditions**, NOT vulnerability category verdicts or confirmations.
+   - For example, `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` is NOT labeled "BOLA confirmed". It represents an observable cross-identity object-access condition that triggers Class-1 unconditional escalation so that 7B can formulate a grounded hypothesis, deduce the security property, and propose an experiment.
+   - Predicates are computed deterministically from canonical evidence; vulnerability taxonomy classification belongs strictly to the hypothesis reasoning stage (7B) and validation stage (`GroundingValidator`).
+
+3. **Scorer-Only Ground Truth Category Isolation**:
+   - Ground-truth taxonomy categories ($C_{\text{gold}}$) remain strictly sequestered in the offline scorer partition. Ground-truth taxonomy labels are never visible, accessible, or leached into 3B triage prompts, 7B reasoning prompts, context builders, or routing predicate logic.
+
+4. **Exact Match Category Scoring Enforcement**:
+   - In deterministic benchmark scoring (Section 11), emitted candidate hypotheses are scored as True Positive only if their taxonomy category $C$ matches $C_{\text{gold}}$ exactly. Semantic approximations or category aliasing are rejected.
 
 ---
 
@@ -451,6 +532,32 @@ When `CONTEXT_BUDGET_OVERFLOW` occurs:
 3. **No Silent Exclusion**: It must **NOT** be silently pruned, discarded, or dropped from evaluation cohorts.
 4. **Primary Recall Representation**: In vulnerable-scenario Recall and Useful Hypothesis Yield calculations, an overflow on a vulnerable scenario is accounted for in the denominator ($N_{\text{vuln}}$) as an **unyielded target** (contributing 0 to the numerator, exactly like an FN).
 5. **Primary Precision Representation**: Because no false security claim or hypothesis tuple is emitted, an overflow does not increment the False Positive (FP) count; it produces zero emitted hypotheses and does not enter the precision numerator or denominator.
+
+### 5.3 Deterministic Evidence Sizing Sweep: `REALISTIC_LARGE_CANONICAL_EVIDENCE` `[MANDATORY]`
+
+To determine the practical capacity envelope of canonical structural evidence under realistic enterprise SaaS topologies, the test harness defines a deterministic sizing sweep (**`REALISTIC_LARGE_CANONICAL_EVIDENCE`**) in Test Suite D:
+
+- **Empirical Sizing Sweep Dimensions**:
+  - **Role & Tenant Counts**: Combinations evaluated across 10, 15, 20, and 25 distinct identity roles/tenants.
+  - **Parameter Counts**: Endpoint models evaluated across representative sweeps of 10, 20, 30, and 40 registered parameters (lineage tracked across path, query, header, and body).
+  - **Budget Envelopes**: Every representative combination evaluated under both:
+    - **Tier 1 (Constrained)**: 4096-token context ceiling (P1 protected structural floor = 1536 tokens).
+    - **Tier 2 (High-Capacity)**: 8192-token context ceiling (P1 protected structural floor = 3072 tokens).
+
+- **Measured Engineering Metrics**:
+  1. Total token usage across all context partitions.
+  2. P1 protected structural evidence token consumption.
+  3. Context overflow frequency (`CONTEXT_BUDGET_OVERFLOW` events).
+  4. Compression ratios achieved by `SemanticCompressor` on untrusted response bodies.
+  5. Percentage of preserved protected fields (must remain strictly 100%).
+  6. Time-to-Decision (TTD) and latency scaling.
+  7. Peak system Resident Set Size (RSS) and GPU VRAM footprint during context serialization.
+
+- **Non-Scoring Engineering Purpose**:
+  This sweep is an **engineering capacity and sizing evaluation**, NOT vulnerability scoring. If legitimate canonical structural evidence (excluding compressible raw bodies) routinely exceeds the P1 allocation:
+  - The condition must be formally reported as a **platform sizing limitation**.
+  - It MUST be resolved before `ReasoningContextBuilder` completion (e.g. by tuning serialization schema density or adjusting partition ratios).
+  - The pipeline and evaluation harness MUST NOT silently accept repeated `HOLD/BLOCK` or `CONTEXT_BUDGET_OVERFLOW` as normal operational behavior.
 
 ---
 
@@ -519,23 +626,39 @@ Where $N_{\text{3B\_failures}}$ is the count of 3B executions resulting in parse
 Hardware throughput figures and layer allocations documented in Section 5.1 are machine-specific baseline estimates. To eliminate platform uncertainty, Milestone M2 defines **`MODEL_ENVIRONMENT_VALIDATION`** as an empirical, pre-implementation environment validation gate that must pass before cascade benchmark execution.
 
 #### Mandatory Pre-Execution Empirical Verification Checklist:
-1. **Cryptographic Model Digest Pinning**:
-   - Verify that local models match their exact immutable content digests returned by Ollama `/api/show`:
-     - `qwen2.5-coder:3b`: Digest pinned in frozen manifest metadata.
-     - `qwen2.5-coder:7b`: Digest pinned in frozen manifest metadata.
-   - *Rule*: Model tag names (e.g. `:3b`, `:7b`) are maintained for human readability, but benchmark identity and test execution are bound strictly to the exact recorded cryptographic digest.
+1. **Cryptographic Model Digest Pinning (Benchmark Identity vs Human Tags)**:
+   - Human-readable Ollama model tags (`qwen2.5-coder:3b`, `qwen2.5-coder:7b`) exist strictly for operator convenience; **tags alone never constitute benchmark identity**.
+   - Immutable benchmark identity and execution validity are bound strictly to the exact recorded cryptographic model content/manifest digest returned by Ollama `/api/show`:
+     - `qwen2.5-coder:3b`: Immutable SHA-256 digest pinned in frozen benchmark manifest metadata.
+     - `qwen2.5-coder:7b`: Immutable SHA-256 digest pinned in frozen benchmark manifest metadata.
+   - Any modification to model weights, quantization blobs, or manifests alters the cryptographic digest and invalidates benchmark comparability.
 2. **Quantization Verification**: Confirm exact quantization (`Q4_K_M`) for both model artifacts.
 3. **Actual Layer Offload Placement**:
    - Inspect Ollama runtime logs on the reference system (Ryzen 5 5600H, RTX 3050 Laptop 4GB).
    - Confirm ~22–24 layers offloaded to GPU VRAM and ~4–6 layers to system RAM for 7B; 100% GPU offload for 3B.
-4. **Sequential Model Transition Stability**:
+4. **Sequential Model Transition Stability & Measurable Memory-Drift Criteria**:
    - Execute 10 consecutive model unload (`keep_alive: 0`) and reload cycles between 3B and 7B.
-   - Confirm zero VRAM paging collapse, zero zombie process memory leaks, and zero driver resets.
+   - For each of the 10 unload/reload cycles:
+     1. Wait for confirmed Ollama and process quiescence after unload (polling process CPU/thread activity until idle).
+     2. Record GPU VRAM allocation via `nvidia-smi` / NVML query.
+     3. Record system Resident Set Size (RSS) via OS process counters.
+     4. Record process and model residency state.
+   - Compute:
+     - Baseline memory: $M_0$ (recorded before first cycle).
+     - Per-cycle post-quiescence memory values: $M_1, M_2, \dots, M_{10}$.
+     - Linear growth slope: Fitted via ordinary least squares across cycles 1 through 10 ($\text{Slope}_{\text{growth}} = \frac{\Delta \text{Memory}}{\Delta \text{Cycle}}$ in MB/cycle).
+     - Absolute endpoint drift: $\text{Drift}_{\text{endpoint}} = |M_{10} - M_1|$.
+   - **Measurable Drift Criteria & Failure Thresholds**:
+     - Absolute endpoint drift must not exceed: $\max(5\%, 150\text{ MB})$.
+     - Fitted linear memory-growth slope must remain below: $\le 5.0\text{ MB/cycle}$.
+     - *Engineering Justification of Slope Threshold*: Over 10 unload/reload cycles, non-leaking memory allocators (e.g., PyTorch/llama.cpp/Ollama runtime) may exhibit small initial allocator fragmentation or caching within a few megabytes on the first 1–2 cycles before plateauing. An upper bound slope of $5.0\text{ MB/cycle}$ detects persistent, unbounded leaks (which over an 84-scenario sweep would accumulate $> 400\text{ MB}$ and jeopardize the 24GB/4GB physical envelope) while accommodating minor transient initial allocator fragmentation.
+     - *Strict Invariant*: Do NOT call the environment "leak-free" based only on two endpoint measurements. Both the endpoint drift criterion AND the linear slope criterion must pass simultaneously.
+     - Any violation triggers **`MEMORY_DRIFT_DETECTED`** and **STRICTLY BLOCKS** `MODEL_ENVIRONMENT_VALIDATION` sign-off pending investigation.
 5. **Context Saturation & Memory Ceilings**:
    - Execute warm-up prompts at 4096 tokens (Tier 1) and 8192 tokens (Tier 2).
    - Confirm peak total GPU VRAM allocation remains within the 4.0 GB physical envelope without CUDA Out-of-Memory (OOM) aborts.
 
-*Gate Rule*: If `MODEL_ENVIRONMENT_VALIDATION` encounters an OOM error, driver crash, or digest mismatch, Milestone M2 benchmark execution is **STRICTLY BLOCKED** until the environment is reconciled.
+*Gate Rule*: If `MODEL_ENVIRONMENT_VALIDATION` encounters an OOM error, driver crash, digest mismatch, or `MEMORY_DRIFT_DETECTED`, Milestone M2 benchmark execution is **STRICTLY BLOCKED** until the environment is reconciled.
 
 ---
 
@@ -558,9 +681,10 @@ Deterministic escalation is formally split into two distinct, independent predic
 │                                                                             │
 │   CLASS 1: CANONICAL-EVIDENCE-ONLY PREDICATES (Channel A Only)              │
 │   - Pure functions of canonical structural evidence from evidence.db        │
+│   - Computed SOLELY by StructuralDiffEngine; consumed immutable by Router   │
 │   - NEVER depends on 3B confidence, prose, category, presence, or absence   │
-│   - Signals: PRIVILEGE_LEVEL_DELTA, ROLE_STATUS_DELTA, UNAUTH_SUCCESS, etc.│
-│   - IF ANY CLASS 1 IS TRUE ==> ESCALATE UNCONDITIONALLY                     │
+│   - Signals: PRIVILEGE_DELTA, STATUS_DELTA, CROSS_IDENTITY_OBJECT_ACCESS, etc│
+│   - IF ANY CLASS 1 IS TRUE ==> MUST ESCALATE UNCONDITIONALLY                │
 │                                                                             │
 │   CLASS 2: 3B-DEPENDENT FAIL-SAFE TRIGGERS (Channel B Only)                 │
 │   - Evaluates 3B output integrity and semantic triage uncertainty           │
@@ -568,6 +692,9 @@ Deterministic escalation is formally split into two distinct, independent predic
 │   - DIRECTIONAL INVARIANT: Can ONLY trigger ESCALATE; NEVER de-escalate     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+#### Enforced by Construction: The Immutable Class-1 Semantic Model
+To guarantee that no override path can exist in implementation, Class-1 predicates are modeled as a single immutable collection:
 
 ```python
 class DeterministicRouter:
@@ -578,56 +705,81 @@ class DeterministicRouter:
         diff: LosslessStructuralPack,
         triage: Optional[TriageMetadataPacket] = None,
     ) -> DeterministicRoutingDecision:
-        # Class 1: Canonical-Evidence-Only Signals (PURE FUNCTION OF CHANNEL A)
-        class_1_signals: List[str] = []
+        # 1. Class-1 High-Risk Structural Predicates (Channel A Only)
+        class1_high_risk: List[str] = []
         if diff.has_privilege_level_delta:
-            class_1_signals.append("PRIVILEGE_LEVEL_DELTA_DETECTED")
+            class1_high_risk.append("PRIVILEGE_LEVEL_DELTA_DETECTED")
         if diff.status_code_changed_under_different_role:
-            class_1_signals.append("ROLE_BASED_STATUS_CODE_DELTA")
+            class1_high_risk.append("ROLE_BASED_STATUS_CODE_DELTA")
         if diff.has_unauthenticated_success:
-            class_1_signals.append("UNAUTHENTICATED_ACCESS_SUCCESS")
+            class1_high_risk.append("UNAUTHENTICATED_ACCESS_SUCCESS")
         if diff.has_cross_role_response_shape_delta:
-            class_1_signals.append("CROSS_ROLE_RESPONSE_SHAPE_DELTA")
+            class1_high_risk.append("CROSS_ROLE_RESPONSE_SHAPE_DELTA")
 
-        # Class 1 Structural Complexity Triggers (Channel A Only)
-        class_1_complexity: List[str] = []
+        # 2. Class-1 Cross-Identity Object Access Predicate (Channel A Only)
+        class1_cross_identity: List[str] = []
+        if diff.has_cross_identity_object_access_success:
+            class1_cross_identity.append("CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS")
+
+        # 3. Class-1 Structural Complexity Triggers (Channel A Only)
+        class1_complexity: List[str] = []
         if diff.has_unseen_endpoint_parameter or diff.has_numeric_path_identifier:
-            class_1_complexity.append("UNSEEN_OR_VOLATILE_PARAMETER")
+            class1_complexity.append("UNSEEN_OR_VOLATILE_PARAMETER")
         if diff.has_observed_contradictions:
-            class_1_complexity.append("CONTRADICTORY_EVIDENCE_EXISTS")
+            class1_complexity.append("CONTRADICTORY_EVIDENCE_EXISTS")
         if diff.application_mutability in ("STATE_CHANGING", "DESTRUCTIVE"):
-            class_1_complexity.append("STATE_CHANGING_ASSET_REQUIRES_DEEP_AUDIT")
+            class1_complexity.append("STATE_CHANGING_ASSET_REQUIRES_DEEP_AUDIT")
+        if diff.has_evidence_parse_asymmetry:
+            class1_complexity.append("EVIDENCE_PARSE_ASYMMETRY")
 
-        # Class 2: 3B-Dependent Fail-Safe Triggers (CHANNEL B EVALUATION)
+        # REQUIRED SEMANTIC MODEL: Enforced by Construction
+        # Class 1 predicates are unified into an immutable collection
+        class1_signals: Tuple[str, ...] = tuple(class1_high_risk + class1_cross_identity + class1_complexity)
+
+        # Mandatory Routing Rule:
+        # if class1_signals: MUST ESCALATE UNCONDITIONALLY
+        if class1_signals:
+            escalate = True
+        else:
+            escalate = False
+
+        # 4. Class 2: 3B-Dependent Fail-Safe Triggers (Channel B Evaluation)
+        # Class-2 processing may append additional reasons/triggers.
+        # Class-2 processing MUST NOT:
+        #   - filter Class-1 signals
+        #   - overwrite Class-1 signals
+        #   - recalculate them
+        #   - downgrade escalation
+        #   - apply confidence weights
+        #   - apply thresholds to Class-1 signals
         class_2_triggers: List[str] = []
         if triage is None or triage.is_malformed:
             class_2_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
         elif triage.decision == "INSUFFICIENT_EVIDENCE" and triage.is_sensitive_category:
             class_2_triggers.append("TRIAGE_AMBIGUITY_ON_SENSITIVE_CATEGORY")
 
-        # Monotonic Routing Resolution:
-        # Class 1 High-Risk Signal -> MUST ESCALATE (Strict Invariance)
-        # Class 1 Complexity Trigger -> ESCALATE BY DEFAULT
-        # Class 2 Fail-Safe Trigger -> MAY ADD ESCALATION (Strict Monotonicity)
-        # Class 2 Output -> NEVER SUPPRESSES ESCALATION
-        has_high_risk = len(class_1_signals) > 0
-        has_complexity = len(class_1_complexity) > 0
-        has_class_2 = len(class_2_triggers) > 0
+        if class_2_triggers:
+            escalate = True
 
-        final_escalate = has_high_risk or has_complexity or has_class_2
-        all_reasons = class_1_signals + class_1_complexity + class_2_triggers
+        has_high_risk = len(class1_high_risk) > 0 or len(class1_cross_identity) > 0
+        has_class_2 = len(class_2_triggers) > 0
+        all_reasons = list(class1_signals) + class_2_triggers
 
         return DeterministicRoutingDecision(
             schema_version="2.0.0",
-            escalate=final_escalate,
+            escalate=escalate,
             has_high_risk_signal=has_high_risk,
-            high_risk_signals=class_1_signals,
-            deep_analysis_triggers=class_1_complexity + class_2_triggers,
+            high_risk_signals=list(class1_high_risk + class1_cross_identity),
+            deep_analysis_triggers=list(class1_complexity) + class_2_triggers,
             reasons=all_reasons,
             fail_safe_triggered=has_class_2,
             evaluated_timestamp=datetime.now(timezone.utc).isoformat(),
         )
 ```
+
+> **Class-1 Non-Negotiable Invariance Rule**:  
+> **There is no implementation path in which a Class-1 predicate can be converted from True to False by 3B output, configuration, environment variable, operator setting, or runtime heuristic.**  
+> The distinction between High-Risk, Complexity, and Cross-Identity Object Access is strictly a taxonomy/reporting distinction. It is **NOT** an escalation-strength distinction. Every Class-1 predicate **MUST ESCALATE UNCONDITIONALLY**.
 
 ### 7.3 Fail-Safe Evidence-Integrity & Routing Defaults `[MANDATORY]`
 - **Fail-Safe Triage Escalation (Channel A Intact)**: If the 3B model produces malformed JSON, parser failure, ungrounded IDs, or missing output, the cascade **automatically escalates to 7B** provided that Channel A canonical evidence is intact and validated.
@@ -665,7 +817,15 @@ In Test Suite A (`test_cascade_routing.py`), every canonical fixture presenting 
 *Mandatory Test Assertion*: **100% of all 8 paired executions MUST evaluate to `escalate == True`**. Any execution yielding `CASCADE_NOT_ESCALATED` constitutes an immediate critical regression and causes test suite failure.
 
 ### 7.5 Operational Definitions for Class-1 Routing Predicates `[MANDATORY]`
-To eliminate ambiguity, each Class-1 high-risk predicate is defined operationally:
+To eliminate ambiguity, each Class-1 predicate computed by `StructuralDiffEngine` is defined operationally.
+
+#### Multi-Role Existential Quantification Over All Observed Role Pairs
+For every predicate comparing caller roles, response statuses, or response schemas, the comparison is defined existentially over all observed distinct role pairs:
+$$\exists (R_i, R_j) \text{ with } R_i \neq R_j \text{ such that } \text{predicate}(R_i, R_j) == \text{True}$$
+The system does NOT assume only two roles exist. Explicit semantics apply across arbitrary role counts:
+- **2 Roles**: Exactly 1 pair $(R_1, R_2)$ evaluated.
+- **3 Roles**: $\binom{3}{2} = 3$ unordered pairs evaluated: $\{(R_1, R_2), (R_1, R_3), (R_2, R_3)\}$. Predicate evaluates True if any single pair exhibits the delta.
+- **15–20 Roles**: All $\binom{N}{2}$ distinct pairs evaluated (e.g., $\binom{15}{2} = 105$ pairs; $\binom{20}{2} = 190$ pairs). For status-code deltas and response-shape deltas, every observed pair is exhaustively tested. The existential quantifier triggers if any observed role pair violates equality.
 
 #### 1. `PRIVILEGE_LEVEL_DELTA_DETECTED`
 - **Required Inputs**: Observed caller identity role $R_{\text{caller}}$, resource owner identity role $R_{\text{owner}}$, route authorization level from OpenAPI schema.
@@ -677,10 +837,10 @@ To eliminate ambiguity, each Class-1 high-risk predicate is defined operationall
 - **Missing-Data Behavior**: If caller identity metadata is missing, caller is classified as `ANONYMOUS` (Level 0); if request succeeded, triggers positive condition.
 
 #### 2. `ROLE_BASED_STATUS_CODE_DELTA`
-- **Required Inputs**: Canonical `endpoint_id`, set of observations under distinct caller roles $\{R_1, R_2\}$, observed response HTTP status codes $\{S(R_1), S(R_2)\}$.
-- **Exact Comparison**: Evaluates status code equality across distinct roles on identical normalized route:
-  $$S(R_1) \neq S(R_2) \quad \text{for } R_1 \neq R_2$$
-- **Positive Condition**: Discrepant HTTP response status codes observed across different identity roles for the same endpoint template and HTTP method (e.g., $200\text{ OK}$ under Role A vs $403\text{ Forbidden}$ under Role B).
+- **Required Inputs**: Canonical `endpoint_id`, set of observations under distinct caller roles $\{R_1, \dots, R_N\}$, observed response HTTP status codes $\{S(R_k)\}$.
+- **Exact Comparison**: Evaluates status code equality existentially across all observed distinct role pairs on identical normalized route:
+  $$\exists (R_i, R_j) \text{ with } R_i \neq R_j \text{ such that } S(R_i) \neq S(R_j)$$
+- **Positive Condition**: Discrepant HTTP response status codes observed across any two distinct identity roles for the same endpoint template and HTTP method (e.g., $200\text{ OK}$ under Role A vs $403\text{ Forbidden}$ under Role B). All $\binom{N}{2}$ pairs are tested.
 - **Negative Condition**: Identical HTTP status codes returned across all observed roles.
 - **Missing-Data Behavior**: If observations exist for only one role, delta is indeterminate (evaluates False; does not trigger Class 1). If asset is mutating, triggers Class 1 complexity check `STATE_CHANGING_ASSET_REQUIRES_DEEP_AUDIT`.
 
@@ -693,12 +853,67 @@ To eliminate ambiguity, each Class-1 high-risk predicate is defined operationall
 - **Missing-Data Behavior**: If route security requirements are absent from documentation, assume protected by default; if unauthenticated $200\text{ OK}$ observed, triggers positive condition.
 
 #### 4. `CROSS_ROLE_RESPONSE_SHAPE_DELTA`
-- **Required Inputs**: Canonical `endpoint_id`, two observations under distinct roles $\{R_1, R_2\}$ both returning HTTP $200$, normalized response JSON schemas $\Sigma(R_1)$ and $\Sigma(R_2)$ (extracted property key sets).
-- **Exact Comparison**: Symmetric difference of extracted response body keys:
-  $$\Sigma(R_1) \mathbin{\Delta} \Sigma(R_2) = \left(\Sigma(R_1) \setminus \Sigma(R_2)\right) \cup \left(\Sigma(R_2) \setminus \Sigma(R_1)\right) \neq \emptyset$$
-- **Positive Condition**: The set of returned JSON top-level or nested keys differs between caller roles for the same query/path parameters, specifically where sensitive administrative keys appear under lower-privileged roles.
+- **Required Inputs**: Canonical `endpoint_id`, observations under distinct roles $\{R_1, \dots, R_N\}$ returning HTTP $200$, normalized response JSON schemas $\{\Sigma(R_k)\}$ (extracted property key sets).
+- **Exact Comparison**: Symmetric difference of extracted response body keys evaluated existentially across all observed role pairs:
+  $$\exists (R_i, R_j) \text{ with } R_i \neq R_j \text{ such that } \Sigma(R_i) \mathbin{\Delta} \Sigma(R_j) = \left(\Sigma(R_i) \setminus \Sigma(R_j)\right) \cup \left(\Sigma(R_j) \setminus \Sigma(R_i)\right) \neq \emptyset$$
+- **Positive Condition**: The set of returned JSON top-level or nested keys differs between caller roles for the same query/path parameters, specifically where sensitive administrative keys appear under lower-privileged roles. All observed role pairs are tested.
 - **Negative Condition**: Identical structural key schema emitted across distinct caller roles.
 - **Missing-Data Behavior**: If response body is non-JSON or unparseable, relies on status code delta; if both bodies are corrupt, triggers pipeline `HOLD/BLOCK` (canonical evidence failure).
+
+#### Asymmetric Response Corruption Handling
+If one role's response body parses successfully as JSON and another role's response body does not parse (or is truncated/unparseable):
+- The pairwise predicate result evaluates to `INDETERMINATE / FALSE` for that specific role pair.
+- The engine emits the audit event `EVIDENCE_PARSE_ASYMMETRY`.
+- Canonical evidence provenance is strictly preserved.
+- The asymmetry is treated as a Class-1 complexity trigger (`has_evidence_parse_asymmetry = True`), which forces escalation (`MUST ESCALATE UNCONDITIONALLY`).
+- Only when ALL required response bodies for an endpoint are unavailable or unparseable does the engine raise `CanonicalEvidenceIntegrityError` -> `HOLD/BLOCK`.
+- The engine physically NEVER reinterprets asymmetric corruption as "no difference".
+
+#### 5. `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS`
+- **Purpose**: Provide a deterministic canonical-evidence backstop for same-role cross-object access anomalies. This is NOT itself a vulnerability verdict; it represents an observable authorization condition that requires deeper security reasoning and verification.
+- **Required Inputs**:
+  - Canonical `endpoint_id`
+  - Caller `identity_id` ($I_{\text{caller}}$)
+  - Resource owner `identity_id` ($I_{\text{owner}}$)
+  - Caller role ($R_{\text{caller}}$)
+  - Resource owner role ($R_{\text{owner}}$)
+  - Object-bearing path/query/body parameter lineage
+  - Observed object identifier/value ($O$)
+  - Resource ownership relationship
+  - HTTP response status ($S$)
+  - Documented or observed object/resource relationship
+- **Exact Comparison & Positive Condition**:
+  There exists an observed request where:
+  1. caller identity != resource owner identity ($I_{\text{caller}} \neq I_{\text{owner}}$).
+  2. caller and owner may have equal privilege/role level ($\text{Level}(R_{\text{caller}}) == \text{Level}(R_{\text{owner}})$).
+  3. the request contains a canonical object/resource identifier associated with the owner's resource ($O \in \text{Resources}(I_{\text{owner}})$).
+  4. the caller receives an accepted success response ($S \in \{200, 201, 204, 206\}$).
+  5. the observation is tied to the same canonical endpoint/object relationship.
+- **Model & Ground Truth Independence Invariant**:
+  This predicate **MUST NOT** depend on:
+  - 3B model output
+  - 3B confidence score
+  - Taxonomy classification
+  - Hidden benchmark ground truth labels
+  When positive, it triggers Class-1 escalation unconditionally (**MUST ESCALATE UNCONDITIONALLY**).
+- **Labeling Constraint**:
+  Do **NOT** label the boolean itself "BOLA confirmed". It represents an observable cross-identity object-access condition. The final security hypothesis still requires the existing reasoning, experiment formulation, and grounding flow.
+- **Negative Conditions**:
+  - Caller is resource owner ($I_{\text{caller}} == I_{\text{owner}}$).
+  - Object ownership is unknown or unresolved in canonical evidence.
+  - Object identifier is not canonically registered in parameter lineage.
+  - Response is authorization-denied ($S \in \{401, 403, 404\}$ where 404 represents object-level access denial).
+  - Ownership relationship cannot be established from canonical evidence.
+- **Missing-Data Behavior**:
+  - Unknown ownership must **NOT** become a positive predicate.
+  - If evidence is incomplete in a way that creates structural ambiguity, apply the documented Class-1 complexity / HOLD-BLOCK semantics rather than guessing.
+- **Dedicated Synthetic Fixtures**:
+  1. `same-role same-owner success` (Negative condition; normal authorized access).
+  2. `same-role different-owner success` (Positive condition; MUST ESCALATE UNCONDITIONALLY).
+  3. `different-role different-owner success` (Positive condition; MUST ESCALATE UNCONDITIONALLY).
+  4. `denied cross-object access` (Negative condition; 401/403/404 denial).
+  5. `unknown ownership` (Negative / Indeterminate; does not trigger positive predicate).
+  6. `unregistered object identifier` (Negative / Indeterminate; parameter unparented).
 
 ### 7.6 Function Contract: `DeterministicRouter.evaluate_escalation` `[MANDATORY]`
 ```python
@@ -711,10 +926,11 @@ class DeterministicRouter:
         triage: Optional[TriageMetadataPacket] = None,
     ) -> DeterministicRoutingDecision:
         """
-        Pure deterministic routing evaluation.
+        Pure deterministic routing evaluation. Downstream consumer of LosslessStructuralPack.
 
         INPUT:
-            - diff: LosslessStructuralPack (Required, canonical structural evidence pack)
+            - diff: LosslessStructuralPack (Required, canonical structural evidence pack computed
+              exclusively by StructuralDiffEngine)
             - triage: Optional[TriageMetadataPacket] (Advisory 3B output; may be None or malformed)
 
         OUTPUT:
@@ -731,7 +947,9 @@ class DeterministicRouter:
             - ZERO side effects. Pure function. No disk, database, network, or stateful mutations.
 
         SECURITY INVARIANTS:
-            - Strict Monotonic Escalation: If any Class-1 signal triggers, escalate is True.
+            - Strict Monotonic Escalation: If any Class-1 signal triggers, escalate is True (MUST ESCALATE UNCONDITIONALLY).
+            - Enforced by Construction: Router consumes pre-computed booleans from StructuralDiffEngine and
+              cannot filter, recalculate, threshold, or weight Class-1 signals.
             - 3B confidence, sentiment, or prose cannot suppress escalation.
             - Independent of benchmark truth labels (ground_truth_vulnerable).
         """
@@ -839,6 +1057,66 @@ Transformer attention exhibits "lost-in-the-middle" degradation under large cont
 │    - External VAPT RAG knowledge (M3 Roadmap Extension)                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 10.2 Shared ReasoningContextBuilder Contract `[MANDATORY]`
+
+To eliminate prompt-construction variance and ensure that evaluation tracks differ solely by their declared operational parameters, **Tracks A, B, and C MUST share a single parametrized `ReasoningContextBuilder`**:
+
+```python
+class ReasoningContextBuilder:
+    """
+    Unified context construction engine shared across Tracks A, B, and C.
+    Bespoke, track-specific prompt-construction implementations are strictly prohibited.
+    """
+
+    @staticmethod
+    def build_context(
+        handoff_packet: CascadeHandoffPacket,
+        model_identifier: str,
+        budget_tier: int = 4096,
+        cascade_mode: str = "TRACK_B_CASCADE",
+        optional_advisory_content_mode: bool = True,
+    ) -> AssembledReasoningContext:
+        """
+        Assembles 7B (or 3B baseline) reasoning prompt according to the Section 10 hierarchy.
+
+        INPUT:
+            - handoff_packet: CascadeHandoffPacket (Channel A structural pack + Channel B triage + routing)
+            - model_identifier: str (e.g. "qwen2.5-coder:7b" or "qwen2.5-coder:3b")
+            - budget_tier: int (4096 for Tier 1 constrained; 8192 for Tier 2 high-capacity)
+            - cascade_mode: str ("TRACK_A_7B_BASELINE", "TRACK_B_CASCADE", "TRACK_C_3B_BASELINE")
+            - optional_advisory_content_mode: bool (Controls inclusion of Channel B advisory prose)
+
+        OUTPUT:
+            - AssembledReasoningContext: Token-budgeted prompt ready for model execution,
+              including partition token accounting and builder provenance metadata.
+
+        INVARIANTS:
+            - Reuses Section 10 Deterministic Context Hierarchy verbatim.
+            - Reuses Section 5 token-budget allocation and truncation priority (P0 -> P1 -> P3 -> P4).
+            - Reuses canonical evidence serialization and SemanticCompressor for untrusted bodies.
+            - Track-Specific Bespoke Context Assembly Prohibited: Any difference between Track A,
+              Track B, and Track C must come strictly from declared model/mode parameters, not copied
+              or divergence-prone prompt-construction logic.
+        """
+        pass
+```
+
+### 10.3 ContextBuilder Provenance Hashing `[MANDATORY]`
+
+To guarantee post-hoc reproducibility and auditability, the evaluator must be able to prove after the fact exactly which context builder implementation and configuration assembled each inference prompt:
+
+- **Recorded Context-Builder Provenance Fields**:
+  Every executed scenario artifact, trace log, and benchmark result record MUST include:
+  1. `context_builder_version`: Explicit implementation SemVer (e.g. `"2.0.0"`).
+  2. `context_builder_hash`: SHA-256 cryptographic content hash of the `ReasoningContextBuilder` source file (`SHA256(src/engine/context_builder.py)`).
+  3. `model_identifier`: Exact model string (e.g. `"qwen2.5-coder:7b"`).
+  4. `budget_tier`: Active token ceiling (`4096` or `8192`).
+  5. `cascade_mode`: Active evaluation mode (`"TRACK_A_7B_BASELINE"`, `"TRACK_B_CASCADE"`, `"TRACK_C_3B_BASELINE"`).
+  6. `schema_version`: Active cascade schema version (`"2.0.0"`).
+
+- **Evaluation Invariant**:
+  This metadata does not replace the benchmark cryptographic identity stamp defined in Section 2.5; rather, it forms a **mandatory run-level provenance component** verifying that prompt assembly adhered strictly to the unified shared builder contract without ad-hoc or uncommitted prompt deviations.
 
 ---
 
@@ -1097,6 +1375,28 @@ Let:
 4. **Benchmark Immutability Preserved**:
    - The frozen 84-scenario benchmark ($N_{\text{vuln}} = 36$) is NOT altered or expanded to artificially manipulate statistical power. If broader power is desired in future milestones, supplementary scenarios must be curated as a separately versioned candidate corpus (e.g., Benchmark v2.0 / Milestone M2.5) rather than mutating the M1.5 baseline.
 
+#### Paired-Analysis Failure Cause Decomposition ($n_{10}$ Breakdown) `[MANDATORY]`
+Current overflow accounting is strictly retained. To allow the team to distinguish model-quality reasoning regression from infrastructure and context failures, an explicit paired-analysis failure decomposition is required:
+
+For every vulnerable scenario where the Cascade fails (yields 0 useful hypothesis) and the 7B baseline succeeds (yields 1 useful hypothesis)—representing discordant failure count $n_{10}$—the system must deterministically classify the earliest cause as exactly one of:
+
+1. **`REASONING_REGRESSION`**: The 7B model inside the cascade failed to deduce the vulnerability or emit a grounded hypothesis despite complete, uncorrupted, un-overflowed context and successful routing escalation.
+2. **`CONTEXT_BUDGET_OVERFLOW`**: Protected canonical evidence or handoff payload exceeded the token budget ceiling, terminating execution with `CONTEXT_BUDGET_OVERFLOW` prior to reasoning.
+3. **`ROUTING_FALSE_NEGATIVE`**: The deterministic router failed to escalate a vulnerable scenario (`HIGH_RISK_SECURITY_SIGNAL == True` and final routing `CASCADE_NOT_ESCALATED`).
+4. **`STRUCTURAL_EVIDENCE_FAILURE`**: Corrupt, missing, or unparseable canonical evidence prevented valid diff generation by `StructuralDiffEngine`, triggering pipeline `HOLD/BLOCK`.
+5. **`OTHER_IMPLEMENTATION_FAILURE`**: Pipeline runtime exception, process crash, hardware timeout, or environment failure.
+
+**Mandatory Non-Inferiority Report Decomposition Fields**:  
+Every published Non-Inferiority evaluation report MUST explicitly include:
+- Total discordant losses ($n_{10}$)
+- $n_{10}$ caused by overflow (`CONTEXT_BUDGET_OVERFLOW`)
+- $n_{10}$ caused by routing (`ROUTING_FALSE_NEGATIVE`)
+- $n_{10}$ caused by reasoning (`REASONING_REGRESSION`)
+- Other $n_{10}$ (`STRUCTURAL_EVIDENCE_FAILURE` + `OTHER_IMPLEMENTATION_FAILURE`)
+
+> **Prohibition Against Conflation**:  
+> Under no circumstances may all discordant losses be collapsed into a single unexplained "cascade failed" number. Isolating these factors is required for scientific attribution and engineering diagnosis.
+
 ### 15.4 Resource-Efficiency Validity Constraint `[MANDATORY]`
 While achieving a $\ge 30\%$ reduction in 7B inference calls is an explicit efficiency objective:
 
@@ -1117,9 +1417,10 @@ When a scenario produces an incorrect outcome or fails to yield a useful hypothe
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
 │ LEVEL 1: INPUT & RETRIEVAL FAILURES                                    │
+│ - STRUCTURAL_EVIDENCE_FAILURE: Corrupt or missing canonical evidence    │
 │ - RETRIEVAL_MISS: Required evidence chunk not in top-K                 │
 │ - EVIDENCE_CORRUPTION: Adapter failed to parse valid proxy traffic      │
-│ - CONTEXT_OVERFLOW: Required structural diff dropped due to token limit │
+│ - CONTEXT_BUDGET_OVERFLOW: Canonical structural floor exceeded ceiling │
 ├────────────────────────────────────────────────────────────────────────┤
 │ LEVEL 2: 3B TRIAGE & ROUTING FAILURES                                  │
 │ - ROUTING_FALSE_NEGATIVE: HIGH_RISK_SECURITY_SIGNAL == True, but got   │
@@ -1129,6 +1430,7 @@ When a scenario produces an incorrect outcome or fails to yield a useful hypothe
 │ - TRIAGE_HALLUCINATION: 3B cited non-existent IDs (caught by gate)     │
 ├────────────────────────────────────────────────────────────────────────┤
 │ LEVEL 3: 7B REASONING FAILURES                                         │
+│ - REASONING_REGRESSION: Cascade 7B failed where baseline 7B succeeded   │
 │ - REASONING_INCORRECT_LOGIC: 7B drew invalid conclusion from facts     │
 │ - REASONING_GROUNDING_FAILURE: 7B cited invalid IDs (caught by validator)│
 │ - PREMATURE_CONFIRMATION: 7B claimed confirmed without experiment      │
@@ -1138,6 +1440,7 @@ When a scenario produces an incorrect outcome or fails to yield a useful hypothe
 │   (Mock interface in M2; Live state engine in M2.75)                   │
 │ - SIMULATOR_UNRESOLVED: Experiment was non-discriminative              │
 │ - HARDWARE_TIMEOUT: Inference exceeded latency limit                   │
+│ - OTHER_IMPLEMENTATION_FAILURE: Unhandled runtime error or crash       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1156,15 +1459,16 @@ The cascade architecture must respect all platform invariants established in M0:
 
 ## 18. Required Test Matrix
 
-The implementation of M1.5 and M2 must be accompanied by comprehensive tests across eight categories:
+The implementation of M1.5 and M2 must be accompanied by comprehensive tests across nine categories:
 
 | Test Suite | Test Focus | Target Verifications |
 | :--- | :--- | :--- |
 | **A. Routing** | `test_cascade_routing.py` | - Deterministic escalation on privilege delta.<br>- Deterministic escalation on status code delta.<br>- Abstention on clean read-only endpoints.<br>- Fail-safe escalation on malformed/missing 3B JSON (when Channel A is intact); pipeline HOLD/BLOCK on canonical evidence/database failure.<br>- Suppression of model self-confidence fields.<br>- **8-Fixture Monotonicity Sweep**: Proof that for fixed canonical evidence presenting a Class-1 signal, all 8 distinct 3B output variations (empty, malformed, valid benign, valid wrong, adversarial prose, inflated confidence, false secure claim, ungrounded IDs) produce `escalate == True`. |
+| **A.5 Structural Diff & Predicates** | `test_structural_diff_raw.py` | - **Raw Synthetic Evidence Fixture Suite**: Operates on raw synthetic evidence fixtures directly from canonical `evidence.db` representations (does NOT test only prebuilt `LosslessStructuralPack` objects).<br>- Pure computation verification of `StructuralDiffEngine.compute(raw_facts, identity_matrix)`.<br>- StructuralDiffEngine verified as sole predicate producer of Class-1 booleans.<br>- **`CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` Suite**: Verification across all 6 dedicated synthetic fixtures (same-role same-owner, same-role diff-owner, diff-role diff-owner, denied access, unknown ownership, unregistered ID).<br>- **Multi-Role Existential Quantification**: Verification across 2 roles, 3 roles, and 15–20 roles over all $\binom{N}{2}$ pairs.<br>- **`EVIDENCE_PARSE_ASYMMETRY` Handling**: Emits audit event, preserves provenance, sets complexity trigger, forces unconditional escalation.<br>- **Integrity Failure**: Verification of pipeline `HOLD/BLOCK` on all-unparseable responses or corrupt canonical evidence. |
 | **B. Handoff** | `test_evidence_handoff.py` | - Channel A exact-ID preservation through gate.<br>- **Ungrounded ID Handling (`TRIAGE_HALLUCINATION`)**: Verification that invented 3B IDs trigger audit event logging, field invalidation, Class-2 fail-safe escalation, and quarantine from 7B prompt.<br>- Guaranteed floor token allocation under context pressure.<br>- Contradiction block preservation. |
 | **C. Prompt Injection** | `test_cascade_injection.py` | - `<untrusted_target_data>` delimiter escaping.<br>- Target payload attempting to force `NO_RELEVANT_FUNCTIONALITY`.<br>- Target payload attempting to alter system instructions.<br>- **Zero-Breakout Invariant**: Verification of 0 `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption).<br>- **Adversarial Context Stuffing**: Neutralization of large bodies without status-code delta loss. |
-| **D. Context Saturation** | `test_context_budget.py` | - Truncation order: Advisory RAG dropped first, then 3B prose.<br>- Structural diffs and exact IDs never dropped.<br>- 4096 vs 8192 ceiling adherence.<br>- `CONTEXT_BUDGET_OVERFLOW` lifecycle verification on oversized structural packs. |
-| **E. Hardware / VRAM** | `test_resource_lifecycle.py` | - Clean model load/unload cycles in Ollama.<br>- Memory pressure handling and sequential model transitions.<br>- **`MODEL_ENVIRONMENT_VALIDATION` pre-execution suite**: Digest verification, layer offload placement, zero driver resets across 10 transitions.<br>- Separate instrumentation of $T_{\text{load}}$ and $T_{\text{infer}}$. |
+| **D. Context Saturation** | `test_context_budget.py` | - Truncation order: Advisory RAG dropped first, then 3B prose.<br>- Structural diffs and exact IDs never dropped.<br>- 4096 vs 8192 ceiling adherence.<br>- `CONTEXT_BUDGET_OVERFLOW` lifecycle verification on oversized structural packs.<br>- **`REALISTIC_LARGE_CANONICAL_EVIDENCE` Sweep**: Verification across 10/15/20/25 roles and 10/20/30/40 parameters under Tier 1 and Tier 2 envelopes. |
+| **E. Hardware / VRAM** | `test_resource_lifecycle.py` | - Clean model load/unload cycles in Ollama.<br>- Memory pressure handling and sequential model transitions.<br>- **`MODEL_ENVIRONMENT_VALIDATION` pre-execution suite**: Digest verification, layer offload placement, zero driver resets.<br>- **Measurable Memory-Drift Suite**: Confirmed quiescence wait, per-cycle RSS/VRAM recordings, fitted growth slope $\le 5.0\text{ MB/cycle}$, endpoint drift $\le \max(5\%, 150\text{ MB})$; detection of `MEMORY_DRIFT_DETECTED`.<br>- Separate instrumentation of $T_{\text{load}}$ and $T_{\text{infer}}$. |
 | **F. State & TTL** | `test_pre_execution_ttl.py` | - M2 abstract interface contract & mock validator verification.<br>- Verification that mock flags expired references without live network refresh.<br>- Contract test ensuring live refresh hooks remain decoupled for M2.75. |
 | **G. Scoring** | `test_exact_state_scoring.py` | - Exact state-delta matching on gold tuples.<br>- False positive detection on patched assets.<br>- True negative scoring on proper abstentions ($N_{\text{non-vuln}} = 48$).<br>- Target-level binary Useful Hypothesis Yield calculation. |
 | **H. Performance & Health** | `test_ttd_benchmarks.py` | - Classification into `LATENCY_WITHIN_TARGET`, `OVER_TARGET`, `TIMEOUT`.<br>- Cold-start vs warm-start latency recording.<br>- **3B Health Monitoring**: Tracking `3B_FAILURE_RATE` and verification of SLO alert triggers. |
@@ -1173,44 +1477,54 @@ The implementation of M1.5 and M2 must be accompanied by comprehensive tests acr
 
 ## 19. Phased Implementation Sequence
 
-To guarantee stability, implementation must proceed sequentially through 11 discrete phases:
+To guarantee stability, implementation must proceed sequentially through 12 discrete phases:
 
 ```text
 Phase 0: Pre-Implementation Hardware & Environment Validation (MODEL_ENVIRONMENT_VALIDATION)
    │   - Verify pinned Ollama cryptographic content digests for 3B and 7B
-   │   - Confirm layer offloads, VRAM stability, and 10 sequential unload/reload transition cycles
+   │   - Confirm layer offloads, VRAM stability, quiescence wait, and 10 unload/reload transition cycles
+   │   - Verify linear slope <= 5.0 MB/cycle and endpoint drift <= max(5%, 150 MB); no MEMORY_DRIFT_DETECTED
    ▼
 Phase 1: M1.5 Benchmark Freeze & Manifest Generation
    │   - Export immutable m1_5_frozen_manifest.json with external companion checksum
+   │   - Bind 5-part cryptographic stamp including StructuralDiffEngine version and content hash
    │   - Lock test suites and ground-truth isolation checks
    ▼
-Phase 2: Lossless Structural Evidence Models (Channel A)
-   │   - Define LosslessStructuralPack and StructuralDiff schemas (v2.0.0)
+Phase 2: StructuralDiffEngine Implementation & Predicate Tests
+   │   - Implement StructuralDiffEngine.compute(raw_facts, identity_matrix) -> LosslessStructuralPack
+   │   - Establish StructuralDiffEngine as sole producer of Class-1 predicate booleans
+   │   - Implement Test Suite A.5 operating on raw synthetic evidence fixtures
+   │   - Verify CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS (6 fixtures) and multi-role existential quantification
+   │   - Verify EVIDENCE_PARSE_ASYMMETRY handling and CanonicalEvidenceIntegrityError -> HOLD/BLOCK
    ▼
-Phase 3: EvidencePreservationGate Implementation
+Phase 3: Lossless Structural Evidence Models (Channel A)
+   │   - Define LosslessStructuralPack and StructuralDiff schemas (v2.0.0) with predicate booleans
+   ▼
+Phase 4: EvidencePreservationGate Implementation
    │   - Build Channel A/B separation, ungrounded ID quarantine, and TRIAGE_HALLUCINATION logging
    ▼
-Phase 4: Two-Class Deterministic Routing Predicates
-   │   - Implement DeterministicRouter with Class-1 pure functions and Class-2 fail-safe defaults
+Phase 5: Two-Class Deterministic Routing Predicates
+   │   - Implement DeterministicRouter with immutable Class-1 union model and Class-2 fail-safe triggers
    ▼
-Phase 5: 3B Triage Output Schema & Runner
+Phase 6: 3B Triage Output Schema & Runner
    │   - Implement TriageMetadataPacket and fast 3B triage runner with 3B_FAILURE_RATE tracking
    ▼
-Phase 6: Hardened 7B Context Builder & Token Controller
-   │   - Implement dual-tier token budget (4096 / 8192) and deterministic truncation lifecycle
+Phase 7: Hardened 7B Shared ReasoningContextBuilder & Token Controller
+   │   - Implement shared parametrized ReasoningContextBuilder for Tracks A, B, and C
+   │   - Implement dual-tier token budget (4096 / 8192) and record ContextBuilder provenance hash
    ▼
-Phase 7: Cascade Orchestration Pipeline (`src/engine/cascade.py`)
+Phase 8: Cascade Orchestration Pipeline (`src/engine/cascade.py`)
    │   - Wire 3B Triage -> Router -> Gate -> 7B Runner into unified runner
    ▼
-Phase 8: Abstract State & Execution Interface Contract (M2 Boundary)
+Phase 9: Abstract State & Execution Interface Contract (M2 Boundary)
    │   - Implement abstract IPreExecutionTTLValidator interface & mock stub for M2
    │   - Defer live token refresh, session lifecycle, and CSRF rotation to M2.75
    ▼
-Phase 9: Adversarial & Security Test Matrix Execution
-   │   - Execute Test Suites A through H; verify prompt injection containment and 8-fixture sweep
+Phase 10: Adversarial & Security Test Matrix Execution
+   │   - Execute Test Suites A through H (including A.5); verify injection containment and 8-fixture sweep
    ▼
-Phase 10: Paired M2 Benchmark Evaluation
-       - Run Tracks A, B, and C across 84 frozen scenarios; compute paired McNemar statistics,
+Phase 11: Paired M2 Benchmark Evaluation
+       - Run Tracks A, B, and C across 84 frozen scenarios; compute paired failure decomposition (n10 breakdown),
          the pre-specified Tango score-based non-inferiority CI, and the complete 6-metric ensemble.
 ```
 
@@ -1222,17 +1536,20 @@ Phase 10: Paired M2 Benchmark Evaluation
 1. `data/benchmarks/m1_5_frozen_manifest.json` exists as an immutable artifact with an externally published companion checksum artifact (`data/benchmarks/m1_5_frozen_manifest.json.sha256`) across all 84 scenarios; the checksum is not recursively embedded in the manifest itself.
 2. Ground-truth isolation tests pass with zero leaks across all benchmark splits.
 3. Zero regressions in the frozen 126-test baseline; all newly added milestone tests pass with 100% compliance; benchmark integrity and reproducibility metadata strictly preserved.
+4. The frozen benchmark metadata binds the 5-part cryptographic stamp (Dataset Hash, Config Hash, Model Digest, Harness SemVer/Commit, and StructuralDiffEngine Version/Hash).
 
 ### 20.2 For Declaring Milestone M2 Complete (Classified Matrix):
 
 | Category | Criterion | Metric / Verification | Target Threshold |
 | :--- | :--- | :--- | :--- |
 | **HARD SAFETY REQUIREMENT** | **Zero Injection Breakouts** | Test Suite C (Adversarial Injection) | 100% containment; zero `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption). |
-| **HARD SAFETY REQUIREMENT** | **Monotonic Escalation Holds** | Test Suite A & Test Suite C | Zero routing false negatives on HIGH_RISK_SECURITY_SIGNAL; 3B output cannot suppress canonical escalation; 100% pass on 8-fixture monotonicity sweep. |
+| **HARD SAFETY REQUIREMENT** | **Monotonic Escalation Holds** | Test Suite A & Test Suite C | Zero routing false negatives on HIGH_RISK_SECURITY_SIGNAL; 3B output cannot suppress canonical escalation; 100% pass on 8-fixture monotonicity sweep; Class-1 gating enforced by construction. |
+| **HARD SAFETY REQUIREMENT** | **Structural Predicate Authority** | Test Suite A.5 (`StructuralDiffEngine`) | `StructuralDiffEngine` verified as sole producer of Class-1 booleans; 100% pass on raw synthetic fixtures including `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` and multi-role existential quantification. |
 | **HARD SAFETY REQUIREMENT** | **Grounding & Epistemic Integrity** | [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) | Zero hallucinated or unparented IDs accepted; unevidenced hypotheses downgraded; zero `CONFIRMED` emissions. |
-| **HARD SAFETY REQUIREMENT** | **Hardware / Resource Stability** | `MODEL_ENVIRONMENT_VALIDATION` & Monitor | Zero VRAM allocation errors, OOM aborts, or driver crashes on RTX 3050 (4GB) during complete 84-scenario sweep; model digests verified. |
+| **HARD SAFETY REQUIREMENT** | **Hardware / Resource Stability** | `MODEL_ENVIRONMENT_VALIDATION` & Monitor | Zero VRAM allocation errors, OOM aborts, or driver crashes on RTX 3050 (4GB) during complete 84-scenario sweep; model digests verified; memory growth slope $\le 5.0\text{ MB/cycle}$ and endpoint drift $\le \max(5\%, 150\text{ MB})$ with zero `MEMORY_DRIFT_DETECTED`. |
+| **HARD SAFETY REQUIREMENT** | **Shared Context Builder Integrity** | `ReasoningContextBuilder` | Single parametrized context builder shared across Tracks A, B, and C with recorded provenance hash; zero bespoke prompt-construction logic. |
 | **HARD SAFETY REQUIREMENT** | **Fail-Safe Routing Activation** | `DeterministicRouter` | 100% automatic escalation to 7B upon malformed/missing 3B JSON or ungrounded 3B IDs when Channel A is intact; canonical evidence or database failure triggers immediate HOLD/BLOCK and never reasoning over incomplete evidence. |
-| **STATISTICAL QUALITY REQUIREMENT** | **Statistical Non-Inferiority** | Pre-specified Tango score-based CI method on $N_{\text{vuln}} = 36$ | Reject $H_0: Y_{\text{7B}} - Y_{\text{Cascade}} \ge 0.05$ at $\alpha = 0.10$; pre-specified one-sided 90% UCB for paired difference $< 0.05$. |
+| **STATISTICAL QUALITY REQUIREMENT** | **Statistical Non-Inferiority** | Pre-specified Tango score-based CI method on $N_{\text{vuln}} = 36$ | Reject $H_0: Y_{\text{7B}} - Y_{\text{Cascade}} \ge 0.05$ at $\alpha = 0.10$; pre-specified one-sided 90% UCB for paired difference $< 0.05$; paired failure causes decomposed across overflow, routing, reasoning, structural, and runtime. |
 | **STATISTICAL QUALITY REQUIREMENT** | **Hypothesis Precision** | Deterministic Scorer with Wilson 95% CI | Track C Precision point estimate $\ge 85.0\%$ (with two-sided Wilson 95% CI reported). |
 | **STATISTICAL QUALITY REQUIREMENT** | **Abstention Quality** | Deterministic Scorer on Patched + Negative Controls | Track C True Negative Rate ($\text{TNR} = \frac{\text{TN}}{\text{TN} + \text{FP}}$) point estimate $\ge 80.0\%$ over the combined patched and negative-control population ($N_{\text{non-vuln}} = 48$) (with two-sided Wilson 95% CI reported). |
 | **PERFORMANCE TARGET** | **Primary Warm-Interactive Latency** | Median Warm TTD | Median Warm TTD $\le 12.0\text{s}$ across all evaluated scenarios. |
