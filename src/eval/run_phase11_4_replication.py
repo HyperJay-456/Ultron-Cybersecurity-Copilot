@@ -677,6 +677,7 @@ def generate_markdown_report(data: Dict[str, Any]) -> str:
 
     prec_a_str = f"{pa['precision']*100:.1f}%" if pa['precision'] is not None else "N/A"
     prec_b_str = f"{pb['precision']*100:.1f}%" if pb['precision'] is not None else "N/A"
+    families_improved = sum(1 for f, f_data in fb.items() if f_data["tp_b"] > f_data["tp_a"])
 
     # Build Table 1: Scenario x Condition A x Condition B
     table_1_rows = []
