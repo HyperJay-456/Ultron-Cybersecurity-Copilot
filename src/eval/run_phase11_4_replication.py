@@ -244,8 +244,8 @@ class Phase11_4ReplicationRunner:
                 channel_a=pack,
                 hypothesis=ext_res.normalized_hypothesis,
             )
-            grounding_valid = gv.is_grounded
-            grounding_reason = gv.grounding_reason
+            grounding_valid = gv.valid
+            grounding_reason = gv.reason
             unsupported_facts = gv.unsupported_fact_ids
             unsupported_params = gv.unsupported_param_ids
             is_breakout = CascadeGroundingValidator.is_breakout(ext_res.normalized_hypothesis, pack)

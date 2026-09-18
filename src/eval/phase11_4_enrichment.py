@@ -265,15 +265,45 @@ class InteractionEvidenceGenerator:
             f"[OBSERVED_FACT] Interaction {interaction_id}: requester_identity_id='{requester_id}' "
             f"(role='{requester_role}', tenant='{requester_tenant}') executed {http_method} {raw_path} "
             f"targeting resource_id='{resource_id}' (owner='{resource_owner}', tenant='{resource_tenant}'). "
-            f"Response status: {status_code}. Response payload: {shape_summary}. Access result: '{access_result}'. "
-            f"State before: {state_before}, State after: {state_after}."
+            f"Response status: {status_code}. Response payload: {shape_summary}. Access result: '{access_result}'."
         )
 
-        der_statement = (
-            f"[DERIVED_FACT] Relational facts: cross_identity_access={str(cross_identity_access).lower()}, "
-            f"cross_tenant_access={str(cross_tenant_access).lower()}, privilege_delta={str(privilege_delta).lower()}, "
-            f"authorization_delta={str(authorization_delta).lower()}."
-        )
+        if access_granted:
+            if requester_id != resource_owner:
+                rel_parts = [
+                    f"requester_identity_id != resource_owner_identity_id ('{requester_id}' != '{resource_owner}', cross_identity_access=true)"
+                ]
+                if requester_tenant != resource_tenant:
+                    rel_parts.append(
+                        f"requester_tenant_id != resource_tenant_id ('{requester_tenant}' != '{resource_tenant}', cross_tenant_access=true)"
+                    )
+                rel_parts.append(f"Target object '{resource_id}' owned by '{resource_owner}' was returned to requester '{requester_id}'.")
+                der_statement = "[DERIVED_FACT] Relationship: " + "; ".join(rel_parts)
+            elif state_before in ("CREATED", "DRAFT") and state_after in ("REFUNDED", "SHIPPED", "PUBLISHED"):
+                der_statement = (
+                    f"[DERIVED_FACT] State transition: object '{resource_id}' transitioned from state_before='{state_before}' "
+                    f"to state_after='{state_after}' via {http_method} {raw_path}."
+                )
+            else:
+                der_statement = (
+                    f"[DERIVED_FACT] Relationship: requester_identity_id == resource_owner_identity_id ('{requester_id}' == '{resource_owner}', cross_identity_access=false)."
+                )
+        else:
+            if requester_id != resource_owner:
+                der_statement = (
+                    f"[DERIVED_FACT] Relationship: requester_identity_id != resource_owner_identity_id ('{requester_id}' != '{resource_owner}'). "
+                    f"Target object access was denied with status {status_code} (cross_identity_access=false)."
+                )
+            elif status_code == 400:
+                der_statement = (
+                    f"[DERIVED_FACT] State transition blocked: object '{resource_id}' in state_before='{state_before}' "
+                    f"rejected invalid transition (status {status_code})."
+                )
+            else:
+                der_statement = (
+                    f"[DERIVED_FACT] Access denied: request rejected by server with status {status_code}."
+                )
+
 
         int_fact_dict = {
             "fact_id": obs_fact_id,
