@@ -39,6 +39,7 @@ class ExperimentProposal(BaseModel):
     target_identity_id: Optional[str] = None
     expected_observations: ExpectedObservations
     safety_level: SafetyLevel = SafetyLevel.READ_ONLY_SAFE
+    required_token_references: list[str] = Field(default_factory=list)
     required_test_data: str = "Standard test tenant identifiers"
     rollback_requirement: str = "No rollback needed for read-only operations"
 

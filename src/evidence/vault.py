@@ -191,3 +191,39 @@ class RedactionVault:
         for placeholder, raw in self._placeholder_to_raw.items():
             result = result.replace(placeholder, raw)
         return result
+
+    def register_token_metadata(
+        self,
+        token_ref: str,
+        identity_id: str,
+        expires_at: Optional[float] = None,
+    ) -> "TokenMetadata":
+        """Register token metadata for pre-execution TTL validation."""
+        if not hasattr(self, "_token_metadata"):
+            self._token_metadata = {}
+        meta = TokenMetadata(token_ref=token_ref, identity_id=identity_id, expires_at=expires_at)
+        self._token_metadata[token_ref] = meta
+        return meta
+
+    def get_token_metadata(self, token_ref: str) -> Optional["TokenMetadata"]:
+        """Retrieve registered metadata for a token reference."""
+        if not hasattr(self, "_token_metadata"):
+            self._token_metadata = {}
+        return self._token_metadata.get(token_ref)
+
+
+class TokenMetadata:
+    """Metadata tracking token expiration and identity binding."""
+
+    def __init__(self, token_ref: str, identity_id: str, expires_at: Optional[float] = None) -> None:
+        self.token_ref = token_ref
+        self.identity_id = identity_id
+        self.expires_at = expires_at
+
+    def is_expired(self, clock_skew_seconds: int = 30) -> bool:
+        """Return True if token is expired considering clock skew."""
+        if self.expires_at is None:
+            return False
+        import time
+        return (time.time() + clock_skew_seconds) >= self.expires_at
+
