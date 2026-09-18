@@ -363,3 +363,96 @@ def test_failure_layer_taxonomy_chronology():
     )
     assert p8 is None
     assert len(s8) == 0
+
+
+def test_18_explicit_insufficient_evidence():
+    """Explicit decision=INSUFFICIENT_EVIDENCE maps to NO_RELEVANT_FUNCTIONALITY / EXPLICIT_ABSTENTION."""
+    payload = {"decision": "INSUFFICIENT_EVIDENCE"}
+    res = extract_decision(payload)
+    assert res.decision == "NO_RELEVANT_FUNCTIONALITY"
+    assert res.vulnerability_exists is False
+    assert res.is_valid is True
+    assert "EXPLICIT_ABSTENTION" in (res.failure_reason or "")
+
+
+def test_19_explicit_benign():
+    """Explicit decision=BENIGN_NO_ISSUE maps to NO_RELEVANT_FUNCTIONALITY."""
+    payload = {"decision": "BENIGN_NO_ISSUE"}
+    res = extract_decision(payload)
+    assert res.decision == "NO_RELEVANT_FUNCTIONALITY"
+    assert res.vulnerability_exists is False
+    assert res.is_valid is True
+    assert res.failure_reason is None
+
+
+def test_20_explicit_vulnerability_exists_false():
+    """Explicit vulnerability_exists=False maps to NO_RELEVANT_FUNCTIONALITY."""
+    payload = {"vulnerability_exists": False}
+    res = extract_decision(payload)
+    assert res.decision == "NO_RELEVANT_FUNCTIONALITY"
+    assert res.vulnerability_exists is False
+    assert res.is_valid is True
+
+
+def test_21_nested_explicit_abstention_with_both():
+    """
+    Audited abstention case:
+    {"ReasoningHypothesis": {"decision": "INSUFFICIENT_EVIDENCE", "vulnerability_exists": False}}
+    Must map to NO_RELEVANT_FUNCTIONALITY / EXPLICIT_ABSTENTION and NOT DECISION_EXTRACTION_FAILURE.
+    """
+    payload = {
+        "ReasoningHypothesis": {
+            "decision": "INSUFFICIENT_EVIDENCE",
+            "vulnerability_exists": False,
+        }
+    }
+    res = extract_decision(payload)
+    assert res.decision == "NO_RELEVANT_FUNCTIONALITY"
+    assert res.vulnerability_exists is False
+    assert res.is_valid is True
+    assert "EXPLICIT_ABSTENTION" in (res.failure_reason or "")
+
+    # Assert taxonomy classification: on a vulnerable scenario it is REASONING_INCORRECT_LOGIC, not DECISION_EXTRACTION_FAILURE
+    p, s = classify_earliest_failure(
+        raw_output_present=True,
+        raw_error=None,
+        json_parse_status="SUCCESS",
+        extraction_result=res,
+        grounding_valid=True,
+        is_breakout=False,
+        escalated=True,
+        ground_truth_vulnerable=True,
+        called_7b=True,
+        final_decision=res.decision,
+        useful=False,
+    )
+    assert p == FailureLayer.REASONING_INCORRECT_LOGIC
+    assert p != FailureLayer.DECISION_EXTRACTION_FAILURE
+
+    # On a non-vulnerable scenario it is a correct abstention (Success / None)
+    p_nonvuln, s_nonvuln = classify_earliest_failure(
+        raw_output_present=True,
+        raw_error=None,
+        json_parse_status="SUCCESS",
+        extraction_result=res,
+        grounding_valid=True,
+        is_breakout=False,
+        escalated=True,
+        ground_truth_vulnerable=False,
+        called_7b=True,
+        final_decision=res.decision,
+        useful=False,
+    )
+    assert p_nonvuln is None
+
+
+def test_22_conflicting_states_remain_invalid():
+    """Conflicting states must remain invalid with CONFLICTING_FIELDS."""
+    c1 = extract_decision({"VulnerabilityExists": True, "decision": "BENIGN"})
+    assert c1.is_valid is False
+    assert "CONFLICTING_FIELDS" in (c1.failure_reason or "")
+
+    c2 = extract_decision({"VulnerabilityExists": False, "VulnerabilityType": "IDOR"})
+    assert c2.is_valid is False
+    assert "CONFLICTING_FIELDS" in (c2.failure_reason or "")
+

@@ -221,13 +221,16 @@ def extract_decision(hyp: Any) -> ExtractionResult:
         )
 
     if vuln_exists_val is False:
+        failure_reason = None
+        if raw_decision in ("INSUFFICIENT_EVIDENCE", "UNCERTAIN", "UNKNOWN"):
+            failure_reason = f"EXPLICIT_ABSTENTION: Model signaled '{raw_decision}'"
         return ExtractionResult(
             decision="NO_RELEVANT_FUNCTIONALITY",
             vulnerability_type=None,
             vulnerability_exists=False,
             raw_decision_field=raw_decision,
             normalized_hypothesis=normalized,
-            failure_reason=None,
+            failure_reason=failure_reason,
             is_valid=True,
         )
 
@@ -255,9 +258,9 @@ def extract_decision(hyp: Any) -> ExtractionResult:
             )
         if raw_decision in ("INSUFFICIENT_EVIDENCE", "UNCERTAIN", "UNKNOWN"):
             return ExtractionResult(
-                decision="INSUFFICIENT_EVIDENCE",
+                decision="NO_RELEVANT_FUNCTIONALITY",
                 vulnerability_type=vuln_type,
-                vulnerability_exists=None,
+                vulnerability_exists=False,
                 raw_decision_field=raw_decision,
                 normalized_hypothesis=normalized,
                 failure_reason=f"EXPLICIT_ABSTENTION: Model signaled '{raw_decision}'",
@@ -349,7 +352,9 @@ def classify_earliest_failure(
     # 3 & 4. Extraction & Normalization
     if extraction_result is not None and not extraction_result.is_valid:
         reason = extraction_result.failure_reason or ""
-        if "MALFORMED_STRUCTURE" in reason or "EMPTY_PAYLOAD" in reason or "NULL_PAYLOAD" in reason:
+        if "EXPLICIT_ABSTENTION" in reason:
+            pass
+        elif "MALFORMED_STRUCTURE" in reason or "EMPTY_PAYLOAD" in reason or "NULL_PAYLOAD" in reason:
             primary = FailureLayer.HYPOTHESIS_NORMALIZATION_FAILURE
             secondary.append(reason)
             return primary, secondary
