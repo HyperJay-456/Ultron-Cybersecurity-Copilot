@@ -341,7 +341,8 @@ The `EvidencePreservationGate` enforces deterministic invariants prior to 7B con
    - **Log Event**: Emit a structured audit event `TRIAGE_HALLUCINATION` with the invalid identifier, the scenario context, and field origin.
    - **Invalidate Field**: Mark the citing Channel B field as invalid/untrusted.
    - **Preserve Channel A**: Retain canonical Channel A facts completely unchanged.
-   - **Trigger Fail-Safe Escalation**: Immediately trigger a Class-2 fail-safe escalation to 7B (`TRIAGE_HALLUCINATION_DETECTED`), setting `escalate = True`.
+   - **Record Gate Fail-Safe Condition**: Set `fail_safe_required = True`, emit the structured audit event `TRIAGE_HALLUCINATION`, and append `TRIAGE_HALLUCINATION` to `gate_triggers`.
+   - **Downstream Routing Resolution**: `DeterministicRouter` consumes the resulting `GateValidationResult` (Schema 5) and deterministically produces `DeterministicRoutingDecision` with `escalate = True` and `fail_safe_triggered = True`, per the fail-safe triad in Section 7.3.1.
    - **Quarantine from 7B Context**: The invented identifier MUST NOT become usable 7B evidence and is stripped from the assembled 7B prompt to prevent epistemic contagion.
    - **Zero Silent Dropping**: An invented 3B identifier must NEVER silently disappear without audit evidence and fail-safe escalation logging.
    - **Authoritative Validator**: The downstream [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) remains authoritative defense-in-depth on final 7B hypotheses.
