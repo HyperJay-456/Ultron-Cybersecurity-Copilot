@@ -189,9 +189,24 @@ class BatchSequentialPipeline:
             # Invoke 7B Runner (or mock)
             if self.reasoning_runner:
                 try:
-                    hyp = self.reasoning_runner(ctx)
+                    import inspect
+                    sig = inspect.signature(self.reasoning_runner)
+                    if len(sig.parameters) >= 2:
+                        hyp = self.reasoning_runner(ctx, surv.channel_a)
+                    else:
+                        hyp = self.reasoning_runner(ctx)
+                except TimeoutError as te:
+                    hyp = {
+                        "status": "EXECUTION_FAILURE",
+                        "failure_type": "HARDWARE_TIMEOUT",
+                        "error": f"7B inference timed out: {te}",
+                    }
                 except Exception as e:
-                    hyp = {"error": str(e)}
+                    hyp = {
+                        "status": "EXECUTION_FAILURE",
+                        "failure_type": "OTHER_IMPLEMENTATION_FAILURE",
+                        "error": str(e),
+                    }
                 surv.reasoning_hypothesis = hyp
 
             t7_infer = time.perf_counter() - t7_start
