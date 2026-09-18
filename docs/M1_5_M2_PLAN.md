@@ -116,7 +116,7 @@ The benchmark cannot be considered reproducible if the rules that compute struct
 
 > **Contract & Schema Separation Invariant (M1.5 vs M2)**:  
 > - **Milestone M1.5 freezes the existing V6 evaluation contracts** (`v6.0.0` schemas for `ExperimentProposal`, `ReasoningHypothesis`, `GroundingValidator`, and `DeterministicScorer`), establishing an immutable benchmark standard.  
-> - **Milestone M2 introduces separately versioned cascade schemas** (e.g., `CascadeHandoffPacket`, `LosslessStructuralPack`, `TriageMetadataPacket`, and `DeterministicRoutingDecision` under a dedicated cascade schema namespace), preserving the frozen V6 baseline evaluation contracts without modification or mutation.
+> - **Milestone M2 introduces separately versioned cascade schemas** (e.g., `CascadeHandoffPacket`, `LosslessStructuralPack`, `RawTriageOutput`, `TriageMetadataPacket`, and `DeterministicRoutingDecision` under a dedicated cascade schema namespace), preserving the frozen V6 baseline evaluation contracts without modification or mutation.
 
 ---
 
@@ -286,7 +286,7 @@ The handoff between the 3B triage stage and the 7B reasoning stage is governed b
 class CascadeHandoffPacket(BaseModel):
     """Immutable two-channel container passed through EvidencePreservationGate."""
     channel_a_structural: LosslessStructuralPack  # CANONICAL, LOSSLESS
-    channel_b_triage: Optional[TriageMetadataPacket]  # ADVISORY, 3B-DERIVED
+    validated_triage: Optional[TriageMetadataPacket]  # ADVISORY, GATE-VALIDATED
     routing_decision: DeterministicRoutingDecision
     provenance_hash: str
 ```
@@ -363,11 +363,13 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `contradiction_pairs: Optional[List[Dict[str, str]]]` (List of explicit paired fact IDs).
 - **Validation Failure**: If any canonical identifier is unparented or missing, schema validation raises `CanonicalEvidenceIntegrityError`, causing immediate pipeline `HOLD/BLOCK`.
 
-#### Schema 2: `TriageMetadataPacket` (`v2.0.0`)
-- **Schema Name**: `TriageMetadataPacket`
-- **Two-Stage Packet Lifecycle & Field Ownership**:
-  - *Stage 1: Raw Advisory 3B Triage Output* (Emitted by 3B runner; includes predictions, rationale, and suggested experiment class; explicitly prohibited from containing or asserting `category_invalid`).
-  - *Stage 2: Post-Gate Validated `TriageMetadataPacket`* (Validated by `EvidencePreservationGate` and consumed by `DeterministicRouter`; `EvidencePreservationGate` is the sole producer of `category_invalid` and ID quarantine flags; 3B runner cannot set or influence `category_invalid`).
+#### Schema 2: `RawTriageOutput` (`v2.0.0`)
+- **Schema Name**: `RawTriageOutput`
+- **Emission & Authority Constraints**:
+  - Emitted strictly by the 3B runner before `EvidencePreservationGate` evaluates it.
+  - Advisory output; MUST NOT assert taxonomy validity; MUST NOT be constructed with any authority over routing.
+  - MUST NOT contain taxonomy validity fields (such fields belong strictly to post-Gate validated packets).
+  - `is_malformed` is set strictly by the 3B runner's own parser/schema check — this is the ONLY component that sets it, occurring entirely before the Gate runs.
 - **Required Fields**:
   - `schema_version: str` (Literal `"2.0.0"`).
   - `suspected_category: Optional[str]` (Taxonomy category string, e.g. `"API-BOLA-001"`, or `None`).
@@ -375,12 +377,35 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `triage_rationale: str` (Summary of 3B reasoning; max 500 characters).
   - `suggested_experiment_class: Optional[str]` (Enum: `"ID_SWAP"`, `"ROLE_SWAP"`, `"STEP_SKIP"`, `"AUTH_DROP"`, `None`).
   - `is_sensitive_category: bool` (True if category involves authorization, authentication, or tenant boundary).
-  - `is_malformed: bool` (Flag indicating parser or schema non-compliance).
-  - `category_invalid: bool` (Populated strictly by `EvidencePreservationGate.validate`; True if non-null `suspected_category` does not match registered taxonomy in `taxonomy/categories.yaml`; 3B runner cannot set or influence this field).
+  - `is_malformed: bool` (Flag indicating parser or schema non-compliance, set exclusively by 3B runner).
 - **Optional Fields**:
   - `candidate_security_property: Optional[str]` (Natural language hypothesis focus).
   - `cited_parameter_ids: Optional[List[str]]` (List of parameter IDs referenced by 3B).
   - `cited_fact_ids: Optional[List[str]]` (List of fact IDs referenced by 3B).
+- **Validation Failure**: Handled gracefully via `is_malformed = True` by the 3B runner parser, triggering Class-2 fail-safe escalation downstream.
+
+#### Schema 2b: `TriageMetadataPacket` (`v2.0.0`)
+- **Schema Name**: `TriageMetadataPacket`
+- **Producer Authority & Lifecycle**:
+  - Produced exclusively by `EvidencePreservationGate.validate`.
+  - Same required and optional fields as `RawTriageOutput`, passed through unchanged, **plus** the Gate-added field:
+    - `category_invalid: bool` — set ONLY by the Gate, per Section 4.6 and Section 7.2 semantics (unchanged). `RawTriageOutput` never carries this field, and no component other than the Gate may set it on `TriageMetadataPacket`.
+  - `is_malformed` is copied through from `RawTriageOutput` verbatim — the Gate does not recompute, reinterpret, or override it.
+- **Null Propagation Invariant**:
+  - If the 3B runner produced no output at all (timeout, connection refused, no response), `raw_triage` is `None`. In that case the Gate MUST return `validated_triage = None` — it does not fabricate a packet just to attach `category_invalid` to something. The router's existing check (`triage is None or triage.is_malformed`) must continue to work unmodified against this `None` value.
+- **Required Fields**:
+  - `schema_version: str` (Literal `"2.0.0"`).
+  - `suspected_category: Optional[str]` (Taxonomy category string, e.g. `"API-BOLA-001"`, or `None`).
+  - `decision: str` (Enum: `"BENIGN_NO_ISSUE"`, `"SUSPECTED_VULNERABILITY"`, `"INSUFFICIENT_EVIDENCE"`).
+  - `triage_rationale: str` (Summary of 3B reasoning; max 500 characters).
+  - `suggested_experiment_class: Optional[str]` (Enum: `"ID_SWAP"`, `"ROLE_SWAP"`, `"STEP_SKIP"`, `"AUTH_DROP"`, `None`).
+  - `is_sensitive_category: bool` (True if category involves authorization, authentication, or tenant boundary).
+  - `is_malformed: bool` (Flag copied verbatim from `RawTriageOutput.is_malformed`).
+  - `category_invalid: bool` (Populated strictly by `EvidencePreservationGate.validate`; True if non-null `suspected_category` does not match registered taxonomy in `taxonomy/categories.yaml`; 3B runner cannot set or influence this field).
+- **Optional Fields**:
+  - `candidate_security_property: Optional[str]` (Natural language hypothesis focus).
+  - `cited_parameter_ids: Optional[List[str]]` (List of parameter IDs referenced by 3B, quarantined by Gate if ungrounded).
+  - `cited_fact_ids: Optional[List[str]]` (List of fact IDs referenced by 3B, quarantined by Gate if ungrounded).
 - **Validation Failure**: Handled gracefully via `is_malformed = True`, triggering Class-2 fail-safe escalation.
 
 #### Schema 3: `DeterministicRoutingDecision` (`v2.0.0`)
@@ -406,7 +431,7 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `routing_decision: DeterministicRoutingDecision` (Deterministic routing decision).
   - `provenance_hash: str` (SHA-256 digest computed over Canonical Evidence + Routing Decision).
 - **Optional Fields**:
-  - `channel_b_triage: Optional[TriageMetadataPacket]` (Advisory 3B output; may be `None`).
+  - `validated_triage: Optional[TriageMetadataPacket]` (Gate-validated advisory triage packet; may be `None`).
 - **Compatibility & Migration Policy**:
   - **M1.5 V6 Baseline Schemas**: The V6 evaluation contracts (`ExperimentProposal`, `ReasoningHypothesis`, `GroundingValidator`, `DeterministicScorer` at `v6.0.0`) remain frozen and immutable.
   - **M2 Cascade Schemas**: All cascade handoff structures exist under the `v2.x.x` schema namespace.
@@ -420,7 +445,7 @@ class EvidencePreservationGate:
     @staticmethod
     def validate(
         channel_a: LosslessStructuralPack,
-        channel_b: Optional[TriageMetadataPacket],
+        raw_triage: Optional[RawTriageOutput],
         routing_decision: DeterministicRoutingDecision,
         registered_categories: Optional[Set[str]] = None,
     ) -> CascadeHandoffPacket:
@@ -429,24 +454,28 @@ class EvidencePreservationGate:
 
         INPUT:
             - channel_a: LosslessStructuralPack (Required, canonical structural evidence)
-            - channel_b: Optional[TriageMetadataPacket] (Advisory 3B output, may be None)
+            - raw_triage: Optional[RawTriageOutput] (Advisory 3B output, may be None; pre-Gate schema without routing authority)
             - routing_decision: DeterministicRoutingDecision (Pre-evaluated routing decision)
             - registered_categories: Optional[Set[str]] (Authorized taxonomy set from taxonomy/categories.yaml)
 
         OUTPUT:
-            - CascadeHandoffPacket: Immutable, verified two-channel packet with cryptographic provenance_hash.
+            - CascadeHandoffPacket: Immutable, verified two-channel packet with cryptographic provenance_hash
+              containing validated_triage: Optional[TriageMetadataPacket].
 
         FAILURE MODES:
             - Canonical Evidence Invalid: If channel_a is corrupt, unparented, or missing required IDs,
               raises CanonicalEvidenceIntegrityError -> Pipeline enters immediate HOLD/BLOCK.
-            - Malformed 3B Triage: If channel_b is None or channel_b.is_malformed == True,
+            - Missing 3B Triage (Null Propagation Invariant): If raw_triage is None,
+              validated_triage is set to None (Gate never fabricates a packet for null 3B output);
               routing_decision.escalate is set to True (TRIAGE_OUTPUT_MALFORMED_OR_MISSING).
-            - Unregistered/Invalid 3B Category (TRIAGE_CATEGORY_INVALID): If channel_b is parsed (is_malformed == False)
-              and channel_b.suspected_category is not None and does not match a registered identifier in
-              taxonomy/categories.yaml, sets channel_b.category_invalid = True, emits structured audit event
-              TRIAGE_CATEGORY_INVALID, and forces routing_decision.escalate = True (Class-2 fail-safe escalation).
-            - Ungrounded 3B ID (TRIAGE_HALLUCINATION): If channel_b cites an ID not in channel_a, emits audit log
-              TRIAGE_HALLUCINATION, strips citation from channel_b, marks channel_b untrusted,
+            - Malformed 3B Triage: If raw_triage.is_malformed == True,
+              routing_decision.escalate is set to True (TRIAGE_OUTPUT_MALFORMED_OR_MISSING).
+            - Unregistered/Invalid 3B Category (TRIAGE_CATEGORY_INVALID): If raw_triage is parsed (is_malformed == False)
+              and raw_triage.suspected_category is not None and does not match a registered identifier in
+              taxonomy/categories.yaml, sets category_invalid = True on the produced TriageMetadataPacket,
+              emits structured audit event TRIAGE_CATEGORY_INVALID, and forces routing_decision.escalate = True (Class-2 fail-safe escalation).
+            - Ungrounded 3B ID (TRIAGE_HALLUCINATION): If raw_triage cites an ID not in channel_a, emits audit log
+              TRIAGE_HALLUCINATION, strips ungrounded citation from validated_triage,
               forces routing_decision.escalate = True (Class-2 fail-safe escalation).
             - Context Floor Overflow: If channel_a alone exceeds the P1 protected budget,
               raises ContextBudgetOverflowError -> logs CONTEXT_BUDGET_OVERFLOW.
@@ -458,65 +487,109 @@ class EvidencePreservationGate:
 
         SECURITY INVARIANTS:
             - Channel A is completely immutable and preserved verbatim.
-            - Channel B can never overwrite, shadow, or redefine Channel A.
+            - Channel B (Advisory Triage) can never overwrite, shadow, or redefine Channel A.
             - Sole Authority for Class-2 Gate Flags: EvidencePreservationGate is the sole component permitted
-              to compute category_invalid and quarantine ungrounded IDs.
+              to compute category_invalid and quarantine ungrounded IDs onto TriageMetadataPacket.
+            - RawTriageOutput never contains category_invalid and has no routing authority.
             - Ungrounded IDs are physically quarantined and never passed to 7B reasoning prompt.
             - Invalid categories are flagged as advisory failure and force fail-safe escalation, never injected into authoritative evidence.
+            - Null Propagation Invariant: If raw_triage is None, validated_triage is None.
         """
         # Step 1: Canonical Evidence Integrity Check (Channel A)
         if channel_a is None or not channel_a.endpoint_id:
             raise CanonicalEvidenceIntegrityError("Corrupt or missing canonical evidence snapshot.")
 
         # Step 2: Channel B Validation (Category Enforcement & ID Grounding)
-        if channel_b is not None:
-            if not channel_b.is_malformed:
-                # Step 2a: Category Registration Enforcement (TRIAGE_CATEGORY_INVALID)
-                if channel_b.suspected_category is not None:
-                    valid_cats = registered_categories if registered_categories is not None else load_registered_categories()
-                    if channel_b.suspected_category not in valid_cats:
-                        channel_b.category_invalid = True
-                        emit_audit_event("TRIAGE_CATEGORY_INVALID", {
-                            "invalid_category": channel_b.suspected_category,
-                            "endpoint_id": channel_a.endpoint_id,
-                            "field_origin": "channel_b.suspected_category"
-                        })
-                        routing_decision.escalate = True
-                        routing_decision.fail_safe_triggered = True
-                        if "TRIAGE_CATEGORY_INVALID" not in routing_decision.deep_analysis_triggers:
-                            routing_decision.deep_analysis_triggers.append("TRIAGE_CATEGORY_INVALID")
-                        if "TRIAGE_CATEGORY_INVALID" not in routing_decision.reasons:
-                            routing_decision.reasons.append("TRIAGE_CATEGORY_INVALID")
-                    else:
-                        channel_b.category_invalid = False
-                else:
-                    channel_b.category_invalid = False
+        validated_triage: Optional[TriageMetadataPacket] = None
 
-                # Step 2b: ID Grounding Check (TRIAGE_HALLUCINATION)
-                grounded_ids = extract_canonical_ids(channel_a)
-                cited_ids = (channel_b.cited_parameter_ids or []) + (channel_b.cited_fact_ids or [])
-                ungrounded = [cid for cid in cited_ids if cid not in grounded_ids]
-                if ungrounded:
-                    emit_audit_event("TRIAGE_HALLUCINATION", {
-                        "ungrounded_ids": ungrounded,
-                        "endpoint_id": channel_a.endpoint_id
+        if raw_triage is None:
+            # Null Propagation Invariant: if 3B runner produced no output (timeout, failure),
+            # the Gate returns validated_triage = None without fabricating a packet.
+            validated_triage = None
+            routing_decision.escalate = True
+            routing_decision.fail_safe_triggered = True
+            if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.deep_analysis_triggers:
+                routing_decision.deep_analysis_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+            if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.reasons:
+                routing_decision.reasons.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+        elif not raw_triage.is_malformed:
+            # Step 2a: Category Registration Enforcement (TRIAGE_CATEGORY_INVALID)
+            category_invalid = False
+            if raw_triage.suspected_category is not None:
+                valid_cats = registered_categories if registered_categories is not None else load_registered_categories()
+                if raw_triage.suspected_category not in valid_cats:
+                    category_invalid = True
+                    emit_audit_event("TRIAGE_CATEGORY_INVALID", {
+                        "invalid_category": raw_triage.suspected_category,
+                        "endpoint_id": channel_a.endpoint_id,
+                        "field_origin": "raw_triage.suspected_category"
                     })
-                    channel_b.cited_parameter_ids = [pid for pid in (channel_b.cited_parameter_ids or []) if pid in grounded_ids]
-                    channel_b.cited_fact_ids = [fid for fid in (channel_b.cited_fact_ids or []) if fid in grounded_ids]
                     routing_decision.escalate = True
                     routing_decision.fail_safe_triggered = True
-                    if "TRIAGE_HALLUCINATION" not in routing_decision.deep_analysis_triggers:
-                        routing_decision.deep_analysis_triggers.append("TRIAGE_HALLUCINATION")
-                    if "TRIAGE_HALLUCINATION" not in routing_decision.reasons:
-                        routing_decision.reasons.append("TRIAGE_HALLUCINATION")
+                    if "TRIAGE_CATEGORY_INVALID" not in routing_decision.deep_analysis_triggers:
+                        routing_decision.deep_analysis_triggers.append("TRIAGE_CATEGORY_INVALID")
+                    if "TRIAGE_CATEGORY_INVALID" not in routing_decision.reasons:
+                        routing_decision.reasons.append("TRIAGE_CATEGORY_INVALID")
+                else:
+                    category_invalid = False
             else:
-                channel_b.category_invalid = False
+                category_invalid = False
+
+            # Step 2b: ID Grounding Check (TRIAGE_HALLUCINATION)
+            grounded_ids = extract_canonical_ids(channel_a)
+            cited_ids = (raw_triage.cited_parameter_ids or []) + (raw_triage.cited_fact_ids or [])
+            ungrounded = [cid for cid in cited_ids if cid not in grounded_ids]
+            clean_parameter_ids = [pid for pid in (raw_triage.cited_parameter_ids or []) if pid in grounded_ids]
+            clean_fact_ids = [fid for fid in (raw_triage.cited_fact_ids or []) if fid in grounded_ids]
+
+            if ungrounded:
+                emit_audit_event("TRIAGE_HALLUCINATION", {
+                    "ungrounded_ids": ungrounded,
+                    "endpoint_id": channel_a.endpoint_id
+                })
                 routing_decision.escalate = True
                 routing_decision.fail_safe_triggered = True
-                if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.deep_analysis_triggers:
-                    routing_decision.deep_analysis_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
-                if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.reasons:
-                    routing_decision.reasons.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+                if "TRIAGE_HALLUCINATION" not in routing_decision.deep_analysis_triggers:
+                    routing_decision.deep_analysis_triggers.append("TRIAGE_HALLUCINATION")
+                if "TRIAGE_HALLUCINATION" not in routing_decision.reasons:
+                    routing_decision.reasons.append("TRIAGE_HALLUCINATION")
+
+            # Construct validated TriageMetadataPacket copying shared fields and setting Gate-evaluated fields
+            validated_triage = TriageMetadataPacket(
+                schema_version="2.0.0",
+                suspected_category=raw_triage.suspected_category,
+                decision=raw_triage.decision,
+                triage_rationale=raw_triage.triage_rationale,
+                suggested_experiment_class=raw_triage.suggested_experiment_class,
+                is_sensitive_category=raw_triage.is_sensitive_category,
+                is_malformed=raw_triage.is_malformed,  # copied verbatim
+                category_invalid=category_invalid,  # Gate-evaluated
+                candidate_security_property=raw_triage.candidate_security_property,
+                cited_parameter_ids=clean_parameter_ids,
+                cited_fact_ids=clean_fact_ids,
+            )
+        else:
+            # Malformed raw triage payload
+            routing_decision.escalate = True
+            routing_decision.fail_safe_triggered = True
+            if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.deep_analysis_triggers:
+                routing_decision.deep_analysis_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+            if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.reasons:
+                routing_decision.reasons.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+
+            validated_triage = TriageMetadataPacket(
+                schema_version="2.0.0",
+                suspected_category=raw_triage.suspected_category,
+                decision=raw_triage.decision,
+                triage_rationale=raw_triage.triage_rationale,
+                suggested_experiment_class=raw_triage.suggested_experiment_class,
+                is_sensitive_category=raw_triage.is_sensitive_category,
+                is_malformed=raw_triage.is_malformed,  # copied verbatim (True)
+                category_invalid=False,
+                candidate_security_property=raw_triage.candidate_security_property,
+                cited_parameter_ids=raw_triage.cited_parameter_ids,
+                cited_fact_ids=raw_triage.cited_fact_ids,
+            )
 
         # Step 3: Compute Provenance Hash & Assemble Immutable CascadeHandoffPacket
         prov_hash = compute_sha256(channel_a, routing_decision)
@@ -525,7 +598,7 @@ class EvidencePreservationGate:
             channel_a_structural=channel_a,
             routing_decision=routing_decision,
             provenance_hash=prov_hash,
-            channel_b_triage=channel_b,
+            validated_triage=validated_triage,
         )
 ```
 
@@ -535,8 +608,8 @@ To eliminate classification ambiguity, prevent ungrounded taxonomy drift, and en
 
 1. **Taxonomy Grounding & Registration Authority**:
    - Every candidate vulnerability category emitted by the 3B triage model (`suspected_category`) or the 7B reasoning engine (`taxonomy_category`) must strictly conform to an authorized, registered category identifier in `taxonomy/categories.yaml` (e.g., `API-BOLA-001`, `API-BFLA-002`, `STATE-MACHINE-001`, `INFO-EXPOSURE-001`).
-   - `EvidencePreservationGate` is the **sole authority** that evaluates `channel_b.suspected_category` against `taxonomy/categories.yaml`. The 3B runner is explicitly NOT authoritative for taxonomy validity and is prohibited from setting, overriding, or influencing `category_invalid`.
-   - After confirming `channel_b.is_malformed == False`, `EvidencePreservationGate.validate` checks `channel_b.suspected_category`:
+   - `EvidencePreservationGate` is the **sole authority** that evaluates `raw_triage.suspected_category` and writes the result onto the `TriageMetadataPacket` it produces (evaluating against `taxonomy/categories.yaml`). The 3B runner is explicitly NOT authoritative for taxonomy validity and is prohibited from setting, overriding, or influencing `category_invalid`.
+   - After confirming `raw_triage.is_malformed == False`, `EvidencePreservationGate.validate` checks `raw_triage.suspected_category`:
      - If `suspected_category` is `None`, the check is skipped (no category was claimed).
      - If `suspected_category` is non-null and does not match a registered identifier in `taxonomy/categories.yaml` exactly, the Gate sets `category_invalid = True` on the validated `TriageMetadataPacket`, emits a structured audit event **`TRIAGE_CATEGORY_INVALID`** (recording invalid value, scenario context, and field origin), and forces `routing_decision.escalate = True` via the Class-2 fail-safe path (identical to `TRIAGE_HALLUCINATION`).
    - This check never mutates Channel A. The invalid category string is never inserted into 7B's authoritative evidence; it represents advisory-data failure, not a vulnerability ground-truth signal.
@@ -782,7 +855,7 @@ To guarantee that no override path can exist in implementation, Class-1 predicat
 
 ```python
 class DeterministicRouter:
-    """Evaluates canonical structural evidence and 3B triage to determine 7B escalation."""
+    """Evaluates canonical structural evidence and Gate-validated triage packet to determine 7B escalation."""
 
     @staticmethod
     def evaluate_escalation(
@@ -828,6 +901,8 @@ class DeterministicRouter:
             escalate = False
 
         # 4. Class 2: 3B-Dependent Fail-Safe Triggers (Channel B Evaluation)
+        # Class-2 processing evaluates the Gate-validated TriageMetadataPacket (the router only
+        # ever receives this post-Gate packet; it never consumes RawTriageOutput directly).
         # Class-2 processing may append additional reasons/triggers.
         # Class-2 processing MUST NOT:
         #   - filter Class-1 signals
@@ -842,9 +917,9 @@ class DeterministicRouter:
         if triage_malformed:
             class_2_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
 
-        # category_invalid and sensitive-ambiguity are only meaningful once the
-        # payload is known to have parsed; they are independent of each other and
-        # both are recorded when both are true.
+        # category_invalid (evaluated exclusively by EvidencePreservationGate; router performs no taxonomy lookup)
+        # and sensitive-ambiguity are only meaningful once the payload is known to have parsed; they are independent
+        # of each other and both are recorded when both are true.
         if not triage_malformed:
             if triage.category_invalid:
                 class_2_triggers.append("TRIAGE_CATEGORY_INVALID")
@@ -1033,7 +1108,7 @@ If one role's response body parses successfully as JSON and another role's respo
 ### 7.6 Function Contract: `DeterministicRouter.evaluate_escalation` `[MANDATORY]`
 ```python
 class DeterministicRouter:
-    """Evaluates canonical structural evidence and advisory triage to compute escalation."""
+    """Evaluates canonical structural evidence and Gate-validated advisory triage to compute escalation."""
 
     @staticmethod
     def evaluate_escalation(
@@ -1041,12 +1116,13 @@ class DeterministicRouter:
         triage: Optional[TriageMetadataPacket] = None,
     ) -> DeterministicRoutingDecision:
         """
-        Pure deterministic routing evaluation. Downstream consumer of LosslessStructuralPack.
+        Pure deterministic routing evaluation. Downstream consumer of LosslessStructuralPack and Gate-validated TriageMetadataPacket.
 
         INPUT:
             - diff: LosslessStructuralPack (Required, canonical structural evidence pack computed
               exclusively by StructuralDiffEngine)
-            - triage: Optional[TriageMetadataPacket] (Advisory 3B output; may be None or malformed)
+            - triage: Optional[TriageMetadataPacket] (Gate-validated advisory triage packet; may be None or malformed;
+              the router only ever consumes this post-Gate packet and never sees raw pre-Gate output)
 
         OUTPUT:
             - DeterministicRoutingDecision: Immutable container with boolean escalate,
@@ -1055,9 +1131,10 @@ class DeterministicRouter:
         FAILURE MODES:
             - Corrupt Canonical Evidence: If diff is None or missing required identifiers,
               raises CanonicalEvidenceIntegrityError -> pipeline enters immediate HOLD/BLOCK.
-            - Malformed 3B Triage: If triage is None or triage.is_malformed == True,
+            - Malformed or Missing Triage: If triage is None or triage.is_malformed == True,
               Class-2 fail-safe escalation triggers (TRIAGE_OUTPUT_MALFORMED_OR_MISSING).
-            - Invalid 3B Taxonomy Category: If triage is parsed and triage.category_invalid == True,
+            - Invalid Taxonomy Category: If triage is parsed and triage.category_invalid == True
+              (flag evaluated exclusively by EvidencePreservationGate; router performs no taxonomy lookup),
               Class-2 fail-safe escalation triggers (TRIAGE_CATEGORY_INVALID).
 
         SIDE EFFECTS:
@@ -1069,6 +1146,7 @@ class DeterministicRouter:
               cannot filter, recalculate, threshold, or weight Class-1 signals.
             - 3B confidence, sentiment, or prose cannot suppress escalation.
             - Independent of benchmark truth labels (ground_truth_vulnerable).
+            - Consumes only post-Gate validated TriageMetadataPacket; performs zero independent taxonomy lookups.
         """
         pass
 ```
@@ -1581,9 +1659,9 @@ The implementation of M1.5 and M2 must be accompanied by comprehensive tests acr
 
 | Test Suite | Test Focus | Target Verifications |
 | :--- | :--- | :--- |
-| **A. Routing** | `test_cascade_routing.py` | - Deterministic escalation on privilege delta.<br>- Deterministic escalation on status code delta.<br>- Abstention on clean read-only endpoints.<br>- Fail-safe escalation on malformed/missing 3B JSON (when Channel A is intact); pipeline HOLD/BLOCK on canonical evidence/database failure.<br>- Suppression of model self-confidence fields.<br>- **9-Fixture Monotonicity Sweep**: Proof that for fixed canonical evidence presenting a Class-1 signal, all 9 distinct 3B output variations (empty, malformed, valid benign, valid wrong, adversarial prose, inflated confidence, false secure claim, ungrounded IDs, invalid/unregistered category) produce `escalate == True`.<br>- **Standalone Class-2 Category Validation Test**: Fires `TRIAGE_CATEGORY_INVALID` with no Class-1 signal present, asserting `escalate == True` and `fail_safe_triggered == True`. |
-| **A.5 Structural Diff & Predicates** | `test_structural_diff_raw.py` | - **Raw Synthetic Evidence Fixture Suite**: Operates on raw synthetic evidence fixtures directly from canonical `evidence.db` representations (does NOT test only prebuilt `LosslessStructuralPack` objects).<br>- Pure computation verification of `StructuralDiffEngine.compute(raw_facts, identity_matrix)`.<br>- StructuralDiffEngine verified as sole predicate producer of Class-1 booleans.<br>- **`CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` Suite**: Verification across all 6 dedicated synthetic fixtures (same-role same-owner, same-role diff-owner, diff-role diff-owner, denied access, unknown ownership, unregistered ID).<br>- **Multi-Role Existential Quantification**: Verification across 2 roles, 3 roles, and 15–20 roles over all $\binom{N}{2}$ pairs.<br>- **`EVIDENCE_PARSE_ASYMMETRY` Handling**: Emits audit event, preserves provenance, sets complexity trigger, forces unconditional escalation.<br>- **Integrity Failure**: Verification of pipeline `HOLD/BLOCK` on all-unparseable responses or corrupt canonical evidence.<br>- **14 Deterministic Test Fixtures (Category & Identity Semantics)**:<br>  1. Valid registered category $\to$ no `category_invalid`, no forced escalation.<br>  2. Unknown/unregistered category $\to$ `category_invalid = True` $\to$ `TRIAGE_CATEGORY_INVALID` $\to$ escalate.<br>  3. Malformed category syntax on otherwise-parseable payload $\to$ same as (2).<br>  4. Category invalid + Class-1 signal simultaneously present $\to$ escalate; both reasons recorded in `reasons` (independent `if`/`if` check).<br>  5. Category invalid with NO Class-1 signal present $\to$ escalate via Class-2 alone (`escalate == True`, `fail_safe_triggered == True`).<br>  6. Known authenticated caller + known comparison identity $\to$ normal predicate evaluation.<br>  7. Explicit unauthenticated caller (State 2) $\to$ valid unauthenticated semantics, unchanged behavior.<br>  8. Missing caller identity (State 3) $\to$ `identity_context = UNKNOWN`; predicate = INDETERMINATE/FALSE; never ANONYMOUS.<br>  9. Missing role only (identity known, role UNKNOWN) $\to$ `PRIVILEGE_LEVEL_DELTA_DETECTED` cannot be inferred; INDETERMINATE/FALSE.<br>  10. Missing caller identity (State 3) + successful 200 response $\to$ MUST NOT become `has_unauthenticated_success = True`.<br>  11. Explicit unauthenticated (State 2) + successful response $\to$ MAY become `has_unauthenticated_success = True`, per predicate #3.<br>  12. Unknown identity on one side of cross-role comparison $\to$ no fabricated privilege delta.<br>  13. Unknown identity as resource-owner of `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` $\to$ predicate stays negative/indeterminate.<br>  14. All required identities unavailable $\to$ documented fail-safe (HOLD/BLOCK or Class-1 complexity trigger), never fabricated concrete result. |
-| **B. Handoff** | `test_evidence_handoff.py` | - Channel A exact-ID preservation through gate.<br>- **Ungrounded ID Handling (`TRIAGE_HALLUCINATION`)**: Verification that invented 3B IDs trigger audit event logging, field invalidation, Class-2 fail-safe escalation, and quarantine from 7B prompt.<br>- **Taxonomy Category Validation (`TRIAGE_CATEGORY_INVALID`)**: Verification that `EvidencePreservationGate.validate` evaluates `suspected_category` against `taxonomy/categories.yaml`, sets `category_invalid = True`, emits `TRIAGE_CATEGORY_INVALID` audit event, forces Class-2 fail-safe escalation, and leaves Channel A unmodified.<br>- Guaranteed floor token allocation under context pressure.<br>- Contradiction block preservation. |
+| **A. Routing** | `test_cascade_routing.py` | - Deterministic escalation on privilege delta.<br>- Deterministic escalation on status code delta.<br>- Abstention on clean read-only endpoints.<br>- Fail-safe escalation on malformed/missing 3B JSON (when Channel A is intact); pipeline HOLD/BLOCK on canonical evidence/database failure.<br>- Suppression of model self-confidence fields.<br>- **9-Fixture Monotonicity Sweep**: Proof that for fixed canonical evidence presenting a Class-1 signal, all 9 distinct advisory triage states evaluated through Gate-validated `TriageMetadataPacket` inputs to `DeterministicRouter` (empty/None, malformed, valid benign, valid wrong, adversarial prose, inflated confidence, false secure claim, ungrounded IDs quarantined, invalid/unregistered category flagged) produce `escalate == True`.<br>- **Standalone Class-2 Category Validation Test**: Fires `TRIAGE_CATEGORY_INVALID` with no Class-1 signal present, asserting `escalate == True` and `fail_safe_triggered == True`. |
+| **A.5 Structural Diff & Predicates** | `test_structural_diff_raw.py` | - **Raw Synthetic Evidence Fixture Suite**: Operates on raw synthetic evidence fixtures directly from canonical `evidence.db` representations (does NOT test only prebuilt `LosslessStructuralPack` objects).<br>- Pure computation verification of `StructuralDiffEngine.compute(raw_facts, identity_matrix)`.<br>- StructuralDiffEngine verified as sole predicate producer of Class-1 booleans.<br>- **`CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` Suite**: Verification across all 6 dedicated synthetic fixtures (same-role same-owner, same-role diff-owner, diff-role diff-owner, denied access, unknown ownership, unregistered ID).<br>- **Multi-Role Existential Quantification**: Verification across 2 roles, 3 roles, and 15–20 roles over all $\binom{N}{2}$ pairs.<br>- **`EVIDENCE_PARSE_ASYMMETRY` Handling**: Emits audit event, preserves provenance, sets complexity trigger, forces unconditional escalation.<br>- **Integrity Failure**: Verification of pipeline `HOLD/BLOCK` on all-unparseable responses or corrupt canonical evidence.<br>- **14 Deterministic Test Fixtures (Category & Identity Semantics)**:<br>  1. Valid registered category in `RawTriageOutput` $\to$ Gate produces `TriageMetadataPacket` with `category_invalid = False`, no forced escalation.<br>  2. Unknown/unregistered category in `RawTriageOutput` $\to$ Gate produces `TriageMetadataPacket` with `category_invalid = True` $\to$ `TRIAGE_CATEGORY_INVALID` $\to$ escalate.<br>  3. Malformed category syntax on otherwise-parseable `RawTriageOutput` payload $\to$ same as (2).<br>  4. Category invalid on `TriageMetadataPacket` + Class-1 signal simultaneously present $\to$ escalate; both reasons recorded in `reasons` (independent `if`/`if` check).<br>  5. Category invalid on `TriageMetadataPacket` with NO Class-1 signal present $\to$ escalate via Class-2 alone (`escalate == True`, `fail_safe_triggered == True`).<br>  6. Known authenticated caller + known comparison identity $\to$ normal predicate evaluation.<br>  7. Explicit unauthenticated caller (State 2) $\to$ valid unauthenticated semantics, unchanged behavior.<br>  8. Missing caller identity (State 3) $\to$ `identity_context = UNKNOWN`; predicate = INDETERMINATE/FALSE; never ANONYMOUS.<br>  9. Missing role only (identity known, role UNKNOWN) $\to$ `PRIVILEGE_LEVEL_DELTA_DETECTED` cannot be inferred; INDETERMINATE/FALSE.<br>  10. Missing caller identity (State 3) + successful 200 response $\to$ MUST NOT become `has_unauthenticated_success = True`.<br>  11. Explicit unauthenticated (State 2) + successful response $\to$ MAY become `has_unauthenticated_success = True`, per predicate #3.<br>  12. Unknown identity on one side of cross-role comparison $\to$ no fabricated privilege delta.<br>  13. Unknown identity as resource-owner of `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` $\to$ predicate stays negative/indeterminate.<br>  14. All required identities unavailable $\to$ documented fail-safe (HOLD/BLOCK or Class-1 complexity trigger), never fabricated concrete result. |
+| **B. Handoff** | `test_evidence_handoff.py` | - Channel A exact-ID preservation through gate.<br>- **Ungrounded ID Handling (`TRIAGE_HALLUCINATION`)**: Verification that invented 3B IDs in `RawTriageOutput` trigger audit event logging, field invalidation and quarantine on the resulting `TriageMetadataPacket`, Class-2 fail-safe escalation, and quarantine from 7B prompt.<br>- **Taxonomy Category Validation (`TRIAGE_CATEGORY_INVALID`)**: Verification that `EvidencePreservationGate.validate` evaluates `raw_triage.suspected_category` against `taxonomy/categories.yaml`, sets `category_invalid = True` on `TriageMetadataPacket`, emits `TRIAGE_CATEGORY_INVALID` audit event, forces Class-2 fail-safe escalation, and leaves Channel A unmodified.<br>- **Null Propagation Invariant Verification**: Verification that when `raw_triage` is `None` (missing/failed 3B runner), `EvidencePreservationGate.validate` yields `validated_triage = None` without fabricating a packet.<br>- Guaranteed floor token allocation under context pressure.<br>- Contradiction block preservation. |
 | **C. Prompt Injection** | `test_cascade_injection.py` | - `<untrusted_target_data>` delimiter escaping.<br>- Target payload attempting to force `NO_RELEVANT_FUNCTIONALITY`.<br>- Target payload attempting to alter system instructions.<br>- **Zero-Breakout Invariant**: Verification of 0 `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption).<br>- **Adversarial Context Stuffing**: Neutralization of large bodies without status-code delta loss. |
 | **D. Context Saturation** | `test_context_budget.py` | - Truncation order: Advisory RAG dropped first, then 3B prose.<br>- Structural diffs and exact IDs never dropped.<br>- 4096 vs 8192 ceiling adherence.<br>- `CONTEXT_BUDGET_OVERFLOW` lifecycle verification on oversized structural packs.<br>- **`REALISTIC_LARGE_CANONICAL_EVIDENCE` Sweep**: Verification across 10/15/20/25 roles and 10/20/30/40 parameters under Tier 1 and Tier 2 envelopes. |
 | **E. Hardware / VRAM** | `test_resource_lifecycle.py` | - Clean model load/unload cycles in Ollama.<br>- Memory pressure handling and sequential model transitions.<br>- **`MODEL_ENVIRONMENT_VALIDATION` pre-execution suite**: Digest verification, layer offload placement, zero driver resets.<br>- **Measurable Memory-Drift Suite**: Confirmed quiescence wait, per-cycle RSS/VRAM recordings, fitted growth slope $\le 5.0\text{ MB/cycle}$, endpoint drift $\le \max(5\%, 150\text{ MB})$; detection of `MEMORY_DRIFT_DETECTED`.<br>- Separate instrumentation of $T_{\text{load}}$ and $T_{\text{infer}}$. |
@@ -1624,8 +1702,8 @@ Phase 4: EvidencePreservationGate Implementation
 Phase 5: Two-Class Deterministic Routing Predicates
    │   - Implement DeterministicRouter with immutable Class-1 union model and Class-2 fail-safe triggers
    ▼
-Phase 6: 3B Triage Output Schema & Runner
-   │   - Implement TriageMetadataPacket and fast 3B triage runner with 3B_FAILURE_RATE tracking
+Phase 6: 3B Triage Output Schemas & Runner
+   │   - Implement RawTriageOutput schema, TriageMetadataPacket schema, and fast 3B triage runner with 3B_FAILURE_RATE tracking
    ▼
 Phase 7: Hardened 7B Shared ReasoningContextBuilder & Token Controller
    │   - Implement shared parametrized ReasoningContextBuilder for Tracks A, B, and C
