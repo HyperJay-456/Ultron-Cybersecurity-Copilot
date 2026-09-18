@@ -253,6 +253,10 @@ class StructuralDiffEngine:
               raises CanonicalEvidenceIntegrityError -> Pipeline enters immediate HOLD/BLOCK.
             - Incomplete Response Evidence: Follows explicit predicate missing-data rules. Never silently
               infers a security predicate from missing evidence.
+            - Missing or Unknown Identity Metadata: If caller identity metadata is genuinely unavailable
+              (identity_context = UNKNOWN), the engine MUST NOT classify the caller as ANONYMOUS. Predicate evaluates
+              to INDETERMINATE / FALSE, emits the audit condition IDENTITY_METADATA_UNKNOWN, and follows Class-1 complexity
+              or HOLD/BLOCK semantics rather than inferring a privilege relationship.
             - Asymmetric Response Corruption: If one role's response body parses successfully as JSON and another
               role's response body does not parse (or is truncated/unparseable), the pairwise predicate result evaluates
               to INDETERMINATE / FALSE for that specific pair, emits the audit event EVIDENCE_PARSE_ASYMMETRY,
@@ -345,7 +349,7 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `identity_matrix: List[Dict[str, Any]]` (Active identity IDs, roles, permissions, tenant boundaries).
   - `auth_header_delta: bool` (Presence/absence of authorization credentials).
   - `status_code_changed_under_different_role: bool` (Role-based status code discrepancy).
-  - `has_privilege_level_delta: bool` (Caller role lower than owner role).
+  - `has_privilege_level_delta: bool` (Caller role lower than owner role under known authenticated identities; effective domain is `{True, False, INDETERMINATE-treated-as-False}`; never evaluated True if caller `identity_context` is `UNKNOWN`).
   - `has_unauthenticated_success: bool` (Non-401/403 status code under unauthenticated caller).
   - `has_cross_role_response_shape_delta: bool` (Structural JSON key discrepancy across roles).
   - `has_cross_identity_object_access_success: bool` (Class-1 predicate: observable same-role cross-object access anomaly).
@@ -361,6 +365,9 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
 
 #### Schema 2: `TriageMetadataPacket` (`v2.0.0`)
 - **Schema Name**: `TriageMetadataPacket`
+- **Two-Stage Packet Lifecycle & Field Ownership**:
+  - *Stage 1: Raw Advisory 3B Triage Output* (Emitted by 3B runner; includes predictions, rationale, and suggested experiment class; explicitly prohibited from containing or asserting `category_invalid`).
+  - *Stage 2: Post-Gate Validated `TriageMetadataPacket`* (Validated by `EvidencePreservationGate` and consumed by `DeterministicRouter`; `EvidencePreservationGate` is the sole producer of `category_invalid` and ID quarantine flags; 3B runner cannot set or influence `category_invalid`).
 - **Required Fields**:
   - `schema_version: str` (Literal `"2.0.0"`).
   - `suspected_category: Optional[str]` (Taxonomy category string, e.g. `"API-BOLA-001"`, or `None`).
@@ -369,6 +376,7 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
   - `suggested_experiment_class: Optional[str]` (Enum: `"ID_SWAP"`, `"ROLE_SWAP"`, `"STEP_SKIP"`, `"AUTH_DROP"`, `None`).
   - `is_sensitive_category: bool` (True if category involves authorization, authentication, or tenant boundary).
   - `is_malformed: bool` (Flag indicating parser or schema non-compliance).
+  - `category_invalid: bool` (Populated strictly by `EvidencePreservationGate.validate`; True if non-null `suspected_category` does not match registered taxonomy in `taxonomy/categories.yaml`; 3B runner cannot set or influence this field).
 - **Optional Fields**:
   - `candidate_security_property: Optional[str]` (Natural language hypothesis focus).
   - `cited_parameter_ids: Optional[List[str]]` (List of parameter IDs referenced by 3B).
@@ -407,21 +415,23 @@ Milestone M2 introduces dedicated, independently versioned cascade schemas under
 ### 4.5 Function Contract: `EvidencePreservationGate.validate` `[MANDATORY]`
 ```python
 class EvidencePreservationGate:
-    """Enforces evidence preservation, channel separation, and ungrounded ID quarantine."""
+    """Enforces evidence preservation, channel separation, category validity, and ungrounded ID quarantine."""
 
     @staticmethod
     def validate(
         channel_a: LosslessStructuralPack,
         channel_b: Optional[TriageMetadataPacket],
         routing_decision: DeterministicRoutingDecision,
+        registered_categories: Optional[Set[str]] = None,
     ) -> CascadeHandoffPacket:
         """
-        Validates evidence handoff, checks ID grounding, and compiles CascadeHandoffPacket.
+        Validates evidence handoff, checks taxonomy category validity, enforces ID grounding, and compiles CascadeHandoffPacket.
 
         INPUT:
             - channel_a: LosslessStructuralPack (Required, canonical structural evidence)
             - channel_b: Optional[TriageMetadataPacket] (Advisory 3B output, may be None)
             - routing_decision: DeterministicRoutingDecision (Pre-evaluated routing decision)
+            - registered_categories: Optional[Set[str]] (Authorized taxonomy set from taxonomy/categories.yaml)
 
         OUTPUT:
             - CascadeHandoffPacket: Immutable, verified two-channel packet with cryptographic provenance_hash.
@@ -429,24 +439,94 @@ class EvidencePreservationGate:
         FAILURE MODES:
             - Canonical Evidence Invalid: If channel_a is corrupt, unparented, or missing required IDs,
               raises CanonicalEvidenceIntegrityError -> Pipeline enters immediate HOLD/BLOCK.
-            - Ungrounded 3B ID: If channel_b cites an ID not in channel_a, emits audit log
+            - Malformed 3B Triage: If channel_b is None or channel_b.is_malformed == True,
+              routing_decision.escalate is set to True (TRIAGE_OUTPUT_MALFORMED_OR_MISSING).
+            - Unregistered/Invalid 3B Category (TRIAGE_CATEGORY_INVALID): If channel_b is parsed (is_malformed == False)
+              and channel_b.suspected_category is not None and does not match a registered identifier in
+              taxonomy/categories.yaml, sets channel_b.category_invalid = True, emits structured audit event
+              TRIAGE_CATEGORY_INVALID, and forces routing_decision.escalate = True (Class-2 fail-safe escalation).
+            - Ungrounded 3B ID (TRIAGE_HALLUCINATION): If channel_b cites an ID not in channel_a, emits audit log
               TRIAGE_HALLUCINATION, strips citation from channel_b, marks channel_b untrusted,
               forces routing_decision.escalate = True (Class-2 fail-safe escalation).
             - Context Floor Overflow: If channel_a alone exceeds the P1 protected budget,
               raises ContextBudgetOverflowError -> logs CONTEXT_BUDGET_OVERFLOW.
 
         SIDE EFFECTS:
-            - Emits structured security audit logs (TRIAGE_HALLUCINATION or GATE_VALIDATION_PASS).
+            - Emits structured security audit logs (TRIAGE_CATEGORY_INVALID, TRIAGE_HALLUCINATION, or GATE_VALIDATION_PASS).
             - Updates routing_decision to escalate if a Class-2 fail-safe trigger was activated.
             - NEVER modifies channel_a.
 
         SECURITY INVARIANTS:
             - Channel A is completely immutable and preserved verbatim.
             - Channel B can never overwrite, shadow, or redefine Channel A.
+            - Sole Authority for Class-2 Gate Flags: EvidencePreservationGate is the sole component permitted
+              to compute category_invalid and quarantine ungrounded IDs.
             - Ungrounded IDs are physically quarantined and never passed to 7B reasoning prompt.
-            - No silent identifier dropping: every triage hallucination is logged and forces escalation.
+            - Invalid categories are flagged as advisory failure and force fail-safe escalation, never injected into authoritative evidence.
         """
-        pass
+        # Step 1: Canonical Evidence Integrity Check (Channel A)
+        if channel_a is None or not channel_a.endpoint_id:
+            raise CanonicalEvidenceIntegrityError("Corrupt or missing canonical evidence snapshot.")
+
+        # Step 2: Channel B Validation (Category Enforcement & ID Grounding)
+        if channel_b is not None:
+            if not channel_b.is_malformed:
+                # Step 2a: Category Registration Enforcement (TRIAGE_CATEGORY_INVALID)
+                if channel_b.suspected_category is not None:
+                    valid_cats = registered_categories if registered_categories is not None else load_registered_categories()
+                    if channel_b.suspected_category not in valid_cats:
+                        channel_b.category_invalid = True
+                        emit_audit_event("TRIAGE_CATEGORY_INVALID", {
+                            "invalid_category": channel_b.suspected_category,
+                            "endpoint_id": channel_a.endpoint_id,
+                            "field_origin": "channel_b.suspected_category"
+                        })
+                        routing_decision.escalate = True
+                        routing_decision.fail_safe_triggered = True
+                        if "TRIAGE_CATEGORY_INVALID" not in routing_decision.deep_analysis_triggers:
+                            routing_decision.deep_analysis_triggers.append("TRIAGE_CATEGORY_INVALID")
+                        if "TRIAGE_CATEGORY_INVALID" not in routing_decision.reasons:
+                            routing_decision.reasons.append("TRIAGE_CATEGORY_INVALID")
+                    else:
+                        channel_b.category_invalid = False
+                else:
+                    channel_b.category_invalid = False
+
+                # Step 2b: ID Grounding Check (TRIAGE_HALLUCINATION)
+                grounded_ids = extract_canonical_ids(channel_a)
+                cited_ids = (channel_b.cited_parameter_ids or []) + (channel_b.cited_fact_ids or [])
+                ungrounded = [cid for cid in cited_ids if cid not in grounded_ids]
+                if ungrounded:
+                    emit_audit_event("TRIAGE_HALLUCINATION", {
+                        "ungrounded_ids": ungrounded,
+                        "endpoint_id": channel_a.endpoint_id
+                    })
+                    channel_b.cited_parameter_ids = [pid for pid in (channel_b.cited_parameter_ids or []) if pid in grounded_ids]
+                    channel_b.cited_fact_ids = [fid for fid in (channel_b.cited_fact_ids or []) if fid in grounded_ids]
+                    routing_decision.escalate = True
+                    routing_decision.fail_safe_triggered = True
+                    if "TRIAGE_HALLUCINATION" not in routing_decision.deep_analysis_triggers:
+                        routing_decision.deep_analysis_triggers.append("TRIAGE_HALLUCINATION")
+                    if "TRIAGE_HALLUCINATION" not in routing_decision.reasons:
+                        routing_decision.reasons.append("TRIAGE_HALLUCINATION")
+            else:
+                channel_b.category_invalid = False
+                routing_decision.escalate = True
+                routing_decision.fail_safe_triggered = True
+                if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.deep_analysis_triggers:
+                    routing_decision.deep_analysis_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+                if "TRIAGE_OUTPUT_MALFORMED_OR_MISSING" not in routing_decision.reasons:
+                    routing_decision.reasons.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
+
+        # Step 3: Compute Provenance Hash & Assemble Immutable CascadeHandoffPacket
+        prov_hash = compute_sha256(channel_a, routing_decision)
+        return CascadeHandoffPacket(
+            schema_version="2.0.0",
+            channel_a_structural=channel_a,
+            routing_decision=routing_decision,
+            provenance_hash=prov_hash,
+            channel_b_triage=channel_b,
+        )
 ```
 
 ### 4.6 Category Enforcement Semantics: Taxonomy Grounding & Predicate Boundaries `[MANDATORY]`
@@ -455,7 +535,11 @@ To eliminate classification ambiguity, prevent ungrounded taxonomy drift, and en
 
 1. **Taxonomy Grounding & Registration Authority**:
    - Every candidate vulnerability category emitted by the 3B triage model (`suspected_category`) or the 7B reasoning engine (`taxonomy_category`) must strictly conform to an authorized, registered category identifier in `taxonomy/categories.yaml` (e.g., `API-BOLA-001`, `API-BFLA-002`, `STATE-MACHINE-001`, `INFO-EXPOSURE-001`).
-   - Unregistered, hallucinated, or malformed category identifiers emitted by 3B are formally classified as **`TRIAGE_CATEGORY_INVALID`**, triggering an immediate Class-2 fail-safe escalation to 7B (`escalate = True`).
+   - `EvidencePreservationGate` is the **sole authority** that evaluates `channel_b.suspected_category` against `taxonomy/categories.yaml`. The 3B runner is explicitly NOT authoritative for taxonomy validity and is prohibited from setting, overriding, or influencing `category_invalid`.
+   - After confirming `channel_b.is_malformed == False`, `EvidencePreservationGate.validate` checks `channel_b.suspected_category`:
+     - If `suspected_category` is `None`, the check is skipped (no category was claimed).
+     - If `suspected_category` is non-null and does not match a registered identifier in `taxonomy/categories.yaml` exactly, the Gate sets `category_invalid = True` on the validated `TriageMetadataPacket`, emits a structured audit event **`TRIAGE_CATEGORY_INVALID`** (recording invalid value, scenario context, and field origin), and forces `routing_decision.escalate = True` via the Class-2 fail-safe path (identical to `TRIAGE_HALLUCINATION`).
+   - This check never mutates Channel A. The invalid category string is never inserted into 7B's authoritative evidence; it represents advisory-data failure, not a vulnerability ground-truth signal.
 
 2. **Strict Separation: Observable Predicates vs. Taxonomy Category Labels**:
    - The boolean predicates computed by `StructuralDiffEngine` (such as `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS`, `PRIVILEGE_LEVEL_DELTA_DETECTED`, and `ROLE_BASED_STATUS_CODE_DELTA`) represent **observable authorization and structural conditions**, NOT vulnerability category verdicts or confirmations.
@@ -688,7 +772,7 @@ Deterministic escalation is formally split into two distinct, independent predic
 │                                                                             │
 │   CLASS 2: 3B-DEPENDENT FAIL-SAFE TRIGGERS (Channel B Only)                 │
 │   - Evaluates 3B output integrity and semantic triage uncertainty           │
-│   - Triggers: MALFORMED_JSON, TRIAGE_HALLUCINATION, SENSITIVE_AMBIGUITY     │
+│   - Triggers: MALFORMED_JSON, TRIAGE_CATEGORY_INVALID, HALLUCINATION, etc. │
 │   - DIRECTIONAL INVARIANT: Can ONLY trigger ESCALATE; NEVER de-escalate     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -753,10 +837,19 @@ class DeterministicRouter:
         #   - apply confidence weights
         #   - apply thresholds to Class-1 signals
         class_2_triggers: List[str] = []
-        if triage is None or triage.is_malformed:
+
+        triage_malformed = (triage is None) or triage.is_malformed
+        if triage_malformed:
             class_2_triggers.append("TRIAGE_OUTPUT_MALFORMED_OR_MISSING")
-        elif triage.decision == "INSUFFICIENT_EVIDENCE" and triage.is_sensitive_category:
-            class_2_triggers.append("TRIAGE_AMBIGUITY_ON_SENSITIVE_CATEGORY")
+
+        # category_invalid and sensitive-ambiguity are only meaningful once the
+        # payload is known to have parsed; they are independent of each other and
+        # both are recorded when both are true.
+        if not triage_malformed:
+            if triage.category_invalid:
+                class_2_triggers.append("TRIAGE_CATEGORY_INVALID")
+            if triage.decision == "INSUFFICIENT_EVIDENCE" and triage.is_sensitive_category:
+                class_2_triggers.append("TRIAGE_AMBIGUITY_ON_SENSITIVE_CATEGORY")
 
         if class_2_triggers:
             escalate = True
@@ -803,8 +896,8 @@ The routing engine enforces two distinct, mathematically formalized properties:
    Under no circumstances can any 3B property or payload effectuate:  
    $$\text{ESCALATE} \longrightarrow \text{CASCADE\_NOT\_ESCALATED}$$
 
-#### Deterministic Test Specification: The 8-Fixture Monotonicity Sweep
-In Test Suite A (`test_cascade_routing.py`), every canonical fixture presenting a Class-1 signal must be evaluated against eight distinct 3B triage states:
+#### Deterministic Test Specification: The 9-Fixture Monotonicity Sweep
+In Test Suite A (`test_cascade_routing.py`), every canonical fixture presenting a Class-1 signal must be evaluated against nine distinct 3B triage states:
 1. **Empty 3B Output**: `triage = None`.
 2. **Malformed JSON**: Parser error, broken syntax, or truncated payload.
 3. **Valid Benign Output**: `decision = "BENIGN_NO_ISSUE"` with clean rationale.
@@ -813,11 +906,32 @@ In Test Suite A (`test_cascade_routing.py`), every canonical fixture presenting 
 6. **Inflated Confidence**: Synthetically injected `confidence: 1.0`.
 7. **False "Secure" Claim**: `decision = "BENIGN_NO_ISSUE"` claiming authorization verified.
 8. **Invented/Ungrounded IDs**: `TRIAGE_HALLUCINATION` referencing unparented IDs.
+9. **Invalid/Unregistered Category**: `category_invalid = True` (`TRIAGE_CATEGORY_INVALID`) with non-registered category string.
 
-*Mandatory Test Assertion*: **100% of all 8 paired executions MUST evaluate to `escalate == True`**. Any execution yielding `CASCADE_NOT_ESCALATED` constitutes an immediate critical regression and causes test suite failure.
+*Mandatory Test Assertion*: **100% of all 9 paired executions MUST evaluate to `escalate == True`**. Any execution yielding `CASCADE_NOT_ESCALATED` constitutes an immediate critical regression and causes test suite failure. Additionally, Test Suite A includes a standalone verification that fires `TRIAGE_CATEGORY_INVALID` with **no Class-1 signal present**, asserting that the Class-2 path alone produces `escalate == True` and `fail_safe_triggered == True`.
 
 ### 7.5 Operational Definitions for Class-1 Routing Predicates `[MANDATORY]`
 To eliminate ambiguity, each Class-1 predicate computed by `StructuralDiffEngine` is defined operationally.
+
+### 7.5.0 Identity Context Semantics: Three Distinct States `[MANDATORY]`
+
+To eliminate structural distortion, privilege falsification, and invalid escalation triggers, the system rigorously distinguishes between three mutually exclusive identity context states across all canonical structural predicate evaluations:
+
+1. **Known Authenticated Identity** (`identity_id` and `role` populated from canonical evidence):
+   - Represents a positively observed, authenticated principal (e.g., `user_123` with role `STANDARD_USER`).
+   - Participates normally in all role-lattice, ownership, and authorization comparisons.
+
+2. **Explicitly Observed Unauthenticated Identity** (`identity_context = UNAUTHENTICATED`):
+   - A positive observation on a captured request that carried no credentials (e.g., absent or null `Authorization` / `Cookie` headers).
+   - Valid evidence representing an anonymous caller; participates normally in `UNAUTHENTICATED_ACCESS_SUCCESS`.
+
+3. **Missing / Unknown Identity Metadata** (`identity_context = UNKNOWN`):
+   - An infrastructure, telemetry, or documentation capture gap where the caller's identity or role could not be captured or resolved from evidence.
+   - **MUST NEVER** be normalized to `ANONYMOUS`, `UNAUTHENTICATED`, or any concrete principal merely to make a predicate computable; missing or unknown identity metadata MUST NEVER be classified as ANONYMOUS.
+   - Result is strictly `INDETERMINATE / FALSE`. The engine emits the audit condition `IDENTITY_METADATA_UNKNOWN`, preserves evidence provenance, and applies documented Class-1 complexity or `HOLD/BLOCK` semantics rather than fabricating an authorization relationship.
+
+> **Universal Identity Invariant**:  
+> **Missing identity metadata must never be converted into ANONYMOUS, UNAUTHENTICATED, or another concrete principal merely to make a predicate computable.**
 
 #### Multi-Role Existential Quantification Over All Observed Role Pairs
 For every predicate comparing caller roles, response statuses, or response schemas, the comparison is defined existentially over all observed distinct role pairs:
@@ -834,7 +948,7 @@ The system does NOT assume only two roles exist. Explicit semantics apply across
   Where $\text{Level}(\text{ANONYMOUS}) = 0 < \text{Level}(\text{STANDARD\_USER}) = 1 < \text{Level}(\text{TENANT\_ADMIN}) = 2$.
 - **Positive Condition**: Request executed by an identity with strictly lower privilege level succeeded with HTTP $200, 201, 204$ on an asset designated for higher privilege.
 - **Negative Condition**: Caller privilege $\ge$ resource privilege, or request resulted in HTTP $401, 403$.
-- **Missing-Data Behavior**: If caller identity metadata is missing, caller is classified as `ANONYMOUS` (Level 0); if request succeeded, triggers positive condition.
+- Missing-Data Behavior: If caller identity metadata is genuinely unavailable (identity_context = UNKNOWN), the predicate MUST NOT classify the caller as ANONYMOUS. Result = INDETERMINATE / FALSE. Emit the audit condition IDENTITY_METADATA_UNKNOWN, preserving provenance, and apply the documented Class-1 complexity / HOLD-BLOCK semantics for missing-identity conditions rather than inferring a privilege relationship. This is distinct from an identity explicitly OBSERVED as unauthenticated (identity_context = UNAUTHENTICATED), which is valid evidence and participates normally in UNAUTHENTICATED_ACCESS_SUCCESS.
 
 #### 2. `ROLE_BASED_STATUS_CODE_DELTA`
 - **Required Inputs**: Canonical `endpoint_id`, set of observations under distinct caller roles $\{R_1, \dots, R_N\}$, observed response HTTP status codes $\{S(R_k)\}$.
@@ -842,15 +956,16 @@ The system does NOT assume only two roles exist. Explicit semantics apply across
   $$\exists (R_i, R_j) \text{ with } R_i \neq R_j \text{ such that } S(R_i) \neq S(R_j)$$
 - **Positive Condition**: Discrepant HTTP response status codes observed across any two distinct identity roles for the same endpoint template and HTTP method (e.g., $200\text{ OK}$ under Role A vs $403\text{ Forbidden}$ under Role B). All $\binom{N}{2}$ pairs are tested.
 - **Negative Condition**: Identical HTTP status codes returned across all observed roles.
-- **Missing-Data Behavior**: If observations exist for only one role, delta is indeterminate (evaluates False; does not trigger Class 1). If asset is mutating, triggers Class 1 complexity check `STATE_CHANGING_ASSET_REQUIRES_DEEP_AUDIT`.
+- **Missing-Data Behavior**: If caller identity metadata is genuinely unavailable (`identity_context = UNKNOWN`, per Section 7.5.0), the role comparison cannot be established; delta evaluates to `INDETERMINATE / FALSE`. If observations exist for only one known role, delta is indeterminate (evaluates False; does not trigger Class 1). If asset is mutating, triggers Class 1 complexity check `STATE_CHANGING_ASSET_REQUIRES_DEEP_AUDIT`.
 
 #### 3. `UNAUTHENTICATED_ACCESS_SUCCESS`
 - **Required Inputs**: Canonical HTTP observation with empty or missing `Authorization`/`Cookie` headers, response status code $S_{\text{anon}}$, route security requirement from OpenAPI spec.
+- **Identity State Clarification**: This predicate evaluates an explicitly observed unauthenticated request (State 2 in Section 7.5.0: `identity_context = UNAUTHENTICATED`, where a request was captured and positively observed carrying no credentials or an empty/null bearer token). This is strictly distinguished from missing identity metadata due to capture or documentation gaps (State 3: `identity_context = UNKNOWN`), which must never be normalized to unauthenticated.
 - **Exact Comparison**: Evaluates success code on protected route:
   $$S_{\text{anon}} \in \{200, 201, 204, 206\} \quad \land \quad \text{AuthRequired}(\text{endpoint}) == \text{True}$$
 - **Positive Condition**: An endpoint designated as authenticated returns a success status code ($200$–$206$) when invoked without credentials or with an empty/null bearer token.
 - **Negative Condition**: Endpoint returns $401\text{ Unauthorized}$, $403\text{ Forbidden}$, or endpoint is explicitly documented as public.
-- **Missing-Data Behavior**: If route security requirements are absent from documentation, assume protected by default; if unauthenticated $200\text{ OK}$ observed, triggers positive condition.
+- **Missing-Data Behavior**: If route security requirements are absent from documentation, assume protected by default; if unauthenticated $200\text{ OK}$ observed on a request with `identity_context = UNAUTHENTICATED`, triggers positive condition. If identity metadata was not captured (`identity_context = UNKNOWN`), result evaluates to `INDETERMINATE / FALSE` and emits `IDENTITY_METADATA_UNKNOWN`.
 
 #### 4. `CROSS_ROLE_RESPONSE_SHAPE_DELTA`
 - **Required Inputs**: Canonical `endpoint_id`, observations under distinct roles $\{R_1, \dots, R_N\}$ returning HTTP $200$, normalized response JSON schemas $\{\Sigma(R_k)\}$ (extracted property key sets).
@@ -858,7 +973,7 @@ The system does NOT assume only two roles exist. Explicit semantics apply across
   $$\exists (R_i, R_j) \text{ with } R_i \neq R_j \text{ such that } \Sigma(R_i) \mathbin{\Delta} \Sigma(R_j) = \left(\Sigma(R_i) \setminus \Sigma(R_j)\right) \cup \left(\Sigma(R_j) \setminus \Sigma(R_i)\right) \neq \emptyset$$
 - **Positive Condition**: The set of returned JSON top-level or nested keys differs between caller roles for the same query/path parameters, specifically where sensitive administrative keys appear under lower-privileged roles. All observed role pairs are tested.
 - **Negative Condition**: Identical structural key schema emitted across distinct caller roles.
-- **Missing-Data Behavior**: If response body is non-JSON or unparseable, relies on status code delta; if both bodies are corrupt, triggers pipeline `HOLD/BLOCK` (canonical evidence failure).
+- **Missing-Data Behavior**: If caller identity metadata is genuinely unavailable (`identity_context = UNKNOWN`, per Section 7.5.0), role pairs cannot be formed; delta evaluates to `INDETERMINATE / FALSE`. If response body is non-JSON or unparseable, relies on status code delta; if both bodies are corrupt, triggers pipeline `HOLD/BLOCK` (canonical evidence failure).
 
 #### Asymmetric Response Corruption Handling
 If one role's response body parses successfully as JSON and another role's response body does not parse (or is truncated/unparseable):
@@ -905,7 +1020,7 @@ If one role's response body parses successfully as JSON and another role's respo
   - Response is authorization-denied ($S \in \{401, 403, 404\}$ where 404 represents object-level access denial).
   - Ownership relationship cannot be established from canonical evidence.
 - **Missing-Data Behavior**:
-  - Unknown ownership must **NOT** become a positive predicate.
+  - Missing or unknown caller/owner identity metadata (`identity_context = UNKNOWN`, per Section 7.5.0) must **NOT** become a positive predicate; unknown ownership must **NOT** become a positive predicate.
   - If evidence is incomplete in a way that creates structural ambiguity, apply the documented Class-1 complexity / HOLD-BLOCK semantics rather than guessing.
 - **Dedicated Synthetic Fixtures**:
   1. `same-role same-owner success` (Negative condition; normal authorized access).
@@ -942,6 +1057,8 @@ class DeterministicRouter:
               raises CanonicalEvidenceIntegrityError -> pipeline enters immediate HOLD/BLOCK.
             - Malformed 3B Triage: If triage is None or triage.is_malformed == True,
               Class-2 fail-safe escalation triggers (TRIAGE_OUTPUT_MALFORMED_OR_MISSING).
+            - Invalid 3B Taxonomy Category: If triage is parsed and triage.category_invalid == True,
+              Class-2 fail-safe escalation triggers (TRIAGE_CATEGORY_INVALID).
 
         SIDE EFFECTS:
             - ZERO side effects. Pure function. No disk, database, network, or stateful mutations.
@@ -1428,6 +1545,7 @@ When a scenario produces an incorrect outcome or fails to yield a useful hypothe
 │ - ROUTING_FALSE_POSITIVE: Benign negative control needlessly escalated │
 │ - TRIAGE_SYNTAX_ERROR: 3B emitted unparseable JSON                     │
 │ - TRIAGE_HALLUCINATION: 3B cited non-existent IDs (caught by gate)     │
+│ - TRIAGE_CATEGORY_INVALID: 3B category not in taxonomy/categories.yaml │
 ├────────────────────────────────────────────────────────────────────────┤
 │ LEVEL 3: 7B REASONING FAILURES                                         │
 │ - REASONING_REGRESSION: Cascade 7B failed where baseline 7B succeeded   │
@@ -1463,9 +1581,9 @@ The implementation of M1.5 and M2 must be accompanied by comprehensive tests acr
 
 | Test Suite | Test Focus | Target Verifications |
 | :--- | :--- | :--- |
-| **A. Routing** | `test_cascade_routing.py` | - Deterministic escalation on privilege delta.<br>- Deterministic escalation on status code delta.<br>- Abstention on clean read-only endpoints.<br>- Fail-safe escalation on malformed/missing 3B JSON (when Channel A is intact); pipeline HOLD/BLOCK on canonical evidence/database failure.<br>- Suppression of model self-confidence fields.<br>- **8-Fixture Monotonicity Sweep**: Proof that for fixed canonical evidence presenting a Class-1 signal, all 8 distinct 3B output variations (empty, malformed, valid benign, valid wrong, adversarial prose, inflated confidence, false secure claim, ungrounded IDs) produce `escalate == True`. |
-| **A.5 Structural Diff & Predicates** | `test_structural_diff_raw.py` | - **Raw Synthetic Evidence Fixture Suite**: Operates on raw synthetic evidence fixtures directly from canonical `evidence.db` representations (does NOT test only prebuilt `LosslessStructuralPack` objects).<br>- Pure computation verification of `StructuralDiffEngine.compute(raw_facts, identity_matrix)`.<br>- StructuralDiffEngine verified as sole predicate producer of Class-1 booleans.<br>- **`CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` Suite**: Verification across all 6 dedicated synthetic fixtures (same-role same-owner, same-role diff-owner, diff-role diff-owner, denied access, unknown ownership, unregistered ID).<br>- **Multi-Role Existential Quantification**: Verification across 2 roles, 3 roles, and 15–20 roles over all $\binom{N}{2}$ pairs.<br>- **`EVIDENCE_PARSE_ASYMMETRY` Handling**: Emits audit event, preserves provenance, sets complexity trigger, forces unconditional escalation.<br>- **Integrity Failure**: Verification of pipeline `HOLD/BLOCK` on all-unparseable responses or corrupt canonical evidence. |
-| **B. Handoff** | `test_evidence_handoff.py` | - Channel A exact-ID preservation through gate.<br>- **Ungrounded ID Handling (`TRIAGE_HALLUCINATION`)**: Verification that invented 3B IDs trigger audit event logging, field invalidation, Class-2 fail-safe escalation, and quarantine from 7B prompt.<br>- Guaranteed floor token allocation under context pressure.<br>- Contradiction block preservation. |
+| **A. Routing** | `test_cascade_routing.py` | - Deterministic escalation on privilege delta.<br>- Deterministic escalation on status code delta.<br>- Abstention on clean read-only endpoints.<br>- Fail-safe escalation on malformed/missing 3B JSON (when Channel A is intact); pipeline HOLD/BLOCK on canonical evidence/database failure.<br>- Suppression of model self-confidence fields.<br>- **9-Fixture Monotonicity Sweep**: Proof that for fixed canonical evidence presenting a Class-1 signal, all 9 distinct 3B output variations (empty, malformed, valid benign, valid wrong, adversarial prose, inflated confidence, false secure claim, ungrounded IDs, invalid/unregistered category) produce `escalate == True`.<br>- **Standalone Class-2 Category Validation Test**: Fires `TRIAGE_CATEGORY_INVALID` with no Class-1 signal present, asserting `escalate == True` and `fail_safe_triggered == True`. |
+| **A.5 Structural Diff & Predicates** | `test_structural_diff_raw.py` | - **Raw Synthetic Evidence Fixture Suite**: Operates on raw synthetic evidence fixtures directly from canonical `evidence.db` representations (does NOT test only prebuilt `LosslessStructuralPack` objects).<br>- Pure computation verification of `StructuralDiffEngine.compute(raw_facts, identity_matrix)`.<br>- StructuralDiffEngine verified as sole predicate producer of Class-1 booleans.<br>- **`CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` Suite**: Verification across all 6 dedicated synthetic fixtures (same-role same-owner, same-role diff-owner, diff-role diff-owner, denied access, unknown ownership, unregistered ID).<br>- **Multi-Role Existential Quantification**: Verification across 2 roles, 3 roles, and 15–20 roles over all $\binom{N}{2}$ pairs.<br>- **`EVIDENCE_PARSE_ASYMMETRY` Handling**: Emits audit event, preserves provenance, sets complexity trigger, forces unconditional escalation.<br>- **Integrity Failure**: Verification of pipeline `HOLD/BLOCK` on all-unparseable responses or corrupt canonical evidence.<br>- **14 Deterministic Test Fixtures (Category & Identity Semantics)**:<br>  1. Valid registered category $\to$ no `category_invalid`, no forced escalation.<br>  2. Unknown/unregistered category $\to$ `category_invalid = True` $\to$ `TRIAGE_CATEGORY_INVALID` $\to$ escalate.<br>  3. Malformed category syntax on otherwise-parseable payload $\to$ same as (2).<br>  4. Category invalid + Class-1 signal simultaneously present $\to$ escalate; both reasons recorded in `reasons` (independent `if`/`if` check).<br>  5. Category invalid with NO Class-1 signal present $\to$ escalate via Class-2 alone (`escalate == True`, `fail_safe_triggered == True`).<br>  6. Known authenticated caller + known comparison identity $\to$ normal predicate evaluation.<br>  7. Explicit unauthenticated caller (State 2) $\to$ valid unauthenticated semantics, unchanged behavior.<br>  8. Missing caller identity (State 3) $\to$ `identity_context = UNKNOWN`; predicate = INDETERMINATE/FALSE; never ANONYMOUS.<br>  9. Missing role only (identity known, role UNKNOWN) $\to$ `PRIVILEGE_LEVEL_DELTA_DETECTED` cannot be inferred; INDETERMINATE/FALSE.<br>  10. Missing caller identity (State 3) + successful 200 response $\to$ MUST NOT become `has_unauthenticated_success = True`.<br>  11. Explicit unauthenticated (State 2) + successful response $\to$ MAY become `has_unauthenticated_success = True`, per predicate #3.<br>  12. Unknown identity on one side of cross-role comparison $\to$ no fabricated privilege delta.<br>  13. Unknown identity as resource-owner of `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` $\to$ predicate stays negative/indeterminate.<br>  14. All required identities unavailable $\to$ documented fail-safe (HOLD/BLOCK or Class-1 complexity trigger), never fabricated concrete result. |
+| **B. Handoff** | `test_evidence_handoff.py` | - Channel A exact-ID preservation through gate.<br>- **Ungrounded ID Handling (`TRIAGE_HALLUCINATION`)**: Verification that invented 3B IDs trigger audit event logging, field invalidation, Class-2 fail-safe escalation, and quarantine from 7B prompt.<br>- **Taxonomy Category Validation (`TRIAGE_CATEGORY_INVALID`)**: Verification that `EvidencePreservationGate.validate` evaluates `suspected_category` against `taxonomy/categories.yaml`, sets `category_invalid = True`, emits `TRIAGE_CATEGORY_INVALID` audit event, forces Class-2 fail-safe escalation, and leaves Channel A unmodified.<br>- Guaranteed floor token allocation under context pressure.<br>- Contradiction block preservation. |
 | **C. Prompt Injection** | `test_cascade_injection.py` | - `<untrusted_target_data>` delimiter escaping.<br>- Target payload attempting to force `NO_RELEVANT_FUNCTIONALITY`.<br>- Target payload attempting to alter system instructions.<br>- **Zero-Breakout Invariant**: Verification of 0 `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption).<br>- **Adversarial Context Stuffing**: Neutralization of large bodies without status-code delta loss. |
 | **D. Context Saturation** | `test_context_budget.py` | - Truncation order: Advisory RAG dropped first, then 3B prose.<br>- Structural diffs and exact IDs never dropped.<br>- 4096 vs 8192 ceiling adherence.<br>- `CONTEXT_BUDGET_OVERFLOW` lifecycle verification on oversized structural packs.<br>- **`REALISTIC_LARGE_CANONICAL_EVIDENCE` Sweep**: Verification across 10/15/20/25 roles and 10/20/30/40 parameters under Tier 1 and Tier 2 envelopes. |
 | **E. Hardware / VRAM** | `test_resource_lifecycle.py` | - Clean model load/unload cycles in Ollama.<br>- Memory pressure handling and sequential model transitions.<br>- **`MODEL_ENVIRONMENT_VALIDATION` pre-execution suite**: Digest verification, layer offload placement, zero driver resets.<br>- **Measurable Memory-Drift Suite**: Confirmed quiescence wait, per-cycle RSS/VRAM recordings, fitted growth slope $\le 5.0\text{ MB/cycle}$, endpoint drift $\le \max(5\%, 150\text{ MB})$; detection of `MEMORY_DRIFT_DETECTED`.<br>- Separate instrumentation of $T_{\text{load}}$ and $T_{\text{infer}}$. |
@@ -1521,7 +1639,7 @@ Phase 9: Abstract State & Execution Interface Contract (M2 Boundary)
    │   - Defer live token refresh, session lifecycle, and CSRF rotation to M2.75
    ▼
 Phase 10: Adversarial & Security Test Matrix Execution
-   │   - Execute Test Suites A through H (including A.5); verify injection containment and 8-fixture sweep
+   │   - Execute Test Suites A through H (including A.5); verify injection containment and 9-fixture sweep
    ▼
 Phase 11: Paired M2 Benchmark Evaluation
        - Run Tracks A, B, and C across 84 frozen scenarios; compute paired failure decomposition (n10 breakdown),
@@ -1543,12 +1661,12 @@ Phase 11: Paired M2 Benchmark Evaluation
 | Category | Criterion | Metric / Verification | Target Threshold |
 | :--- | :--- | :--- | :--- |
 | **HARD SAFETY REQUIREMENT** | **Zero Injection Breakouts** | Test Suite C (Adversarial Injection) | 100% containment; zero `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption). |
-| **HARD SAFETY REQUIREMENT** | **Monotonic Escalation Holds** | Test Suite A & Test Suite C | Zero routing false negatives on HIGH_RISK_SECURITY_SIGNAL; 3B output cannot suppress canonical escalation; 100% pass on 8-fixture monotonicity sweep; Class-1 gating enforced by construction. |
+| **HARD SAFETY REQUIREMENT** | **Monotonic Escalation Holds** | Test Suite A & Test Suite C | Zero routing false negatives on HIGH_RISK_SECURITY_SIGNAL; 3B output cannot suppress canonical escalation; 100% pass on 9-fixture monotonicity sweep; Class-1 gating enforced by construction. |
 | **HARD SAFETY REQUIREMENT** | **Structural Predicate Authority** | Test Suite A.5 (`StructuralDiffEngine`) | `StructuralDiffEngine` verified as sole producer of Class-1 booleans; 100% pass on raw synthetic fixtures including `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` and multi-role existential quantification. |
 | **HARD SAFETY REQUIREMENT** | **Grounding & Epistemic Integrity** | [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) | Zero hallucinated or unparented IDs accepted; unevidenced hypotheses downgraded; zero `CONFIRMED` emissions. |
 | **HARD SAFETY REQUIREMENT** | **Hardware / Resource Stability** | `MODEL_ENVIRONMENT_VALIDATION` & Monitor | Zero VRAM allocation errors, OOM aborts, or driver crashes on RTX 3050 (4GB) during complete 84-scenario sweep; model digests verified; memory growth slope $\le 5.0\text{ MB/cycle}$ and endpoint drift $\le \max(5\%, 150\text{ MB})$ with zero `MEMORY_DRIFT_DETECTED`. |
 | **HARD SAFETY REQUIREMENT** | **Shared Context Builder Integrity** | `ReasoningContextBuilder` | Single parametrized context builder shared across Tracks A, B, and C with recorded provenance hash; zero bespoke prompt-construction logic. |
-| **HARD SAFETY REQUIREMENT** | **Fail-Safe Routing Activation** | `DeterministicRouter` | 100% automatic escalation to 7B upon malformed/missing 3B JSON or ungrounded 3B IDs when Channel A is intact; canonical evidence or database failure triggers immediate HOLD/BLOCK and never reasoning over incomplete evidence. |
+| **HARD SAFETY REQUIREMENT** | **Fail-Safe Routing Activation** | `DeterministicRouter` | 100% automatic escalation to 7B upon malformed/missing 3B JSON, unregistered category (TRIAGE_CATEGORY_INVALID), or ungrounded 3B IDs (TRIAGE_HALLUCINATION) when Channel A is intact; canonical evidence or database failure triggers immediate HOLD/BLOCK and never reasoning over incomplete evidence. |
 | **STATISTICAL QUALITY REQUIREMENT** | **Statistical Non-Inferiority** | Pre-specified Tango score-based CI method on $N_{\text{vuln}} = 36$ | Reject $H_0: Y_{\text{7B}} - Y_{\text{Cascade}} \ge 0.05$ at $\alpha = 0.10$; pre-specified one-sided 90% UCB for paired difference $< 0.05$; paired failure causes decomposed across overflow, routing, reasoning, structural, and runtime. |
 | **STATISTICAL QUALITY REQUIREMENT** | **Hypothesis Precision** | Deterministic Scorer with Wilson 95% CI | Track C Precision point estimate $\ge 85.0\%$ (with two-sided Wilson 95% CI reported). |
 | **STATISTICAL QUALITY REQUIREMENT** | **Abstention Quality** | Deterministic Scorer on Patched + Negative Controls | Track C True Negative Rate ($\text{TNR} = \frac{\text{TN}}{\text{TN} + \text{FP}}$) point estimate $\ge 80.0\%$ over the combined patched and negative-control population ($N_{\text{non-vuln}} = 48$) (with two-sided Wilson 95% CI reported). |
