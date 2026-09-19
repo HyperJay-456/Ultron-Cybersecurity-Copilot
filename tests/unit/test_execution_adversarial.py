@@ -608,3 +608,253 @@ def test_ax_raw_credential_never_appears_in_exception_audit_output(scope_gate, s
     # Inspect audit log content
     log_content = audit_file.read_text(encoding="utf-8")
     assert raw_pass not in log_content
+
+
+# ---------------------------------------------------------------------------
+# Tests AY - BC: SigningProfile Rigor, Header Integrity & In-Flight TOCTOU
+# ---------------------------------------------------------------------------
+
+def test_ay_signing_profile_canonicalization_version_enforced(vault, state_manager):
+    """AY: Profile with canonicalization_version != 'v1' (e.g. 'aws-v4') fails closed with UNSUPPORTED_SIGNING_FLOW."""
+    signer = HmacRequestSigner()
+    profile = SigningProfile(
+        profile_id="aws-profile",
+        canonicalization_version="aws-v4",
+        identity_id="user_a",
+        target_authority="api.target.com",
+    )
+    key_rec = SigningKeyRecord(
+        key_id="aws-profile",
+        identity_id="user_a",
+        target_authority="api.target.com",
+        secret_ref="[REDACTED_SECRET_1]",
+    )
+    from src.execution.signing import UnsupportedSigningFlowError
+    with pytest.raises(UnsupportedSigningFlowError) as exc_info:
+        signer.sign(
+            method="GET",
+            url="https://api.target.com/v1/orders",
+            headers={},
+            body=None,
+            profile=profile,
+            key_record=key_rec,
+            vault=vault,
+            state_manager=state_manager,
+        )
+    assert "Unsupported canonicalization version: aws-v4" in str(exc_info.value)
+    assert signer.verify("GET", "https://api.target.com/v1/orders", {}, None, profile, key_rec, vault) is False
+
+
+def test_az_signing_profile_signed_components_enforced(vault, state_manager):
+    """AZ: Profile with altered signed_components fails closed with UNSUPPORTED_SIGNING_FLOW."""
+    signer = HmacRequestSigner()
+    profile = SigningProfile(
+        profile_id="custom-comp-profile",
+        signed_components=["method", "route"],  # Missing query, body, timestamp, nonce
+        identity_id="user_a",
+        target_authority="api.target.com",
+    )
+    key_rec = SigningKeyRecord(
+        key_id="custom-comp-profile",
+        identity_id="user_a",
+        target_authority="api.target.com",
+        secret_ref="[REDACTED_SECRET_1]",
+    )
+    from src.execution.signing import UnsupportedSigningFlowError
+    with pytest.raises(UnsupportedSigningFlowError) as exc_info:
+        signer.sign(
+            method="GET",
+            url="https://api.target.com/v1/orders",
+            headers={},
+            body=None,
+            profile=profile,
+            key_record=key_rec,
+            vault=vault,
+            state_manager=state_manager,
+        )
+    assert "Unsupported signed components" in str(exc_info.value)
+
+
+def test_ba_signing_environment_context_mismatch(scope_gate, state_manager, vault):
+    """BA: Using production signing key/profile in staging experiment returns BLOCKED_AUTH_STATE."""
+    client = ScopedHttpClient(scope_gate=scope_gate)
+    profile = SigningProfile(
+        profile_id="prod-profile",
+        identity_id="user_a",
+        target_authority="api.target.com",
+        environment_context="production",  # Production profile
+    )
+    key_rec = SigningKeyRecord(
+        key_id="prod-profile",
+        identity_id="user_a",
+        target_authority="api.target.com",
+        environment_context="production",  # Production key
+        secret_ref="[REDACTED_SECRET_1]",
+    )
+    state_manager.register_signing_key(key_rec)
+
+    proposal = ExperimentProposal(
+        objective="Execute staging call",
+        target_asset_id="ORDER-1",
+        mutation_class=MutationClass.UNAUTHENTICATED_ACCESS,
+        actor_identity_id="user_a",
+        expected_observations=ExpectedObservations(
+            supporting_observation="200",
+            contradicting_observation="403",
+        ),
+    )
+    engine = DeterministicExecutionEngine(
+        scope_gate=scope_gate,
+        scoped_client=client,
+        state_manager=state_manager,
+        vault=vault,
+        live_execution_enabled=True,
+    )
+    engine.register_signing_profile(profile)
+
+    res = engine.execute_proposal(
+        experiment=proposal,
+        destination_url="https://api.target.com/orders",
+        environment_context="staging",  # Staging experiment
+        signing_profile_id="prod-profile",
+    )
+    assert res.status == ExecutionStatus.BLOCKED_AUTH_STATE
+    assert "Signing key ownership mismatch" in res.error_message
+
+
+def test_bb_header_mutation_after_approval_blocked(scope_gate, state_manager, vault):
+    """BB: Tampering with approved security headers between approval and transmission returns BLOCKED_APPROVAL."""
+    gate = ApprovalGate()
+    client = ScopedHttpClient(scope_gate=scope_gate)
+    proposal = ExperimentProposal(
+        objective="Mutate order",
+        target_asset_id="ORDER-1",
+        mutation_class=MutationClass.STEP_SKIPPING,
+        actor_identity_id="user_a",
+        safety_level=SafetyLevel.STATE_CHANGING_REQUIRES_APPROVAL,
+        expected_observations=ExpectedObservations(
+            supporting_observation="200",
+            contradicting_observation="403",
+        ),
+    )
+
+    engine = DeterministicExecutionEngine(
+        scope_gate=scope_gate,
+        scoped_client=client,
+        state_manager=state_manager,
+        vault=vault,
+        approval_gate=gate,
+        live_execution_enabled=True,
+    )
+
+    from src.execution.engine import compute_headers_digest
+    approved_headers = {"X-Security-Level": "standard"}
+    h_digest = compute_headers_digest(approved_headers, vault)
+
+    # Approve descriptor
+    desc = ExecutionDescriptor(
+        experiment_id="Mutate_order",
+        identity_id="user_a",
+        environment_context="staging",
+        target_authority="api.target.com",
+        destination="https://api.target.com/orders/1",
+        http_method="POST",
+        normalized_route="/orders/1",
+        headers_digest=h_digest,
+        request_body_digest="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        safety_classification=SafetyLevel.STATE_CHANGING_REQUIRES_APPROVAL.value,
+        affected_resource="ORDER-1",
+        expected_state_transition="No rollback needed for read-only operations",
+    )
+    approval = HumanApproval(
+        approval_id="APP-HEADER-1",
+        experiment_id="Mutate_order",
+        approved_descriptor_digest=desc.compute_digest(),
+        actor="lead_auditor",
+    )
+    gate.register_approval(approval)
+
+    # Request submitted with modified security header
+    tampered_headers = {"X-Security-Level": "admin"}
+    res = engine.execute_proposal(
+        experiment=proposal,
+        destination_url="https://api.target.com/orders/1",
+        http_method="POST",
+        request_headers=tampered_headers,
+        approval_id="APP-HEADER-1",
+    )
+    assert res.status == ExecutionStatus.BLOCKED_APPROVAL
+    assert "ApprovalGate" in res.error_message or "MISMATCH" in res.error_message
+
+
+def test_bc_toctou_in_flight_tampering_blocked_by_engine(scope_gate, state_manager, vault):
+    """BC: End-to-end engine Step 10 catches descriptor tampering occurring after Step 4."""
+    gate = ApprovalGate()
+    client = ScopedHttpClient(scope_gate=scope_gate)
+    proposal = ExperimentProposal(
+        objective="Delete critical record",
+        target_asset_id="RECORD-1",
+        mutation_class=MutationClass.STEP_SKIPPING,
+        actor_identity_id="user_a",
+        safety_level=SafetyLevel.STATE_CHANGING_REQUIRES_APPROVAL,
+        expected_observations=ExpectedObservations(
+            supporting_observation="200",
+            contradicting_observation="403",
+        ),
+    )
+
+    engine = DeterministicExecutionEngine(
+        scope_gate=scope_gate,
+        scoped_client=client,
+        state_manager=state_manager,
+        vault=vault,
+        approval_gate=gate,
+        live_execution_enabled=True,
+        mock_transport_fn=lambda m, u, h, b: (200, {}, b"ok"),
+    )
+
+    desc = ExecutionDescriptor(
+        experiment_id="Delete_critical_record",
+        identity_id="user_a",
+        environment_context="staging",
+        target_authority="api.target.com",
+        destination="https://api.target.com/records/1",
+        resolved_ip="93.184.216.34",
+        http_method="POST",
+        normalized_route="/records/1",
+        request_body_digest="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        safety_classification=SafetyLevel.STATE_CHANGING_REQUIRES_APPROVAL.value,
+        affected_resource="RECORD-1",
+        expected_state_transition="No rollback needed for read-only operations",
+    )
+    approval = HumanApproval(
+        approval_id="APP-TOCTOU-1",
+        experiment_id="Delete_critical_record",
+        approved_descriptor_digest=desc.compute_digest(),
+        actor="sec_officer",
+    )
+    gate.register_approval(approval)
+
+    # Wrap mock transport to simulate in-flight tampering test
+    # If approval is revoked or descriptor tampered before Step 10
+    original_verify = gate.verify_approval
+    call_count = 0
+
+    def tamper_on_second_call(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            # Step 10 final TOCTOU check
+            return False, "APPROVAL_REVOKED_IN_FLIGHT", None
+        return original_verify(*args, **kwargs)
+
+    gate.verify_approval = tamper_on_second_call
+
+    res = engine.execute_proposal(
+        experiment=proposal,
+        destination_url="https://api.target.com/records/1",
+        http_method="POST",
+        approval_id="APP-TOCTOU-1",
+    )
+    assert res.status == ExecutionStatus.BLOCKED_APPROVAL
+    assert "Final TOCTOU approval check failed: APPROVAL_REVOKED_IN_FLIGHT" in res.error_message

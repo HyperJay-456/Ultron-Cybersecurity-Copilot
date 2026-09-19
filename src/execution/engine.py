@@ -25,6 +25,7 @@ import hashlib
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+import json
 import httpx
 
 from src.core.logging import AuditLogger
@@ -47,6 +48,19 @@ from src.hypothesis.experiment import ExperimentProposal, SafetyLevel
 from src.scope.client import ScopedHttpClient, ScopeViolationError
 from src.scope.gate import ScopeGate
 from src.scope.models import ScopeDecision
+
+
+def compute_headers_digest(headers: Optional[Dict[str, str]], vault: Optional[RedactionVault] = None) -> str:
+    """Compute a canonical digest over security-relevant headers without leaking raw secrets."""
+    if not headers:
+        return ""
+    normalized = []
+    for k, v in headers.items():
+        k_clean = k.lower().strip()
+        v_clean = vault.redact_text(v).strip() if vault else v.strip()
+        normalized.append((k_clean, v_clean))
+    normalized.sort(key=lambda x: x[0])
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class DeterministicExecutionEngine:
@@ -125,6 +139,7 @@ class DeterministicExecutionEngine:
         safety_str = experiment.safety_level.value
 
         headers = dict(request_headers or {})
+        initial_headers_digest = compute_headers_digest(headers, self.vault)
         body_bytes = request_body if request_body is not None else b""
         body_digest = hashlib.sha256(body_bytes).hexdigest()
 
@@ -143,6 +158,7 @@ class DeterministicExecutionEngine:
             http_method=http_method.upper().strip(),
             normalized_route=norm_route,
             normalized_query=norm_query,
+            headers_digest=initial_headers_digest,
             request_body_digest=body_digest,
             safety_classification=safety_str,
             affected_resource=experiment.target_asset_id,
@@ -286,6 +302,21 @@ class DeterministicExecutionEngine:
                     descriptor_digest=desc_digest,
                     latency_seconds=time.perf_counter() - t0,
                 )
+
+            # Validate signing profile ownership against experiment context
+            if (
+                profile.identity_id.lower().strip() != actor_id.lower().strip()
+                or profile.target_authority.lower().strip() != target_auth.lower().strip()
+                or profile.environment_context.lower().strip() != environment_context.lower().strip()
+            ):
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_AUTH_STATE,
+                    error_message="Signing key ownership mismatch: profile does not match experiment identity/target/environment",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
+
             key_rec = self.state_manager.get_signing_key(profile.profile_id)
             if not key_rec:
                 return ExecutionResult(
@@ -295,12 +326,17 @@ class DeterministicExecutionEngine:
                     descriptor_digest=desc_digest,
                     latency_seconds=time.perf_counter() - t0,
                 )
-            # Validate signing key ownership
-            if key_rec.identity_id.lower().strip() != actor_id.lower().strip():
+
+            # Validate signing key ownership against experiment context
+            if (
+                key_rec.identity_id.lower().strip() != actor_id.lower().strip()
+                or key_rec.target_authority.lower().strip() != target_auth.lower().strip()
+                or key_rec.environment_context.lower().strip() != environment_context.lower().strip()
+            ):
                 return ExecutionResult(
                     experiment_id=exp_id,
                     status=ExecutionStatus.BLOCKED_AUTH_STATE,
-                    error_message="Signing key ownership mismatch: cannot sign with another identity's key",
+                    error_message="Signing key ownership mismatch: cannot sign with key bound to different identity/target/environment",
                     descriptor_digest=desc_digest,
                     latency_seconds=time.perf_counter() - t0,
                 )
@@ -326,7 +362,7 @@ class DeterministicExecutionEngine:
                     latency_seconds=time.perf_counter() - t0,
                 )
 
-        # Step 10: Final TOCTOU Descriptor Integrity and Scope Re-check immediately before transmission
+        # Step 10: Final TOCTOU Descriptor Integrity, Scope, Approval, and Ownership Re-check immediately before transmission
         final_dest_check = self.scope_gate.evaluate(destination_url)
         if final_dest_check.decision != ScopeDecision.ALLOW:
             return ExecutionResult(
@@ -336,6 +372,82 @@ class DeterministicExecutionEngine:
                 descriptor_digest=desc_digest,
                 latency_seconds=time.perf_counter() - t0,
             )
+
+        # 10a. Target authority integrity
+        current_target_auth = (urlparse(destination_url).hostname or "unknown").lower().strip()
+        if current_target_auth != target_auth or current_target_auth != descriptor.target_authority.lower().strip():
+            return ExecutionResult(
+                experiment_id=exp_id,
+                status=ExecutionStatus.BLOCKED_SCOPE,
+                error_message="Final TOCTOU target authority mismatch",
+                descriptor_digest=desc_digest,
+                latency_seconds=time.perf_counter() - t0,
+            )
+
+        # 10b. Revalidate descriptor digest integrity against original approved digest
+        current_desc_digest = descriptor.compute_digest()
+        if current_desc_digest != desc_digest:
+            return ExecutionResult(
+                experiment_id=exp_id,
+                status=ExecutionStatus.BLOCKED_APPROVAL,
+                error_message="Final TOCTOU descriptor mismatch: descriptor mutated after approval",
+                descriptor_digest=desc_digest,
+                latency_seconds=time.perf_counter() - t0,
+            )
+
+        # 10c. Re-verify approval validity if approval was required or provided
+        if approval_id or self.approval_gate.requires_approval(descriptor.safety_classification):
+            is_app_valid, app_recheck_err, _ = self.approval_gate.verify_approval(
+                descriptor=descriptor,
+                approval_id=approval_id,
+            )
+            if not is_app_valid:
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_APPROVAL,
+                    error_message=f"Final TOCTOU approval check failed: {app_recheck_err}",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
+
+        # 10d. Verify unauthorized header mutations on approved security headers
+        for orig_k, orig_v in (request_headers or {}).items():
+            if orig_k in headers:
+                curr_val_redacted = self.vault.redact_text(headers[orig_k]).strip()
+                orig_val_redacted = self.vault.redact_text(orig_v).strip()
+                if curr_val_redacted != orig_val_redacted:
+                    return ExecutionResult(
+                        experiment_id=exp_id,
+                        status=ExecutionStatus.BLOCKED_APPROVAL,
+                        error_message=f"Final TOCTOU header mutation detected on security header '{orig_k}'",
+                        descriptor_digest=desc_digest,
+                        latency_seconds=time.perf_counter() - t0,
+                    )
+            else:
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_APPROVAL,
+                    error_message=f"Final TOCTOU missing approved header '{orig_k}'",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
+
+        # 10e. Re-validate credential ownership for required tokens
+        for token_ref in experiment.required_token_references:
+            valid_owner, own_err, _ = self.state_manager.validate_credential_ownership(
+                token_ref=token_ref,
+                expected_identity_id=actor_id,
+                expected_target_authority=target_auth,
+                expected_environment_context=environment_context,
+            )
+            if not valid_owner and own_err != "TOKEN_REFERENCE_NOT_FOUND":
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_AUTH_STATE,
+                    error_message=f"Final TOCTOU credential ownership check failed: {own_err}",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
 
         # Re-resolve authorization tokens into raw headers immediately before transmission
         for token_ref in experiment.required_token_references:

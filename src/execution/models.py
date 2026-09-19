@@ -107,6 +107,7 @@ class ExecutionDescriptor(BaseModel):
     http_method: str                      # Uppercase: GET, POST, etc.
     normalized_route: str                 # E.g., /api/v1/orders/{id}
     normalized_query: str = ""            # Canonical sorted query string
+    headers_digest: str = ""              # SHA-256 hex digest of non-secret/placeholder headers
     request_body_digest: str              # SHA-256 hex digest of raw request body
     safety_classification: str            # READ_ONLY_SAFE, STATE_CHANGING_REQUIRES_APPROVAL, etc.
     affected_resource: str                # Identifier of affected resource
@@ -124,6 +125,7 @@ class ExecutionDescriptor(BaseModel):
             "http_method": self.http_method.upper().strip(),
             "normalized_route": self.normalized_route.strip(),
             "normalized_query": self.normalized_query.strip(),
+            "headers_digest": self.headers_digest.strip(),
             "request_body_digest": self.request_body_digest.strip(),
             "safety_classification": self.safety_classification.strip(),
             "affected_resource": self.affected_resource.strip(),

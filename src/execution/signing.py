@@ -130,6 +130,25 @@ class HmacRequestSigner(RequestSigner):
         if profile.algorithm != "HMAC-SHA256":
             raise UnsupportedSigningFlowError(f"Unsupported signing algorithm: {profile.algorithm}")
 
+        if profile.canonicalization_version != "v1":
+            raise UnsupportedSigningFlowError(
+                f"Unsupported canonicalization version: {profile.canonicalization_version}. Only 'v1' is supported."
+            )
+
+        expected_components = {"method", "route", "query", "body", "timestamp", "nonce"}
+        if set(profile.signed_components) != expected_components:
+            raise UnsupportedSigningFlowError(
+                f"Unsupported signed components for v1 canonicalization: {profile.signed_components}"
+            )
+
+        # Ownership binding between key_record and profile
+        if (
+            key_record.identity_id.lower().strip() != profile.identity_id.lower().strip()
+            or key_record.target_authority.lower().strip() != profile.target_authority.lower().strip()
+            or key_record.environment_context.lower().strip() != profile.environment_context.lower().strip()
+        ):
+            raise UnsupportedSigningFlowError("Signing key record does not match profile ownership binding")
+
         now = timestamp if timestamp is not None else time.time()
         ts_str = str(int(now))
 
@@ -168,6 +187,23 @@ class HmacRequestSigner(RequestSigner):
         key_record: SigningKeyRecord,
         vault: RedactionVault,
     ) -> bool:
+        if profile.algorithm != "HMAC-SHA256":
+            return False
+
+        if profile.canonicalization_version != "v1":
+            return False
+
+        expected_components = {"method", "route", "query", "body", "timestamp", "nonce"}
+        if set(profile.signed_components) != expected_components:
+            return False
+
+        if (
+            key_record.identity_id.lower().strip() != profile.identity_id.lower().strip()
+            or key_record.target_authority.lower().strip() != profile.target_authority.lower().strip()
+            or key_record.environment_context.lower().strip() != profile.environment_context.lower().strip()
+        ):
+            return False
+
         ts_str = headers.get(profile.timestamp_header)
         nonce_str = headers.get(profile.nonce_header)
         sig_str = headers.get(profile.signature_header)

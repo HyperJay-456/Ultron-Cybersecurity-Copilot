@@ -3,6 +3,11 @@
 ## 1. Overview & Operational Boundary
 Milestone M2.75 extends the frozen Milestone M2 / Phase 11.6 cascade architecture with a deterministic execution and state management engine.
 
+### Lineage & Grounding
+- **M2 frozen validation baseline**: `f335b98b2dfdeb8ee1588f841f890215fa9f0006`
+- **M2 production integration**: `2b47c5d8a8d15e9740341667958918c581124522`
+- **M2.75 initial implementation**: `d76abb37db8f6f1a15d6bc6ee446ece423ac1585`
+
 ### Non-Goals (What M2.75 Is NOT)
 - **NOT an autonomous crawler**: No recursive crawling or endpoint discovery.
 - **NOT an autonomous scanner**: No automated fuzzing loops or vulnerability scanners.
@@ -102,8 +107,11 @@ All authentication flows are explicitly configured. Autonomous flow discovery, g
 
 ## 7. Dynamic Request Signing & Signing Profiles
 Signing is strictly controlled via registered `SigningProfile` configurations:
-- **Canonical Request Format**: `METHOD\nNORMALIZED_PATH\nSORTED_QUERY\nSHA256(BODY)\nTIMESTAMP\nNONCE`.
+- **Canonical Request Format (`v1`)**: `METHOD\nNORMALIZED_PATH\nSORTED_QUERY\nSHA256(BODY)\nTIMESTAMP\nNONCE`.
+- **Enforced Canonicalization Version**: Only explicitly registered versions are permitted (default: `v1`). Unregistered or unsupported schemes (e.g. `aws-v4`) fail closed with `UNSUPPORTED_SIGNING_FLOW`.
+- **Enforced Signed Components**: The component set must match the profile definition; altered or unsupported components fail closed with `UNSUPPORTED_SIGNING_FLOW`.
 - **HMAC-SHA256**: Generates signature using vault-resolved secret.
+- **Ownership Binding**: Profile and signing key must be bound to identical `identity_id`, `target_authority`, and `environment_context`; cross-identity/target/environment signing fails with `BLOCKED_AUTH_STATE`.
 - **Freshness Window**: Timestamp must fall within `+/- timestamp_window_seconds` (default 300s); otherwise fails with `EXPIRED_TIMESTAMP`.
 - **Replay Protection**: Nonce is atomically consumed in `DeterministicStateManager`; reuse fails with `REPLAYED_NONCE`.
 - **Tamper Protection**: Any post-signing mutation of method, path, query, or body breaks signature verification.
@@ -127,27 +135,34 @@ Approval is bound to an immutable SHA-256 digest of the canonical `ExecutionDesc
 - `http_method`
 - `normalized_route`
 - `normalized_query`
+- `headers_digest` (canonical digest of non-secret/placeholder request headers)
 - `request_body_digest`
 - `safety_classification`
 - `affected_resource`
 - `expected_state_transition`
 
-The digest is recomputed immediately prior to transmission. Any mismatch, missing approval, or expired approval returns `BLOCKED_APPROVAL`.
+The digest is recomputed and verified before any state mutation (Step 4) and re-verified immediately prior to transmission (Step 10). Any mismatch, missing approval, expired approval, or unauthorized header mutation returns `BLOCKED_APPROVAL`.
 
 ---
 
 ## 9. Mandatory 14-Step Execution Pipeline
 The execution pipeline in `DeterministicExecutionEngine` enforces the following strict order:
 1. **Live Execution Mode Check**: If `live_execution_enabled == False` and no mock transport is configured -> `BLOCKED_EXECUTION_MODE`.
-2. **Build ExecutionDescriptor**: Normalizes parameters and computes initial digest.
+2. **Build ExecutionDescriptor**: Normalizes parameters (including headers digest) and computes initial digest.
 3. **Initial Scope Gate Evaluation**: Validates destination authority and resolves/pins IP.
 4. **Human Approval Verification**: Checks approval before any state mutation or token consumption.
 5. **Pre-flight TTL and Token Validation**: Checks token presence and freshness via `DeterministicTTLValidator`.
 6. **Bounded Auth Refresh**: Executes adapter refresh if expired.
-7. **Post-Refresh Ownership Revalidation**: Ensures refreshed token still belongs to expected identity and target.
+7. **Post-Refresh Ownership Revalidation**: Ensures refreshed token still belongs to expected identity, target, and environment.
 8. **CSRF Validation & Atomic Consumption**: Checks single-use, freshness, and marks `CONSUMED`. Injects header.
-9. **Request Signing**: Generates HMAC signature if profile is registered.
-10. **Final TOCTOU Descriptor & Scope Re-check**: Verifies descriptor digest and destination immediately before transmission.
+9. **Request Signing**: Generates HMAC signature if profile is registered, verifying profile and key ownership.
+10. **Final TOCTOU Descriptor & Scope Re-check**: Immediately prior to transmission, verifies:
+    - Scope destination and pinned IP.
+    - Target authority integrity.
+    - Recomputed descriptor digest against approved digest.
+    - Re-verifies approval validity.
+    - Checks that approved security headers have not been mutated.
+    - Re-validates credential and signing key ownership.
 11. **Rate-Limit Gate**: Enforces inter-request pacing via `ScopedHttpClient`.
 12. **Controlled HTTP Execution**: Dispatches request via `ScopedHttpClient` or deterministic mock transport.
 13. **Redact & Package Raw Observation Evidence**: Redacts response headers and body, packaging evidence as `OBSERVED`.
