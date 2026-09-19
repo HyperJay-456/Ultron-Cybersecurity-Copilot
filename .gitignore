@@ -45,3 +45,19 @@ scratch/
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets & Credentials
+.env
+.env.*
+*.key
+*.pem
+*.cert
+*.token
+*.secret
+
+# Runtime Logs
+*.log
+
+# Local Model Weights & Binary Index Artifacts
+*.onnx
+*.bin
