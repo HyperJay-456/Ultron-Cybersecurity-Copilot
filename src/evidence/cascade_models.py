@@ -66,6 +66,7 @@ class LosslessStructuralPack(BaseModel):
     observed_facts: List[Dict[str, Any]] = Field(default_factory=list)
     raw_body_sample: Optional[str] = None
     contradiction_pairs: Optional[List[Dict[str, str]]] = None
+    interaction_lineage: Optional[List[Dict[str, Any]]] = None
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ class StructuralDiffEngine:
         cls,
         raw_facts: List[Dict[str, Any]],
         identity_matrix: Optional[List[Dict[str, Any]]] = None,
+        interaction_traces: Optional[List[Dict[str, Any]]] = None,
     ) -> LosslessStructuralPack:
         """
         Pure deterministic computation of LosslessStructuralPack and Class-1 predicates.
@@ -56,6 +57,16 @@ class StructuralDiffEngine:
         """
         if not raw_facts:
             raise CanonicalEvidenceIntegrityError("raw_facts cannot be empty; canonical evidence required.")
+
+        interaction_lineage_dicts: Optional[List[Dict[str, Any]]] = None
+        if interaction_traces:
+            from src.evidence.interaction_enrichment import InteractionEvidenceEnricher
+            raw_facts, identity_matrix, lineage_records = InteractionEvidenceEnricher.enrich(
+                raw_facts=raw_facts,
+                interaction_traces=interaction_traces,
+                identity_matrix=identity_matrix,
+            )
+            interaction_lineage_dicts = [r.model_dump() for r in lineage_records]
 
         # Ensure required identifiers exist on all facts
         primary_fact = raw_facts[0]
@@ -268,4 +279,5 @@ class StructuralDiffEngine:
             observed_facts=raw_facts,
             raw_body_sample=primary_fact.get("raw_body_sample"),
             contradiction_pairs=primary_fact.get("contradiction_pairs"),
+            interaction_lineage=interaction_lineage_dicts,
         )
