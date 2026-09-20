@@ -294,9 +294,11 @@ class VaptKnowledgeStore:
         - Extract alphanumeric words
         - Join with OR or standard token match
         """
-        tokens = re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", query_text)
-        if not tokens:
+        raw_tokens = re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", query_text)
+        if not raw_tokens:
             return ""
+        # Quote any token containing a hyphen so FTS5 doesn't parse it as column negation
+        tokens = [f'"{t}"' if "-" in t else t for t in raw_tokens]
         # Match any of the extracted significant terms
         return " OR ".join(tokens)
 

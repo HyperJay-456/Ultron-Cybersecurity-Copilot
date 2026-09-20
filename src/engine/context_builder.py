@@ -32,6 +32,16 @@ TRACK_C = "TRACK_C"  # 7B + VAPT Knowledge (Diagnostic; vapt_knowledge.db only)
 TRACK_D = "TRACK_D"  # 7B + Dual RAG (Primary Test: Target Evidence + VAPT Knowledge)
 TRACK_E = "TRACK_E"  # Optional Cascade: 3B Triage -> Router -> 7B Deep + Dual RAG
 
+from enum import Enum
+
+class M3Track(str, Enum):
+    TRACK_A = "TRACK_A"
+    TRACK_B = "TRACK_B"
+    TRACK_C = "TRACK_C"
+    TRACK_D = "TRACK_D"
+    TRACK_E = "TRACK_E"
+
+
 # Internal normalization for legacy literals in Section 10 examples
 _LEGACY_TRACK_MAP = {
     "TRACK_B_CASCADE": TRACK_C_CASCADE,
