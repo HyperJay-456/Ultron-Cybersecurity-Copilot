@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional
 import httpx
@@ -9,12 +10,23 @@ import httpx
 from src.core.config import OllamaConfig
 from src.engine.models import (
     AppModelDelta,
+    FailureClassificationResult,
     HypothesisDecision,
     HypothesisModelOutput,
+    I1ExecutionResult,
+    PrimaryFailureCategory,
     ViolationAssessment,
     ViolationRelation,
+    classify_primary_failure,
+    perform_diagnostic_repair,
 )
 from src.retrieval.budget import TokenBudgetController
+
+PRIMARY_NUM_CTX = 2048
+PRIMARY_NUM_PREDICT = 300
+PRIMARY_TEMPERATURE = 0.0
+PRIMARY_SEED = 42
+PRIMARY_KEEP_ALIVE = "60m"
 
 
 SYSTEM_POLICY_PROMPT = """SYSTEM SECURITY POLICY:
@@ -53,7 +65,7 @@ class BaseLLMRunner(ABC):
 
 class OllamaRunner(BaseLLMRunner):
     """
-    Direct client for local Ollama HTTP API (http://127.0.0.1:11434/api/chat).
+    Direct client for local Ollama HTTP API (http://127.0.0.1:11434).
     Uses Ollama's native JSON-schema format parameter for constrained decoding.
     """
 
@@ -61,15 +73,21 @@ class OllamaRunner(BaseLLMRunner):
         self,
         base_url: Optional[str] = None,
         model_name: str = "qwen2.5-coder:7b",
-        num_ctx: int = 4096,
+        num_ctx: int = PRIMARY_NUM_CTX,
         timeout_seconds: int = 120,
-        temperature: float = 0.0,
+        temperature: float = PRIMARY_TEMPERATURE,
+        num_predict: int = PRIMARY_NUM_PREDICT,
+        seed: int = PRIMARY_SEED,
+        keep_alive: str = PRIMARY_KEEP_ALIVE,
     ) -> None:
         self.base_url = (base_url or os.environ.get("BBAI_OLLAMA__BASE_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = model_name
         self.num_ctx = num_ctx
         self.timeout_seconds = timeout_seconds
         self.temperature = temperature
+        self.num_predict = num_predict
+        self.seed = seed
+        self.keep_alive = keep_alive
 
     def is_available(self) -> bool:
         """Check if Ollama server is responsive."""
@@ -90,6 +108,48 @@ class OllamaRunner(BaseLLMRunner):
         except Exception:
             pass
         return []
+
+    def generate_raw(
+        self,
+        prompt: str,
+        schema: Optional[Dict[str, Any]] = None,
+        temperature: Optional[float] = None,
+        num_predict: Optional[int] = None,
+        num_ctx: Optional[int] = None,
+        keep_alive: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute raw Ollama inference via /api/generate with native format schema decoding.
+        Returns complete Ollama JSON response including telemetry (eval_count, done_reason, durations).
+        """
+        url = f"{self.base_url}/api/generate"
+        temp = temperature if temperature is not None else self.temperature
+        pred = num_predict if num_predict is not None else self.num_predict
+        ctx = num_ctx if num_ctx is not None else self.num_ctx
+        alive = keep_alive or self.keep_alive
+
+        payload: Dict[str, Any] = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "keep_alive": alive,
+            "options": {
+                "temperature": temp,
+                "num_ctx": ctx,
+                "num_predict": pred,
+                "seed": self.seed,
+            },
+        }
+        if schema is not None:
+            payload["format"] = schema
+
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            res = client.post(url, json=payload)
+            if res.status_code != 200:
+                raise RuntimeError(
+                    f"Ollama inference failed with HTTP {res.status_code}: {res.text}"
+                )
+            return res.json()
 
     def generate_structured(
         self,
@@ -114,8 +174,11 @@ class OllamaRunner(BaseLLMRunner):
             "options": {
                 "temperature": temp,
                 "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
+                "seed": self.seed,
             },
             "stream": False,
+            "keep_alive": self.keep_alive,
         }
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
@@ -154,6 +217,9 @@ class ReasoningRunner:
             num_ctx=self.num_ctx,
             timeout_seconds=self.config.request_timeout_seconds,
             temperature=self.config.default_temperature,
+            num_predict=PRIMARY_NUM_PREDICT,
+            seed=PRIMARY_SEED,
+            keep_alive=PRIMARY_KEEP_ALIVE,
         )
 
     def build_prompt(
@@ -166,7 +232,7 @@ class ReasoningRunner:
     ) -> str:
         """Construct prompt with strict provenance and untrusted-data boundaries."""
         # 1. Budget evidence chunks
-        schema_json = json.dumps(HypothesisModelOutput.model_json_schema())
+        schema_json = json.dumps(HypothesisModelOutput.get_inference_schema())
         budget = self.budget_controller.calculate_evidence_budget(
             num_ctx=self.num_ctx,
             system_prompt=SYSTEM_POLICY_PROMPT,
@@ -241,7 +307,7 @@ INSTRUCTIONS FOR REASONING FIELDS:
         parameters: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Construct standard RAG baseline prompt (Tracks B and C) without derived security invariants."""
-        schema_json = json.dumps(HypothesisModelOutput.model_json_schema())
+        schema_json = json.dumps(HypothesisModelOutput.get_inference_schema())
         budget = self.budget_controller.calculate_evidence_budget(
             num_ctx=self.num_ctx,
             system_prompt=SYSTEM_POLICY_PROMPT,
@@ -473,27 +539,158 @@ CLOSED-LOOP REVISION POLICY:
 
     def call_ollama(self, prompt: str, schema: Optional[Dict[str, Any]] = None) -> str:
         """Execute raw Ollama inference with structured JSON decoding and return raw response string."""
-        url = f"{self.ollama_runner.base_url}/api/generate"
         use_schema = schema or HypothesisModelOutput.get_inference_schema()
-        payload = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "stream": False,
-            "format": use_schema,
-            "keep_alive": "60m",
-            "options": {
-                "temperature": self.ollama_runner.temperature,
-                "num_ctx": self.num_ctx,
-                "num_predict": 300,
-                "seed": 42,
-            },
-        }
-        with httpx.Client(timeout=self.ollama_runner.timeout_seconds) as client:
-            res = client.post(url, json=payload)
-            if res.status_code != 200:
-                raise RuntimeError(
-                    f"Ollama inference failed with HTTP {res.status_code}: {res.text}"
+        resp = self.ollama_runner.generate_raw(
+            prompt=prompt,
+            schema=use_schema,
+            num_predict=PRIMARY_NUM_PREDICT,
+        )
+        return resp.get("response", "{}")
+
+    def execute_i1_generation(
+        self,
+        prompt: str,
+        schema: Optional[Dict[str, Any]] = None,
+        grounding_validator: Optional[Any] = None,
+        channel_a: Optional[Any] = None,
+        target_asset: Optional[Dict[str, Any]] = None,
+        category_id: Optional[str] = None,
+    ) -> I1ExecutionResult:
+        """
+        Executes the authoritative Intervention I1 generation path:
+        S0 (canonical schema)
+          ↓
+        native Ollama constrained decoding (format: {...})
+          ↓
+        strict JSON parsing (json.loads)
+          ↓
+        typed schema validation (HypothesisModelOutput.model_validate)
+          ↓
+        semantic / grounding validation (KnowledgeGroundingValidator if provided)
+
+        Adheres strictly to the M4 primary failure taxonomy:
+        Precedence: RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > VALID
+        Fails closed on any failure. Isolates diagnostic repair strictly as DIAGNOSTIC_ONLY.
+        """
+        use_schema = schema or HypothesisModelOutput.get_inference_schema()
+        t0 = time.perf_counter()
+        raw_response = ""
+        eval_count: Optional[int] = None
+        prompt_eval_count: Optional[int] = None
+        done_reason: Optional[str] = None
+        transport_error: Optional[Exception] = None
+
+        if self.llm_caller:
+            try:
+                raw_response = self.llm_caller(prompt, use_schema)
+            except Exception as exc:
+                transport_error = exc
+        else:
+            try:
+                resp_data = self.ollama_runner.generate_raw(
+                    prompt=prompt,
+                    schema=use_schema,
+                    num_ctx=PRIMARY_NUM_CTX,
+                    num_predict=PRIMARY_NUM_PREDICT,
                 )
-            data = res.json()
-            return data.get("response", "{}")
+                raw_response = resp_data.get("response", "")
+                eval_count = resp_data.get("eval_count")
+                prompt_eval_count = resp_data.get("prompt_eval_count")
+                done_reason = resp_data.get("done_reason")
+            except Exception as exc:
+                transport_error = exc
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        if transport_error is not None:
+            classification = classify_primary_failure(
+                transport_error=transport_error,
+                num_predict=PRIMARY_NUM_PREDICT,
+            )
+            return I1ExecutionResult(
+                raw_response=raw_response,
+                parsed_json=None,
+                hypothesis=None,
+                classification=classification,
+                latency_ms=latency_ms,
+            )
+
+        # Strict JSON parsing
+        parsed_json: Optional[Dict[str, Any]] = None
+        parse_error: Optional[Exception] = None
+        try:
+            parsed_json = json.loads(raw_response)
+            if not isinstance(parsed_json, dict):
+                raise ValueError("Decoded JSON root is not a dictionary")
+        except Exception as exc:
+            parse_error = exc
+
+        # Typed schema validation
+        hypothesis: Optional[HypothesisModelOutput] = None
+        schema_error: Optional[Exception] = None
+        if parsed_json is not None:
+            try:
+                hypothesis = HypothesisModelOutput.model_validate(parsed_json)
+            except Exception as exc:
+                schema_error = exc
+
+        # Semantic grounding validation (if validator provided)
+        grounding_result: Optional[Dict[str, Any]] = None
+        grounding_error: Optional[str] = None
+        if hypothesis is not None and grounding_validator is not None:
+            try:
+                g_res = grounding_validator.validate_grounding(
+                    hypothesis=hypothesis,
+                    channel_a=channel_a,
+                )
+                if hasattr(g_res, "model_dump"):
+                    grounding_result = g_res.model_dump()
+                elif isinstance(g_res, dict):
+                    grounding_result = g_res
+
+                is_valid_grounding = getattr(g_res, "valid", True) if hasattr(g_res, "valid") else (
+                    g_res.get("valid", True) if isinstance(g_res, dict) else True
+                )
+                if not is_valid_grounding:
+                    reason = getattr(g_res, "reason", None) or getattr(g_res, "error_code", None)
+                    if not reason and isinstance(g_res, dict):
+                        reason = g_res.get("reason") or g_res.get("error_code")
+                    grounding_error = reason or "KnowledgeGroundingValidator failed-closed"
+                    hypothesis = None
+            except Exception as exc:
+                grounding_error = f"Grounding validation exception: {exc}"
+                hypothesis = None
+
+        # Deterministic primary failure classification
+        classification = classify_primary_failure(
+            raw_response=raw_response,
+            eval_count=eval_count,
+            done_reason=done_reason,
+            num_predict=PRIMARY_NUM_PREDICT,
+            parsed_json=parsed_json,
+            parse_error=parse_error,
+            schema_error=schema_error,
+            grounding_error=grounding_error,
+        )
+
+        # DIAGNOSTIC REPAIR BOUNDARY (strictly DIAGNOSTIC_ONLY)
+        diagnostic_repair: Optional[Dict[str, Any]] = None
+        if not classification.is_valid and parsed_json is not None:
+            diagnostic_repair = perform_diagnostic_repair(
+                raw_dict=parsed_json,
+                target_asset=target_asset,
+                category_id=category_id,
+            )
+
+        return I1ExecutionResult(
+            raw_response=raw_response,
+            parsed_json=parsed_json,
+            hypothesis=hypothesis if classification.is_valid else None,
+            classification=classification,
+            latency_ms=latency_ms,
+            eval_count=eval_count,
+            prompt_eval_count=prompt_eval_count,
+            diagnostic_repair=diagnostic_repair,
+            grounding_result=grounding_result,
+        )
 
