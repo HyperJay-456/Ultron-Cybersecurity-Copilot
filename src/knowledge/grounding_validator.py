@@ -49,6 +49,14 @@ class KnowledgeGroundingResult(BaseModel):
     invalid_chunk_ids: List[str] = Field(default_factory=list)
     compliance_failures: List[str] = Field(default_factory=list)
 
+    @property
+    def is_namespace_breach(self) -> bool:
+        """True if failure represents a cross-namespace citation violation."""
+        return (
+            self.error_code == "EPISTEMIC_CONFUSION_ERROR"
+            or (self.reason is not None and "INVALID_NAMESPACE_BREACH" in self.reason)
+        )
+
 
 class KnowledgeGroundingValidator:
     """
@@ -140,9 +148,18 @@ class KnowledgeGroundingValidator:
                 reason="M3 reasoning possess zero confirmation authority: cannot emit CONFIRMED status",
             )
 
-        supporting_facts = list(hypo_data.get("supporting_evidence_ids") or [])
+        supporting_facts = list(
+            hypo_data.get("supporting_evidence_ids")
+            or hypo_data.get("empirical_fact_ids")
+            or []
+        )
         contradicting_facts = list(hypo_data.get("contradicting_evidence_ids") or [])
-        cited_methodology = list(hypo_data.get("cited_methodology_chunk_ids") or [])
+        cited_methodology = list(
+            hypo_data.get("cited_methodology_chunk_ids")
+            or hypo_data.get("methodology_references")
+            or hypo_data.get("methodology_chunk_ids")
+            or []
+        )
 
         # -----------------------------------------------------------------
         # 1. Epistemic Separation: Namespace Confusion Detection
@@ -162,7 +179,7 @@ class KnowledgeGroundingValidator:
                 valid=False,
                 status="DISCARD",
                 error_code="EPISTEMIC_CONFUSION_ERROR",
-                reason=f"Epistemic tier confusion: methodology chunk IDs placed in evidence field: {invalid_ids}",
+                reason=f"INVALID_NAMESPACE_BREACH: Epistemic tier confusion: methodology chunk IDs placed in evidence field: {invalid_ids}",
                 invalid_chunk_ids=invalid_ids,
             )
 
@@ -176,7 +193,7 @@ class KnowledgeGroundingValidator:
                 valid=False,
                 status="DISCARD",
                 error_code="EPISTEMIC_CONFUSION_ERROR",
-                reason=f"Epistemic tier confusion: target FACT IDs placed in methodology citation field: {fact_in_methodology}",
+                reason=f"INVALID_NAMESPACE_BREACH: Epistemic tier confusion: target FACT IDs placed in methodology citation field: {fact_in_methodology}",
                 invalid_fact_ids=fact_in_methodology,
             )
 
