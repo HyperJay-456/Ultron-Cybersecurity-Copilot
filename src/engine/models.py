@@ -57,6 +57,10 @@ class HypothesisModelOutput(BaseModel):
     safety_check: Optional[str] = Field(default=None, description="Safety check evaluation")
     supporting_evidence_ids: List[str] = Field(default_factory=list)
     contradicting_evidence_ids: List[str] = Field(default_factory=list)
+    cited_methodology_chunk_ids: List[str] = Field(
+        default_factory=list,
+        description="Cited VAPT methodology chunk IDs (CHK-xxx) supporting testing rationale or invariants."
+    )
     evidence_sufficiency: float = Field(default=0.5, ge=0.0, le=1.0)
 
     @classmethod
@@ -77,3 +81,7 @@ class HypothesisModelOutput(BaseModel):
             "supporting_evidence_ids",
         ]
         return schema
+
+
+# Formal M3 Model Output Alias per M3 Plan v2.3.8 Section 17 & 21
+ReasoningHypothesis = HypothesisModelOutput

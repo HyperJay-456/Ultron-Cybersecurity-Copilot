@@ -15,6 +15,13 @@ from src.knowledge.models import (
     QueryRendererId,
     VaptKnowledgePack,
 )
+from src.knowledge.serializer import ProductionP4Serializer
+from src.knowledge.grounding_validator import (
+    KnowledgeGroundingResult,
+    KnowledgeGroundingValidator,
+)
+from src.knowledge.poisoning_defense import KnowledgePoisoningDefense
+from src.knowledge.pipeline import VaptReasoningPipeline
 
 __all__ = [
     "KnowledgeSourceType",
@@ -26,4 +33,9 @@ __all__ = [
     "KnowledgeRetrievalItem",
     "VaptKnowledgePack",
     "KnowledgeDocumentFrontmatter",
+    "ProductionP4Serializer",
+    "KnowledgeGroundingValidator",
+    "KnowledgeGroundingResult",
+    "KnowledgePoisoningDefense",
+    "VaptReasoningPipeline",
 ]

@@ -4,10 +4,11 @@
 **Planning Freeze Tag**: `m3-v2.3.8-planning-freeze`  
 **Planning Freeze Tag Target Commit**: `819b83399e24080bf2942c3941cc96728885df49`  
 **Planning Freeze Tag Object SHA**: `dbe42947d48df9c9f971af167631031cb8b294e0`  
-**Current Git HEAD**: `d3c99c60e34c26a090ce9c223c713b1fc4224765` (`feat(m3): implement Block A storage and ingestion foundations (M3.1-M3.5)`)  
+**Current Git HEAD**: `5a53c96` (`feat(m3): integrate vapt knowledge grounding and poisoning defenses`)  
 **Tag Ancestry**: Verified (`git merge-base --is-ancestor 819b83399e24080bf2942c3941cc96728885df49 HEAD` returns true)  
 **Implementation Start Timestamp**: `2026-09-20T09:43:33+05:30`  
 **Block B Start Timestamp**: `2026-09-20T09:57:35+05:30`  
+**Block C Start Timestamp**: `2026-09-20T10:17:23+05:30`  
 **Repository Cleanliness**: Working tree verified clean (`git status --short` zero uncommitted changes)  
 
 ---
@@ -22,6 +23,8 @@
 | **M3 Planning Specification Freeze** | `819b833` | Frozen M3 Plan v2.3.8 specification (Tag: `m3-v2.3.8-planning-freeze`) |
 | **M2 Artifact Preservation** | `703768b` | Preserved Phase 11 research artifacts |
 | **M3 Block A Checkpoint** | `d3c99c6` | Block A foundations committed (Phases M3.1–M3.5; 292 unit tests passing) |
+| **M3 Block B Checkpoint** | `b63f862` | Block B retrieval & qualification foundations committed (Phases M3.6–M3.9; 311 unit tests passing) |
+| **M3 Block C Checkpoint** | `5a53c96` | Block C context integration, grounding, poisoning defenses committed (Phases M3.10–M3.14; 353 unit tests passing) |
 
 ---
 
@@ -38,59 +41,51 @@
   - [x] M3.7: Deterministic Query Builder (`VaptQueryBuilder` in `src/knowledge/query_builder.py`), Dual Renderers (Renderer S & N), and `CanonicalP4CapacityOracle` (`src/eval/p4_capacity_oracle.py`)
   - [x] M3.8: Integrated Retrieval Engine (`src/knowledge/retriever.py`) & Frozen RRF Contract ($k=60$, $w=0.5/0.5$, chunk_id ASC tie-breaks)
   - [x] M3.9: Standalone Qualification Harness (`src/eval/retrieval_qualification.py`) & Hard Gates (`QUALIFICATION_SELECTION_SET`, $n=15$)
-- [ ] **Block C: Context Integration, Poisoning Defense & Grounding (Phases M3.10 → M3.14)** `[NOT STARTED]`
+- [x] **Block C: Context Integration, Poisoning Defense & Grounding (Phases M3.10 → M3.14)** `[COMPLETED & VERIFIED]`
+  - [x] M3.10: VAPT RAG Context Integration, Production Serializer & Causal Context-Budget Invariant (`src/knowledge/serializer.py`, `src/engine/context_builder.py`)
+  - [x] M3.11: Dual Grounding Validation & Strict Epistemic Namespace Separation (`src/knowledge/grounding_validator.py`, `src/engine/models.py`)
+  - [x] M3.12: Runtime Knowledge Poisoning Defense, Delimiter Sandboxing & Non-Destructive Sanitization (`src/knowledge/poisoning_defense.py`)
+  - [x] M3.13: Integrated Retrieval/Reasoning Pipeline & Fail-Safe Degradation (`src/knowledge/pipeline.py`)
+  - [x] M3.14: Negative Controls & Strict Execution Boundary Enforcement (`tests/unit/test_m3_negative_controls.py`, `tests/fixtures/negative_controls/`)
 - [ ] **Block D: Ablation Harness, Human Study & Artifact Generation (Phases M3.15 → M3.19)** `[NOT STARTED]`
 
 ---
 
 ## 3. Current Phase Status
 
-- **Current Implementation Block**: Block B Complete -> Boundary Handoff
-- **Completed Phases**: M3.6, M3.7, M3.8, M3.9
-- **Files Added / Modified in Block B**:
-  - `src/knowledge/retriever.py` (Candidate 2, Candidate 1, Candidate 3, BaseKnowledgeRetriever, RRF rank fusion)
-  - `src/knowledge/query_builder.py` (`VaptQueryBuilder`, Renderer S, Renderer N)
-  - `src/eval/p4_capacity_oracle.py` (`CanonicalP4CapacityOracle`, CanonicalP4Serialization wire grammar, token estimation)
-  - `src/eval/retrieval_qualification.py` (Standalone qualification harness, reproducibility verifier, macro-averaged renderer selector, canonical backend ranker)
-  - `data/eval/retrieval_gold.json` (50 queries: 20 DEV, 15 VAL, 15 QUALIFICATION_SELECTION_SET)
-  - `data/eval/retrieval_final_eval.json` (15 sealed generalization queries)
-  - `data/eval/retrieval_final_eval_manifest.json` (SHA-256 bound sealed manifest)
-  - `tests/unit/test_candidate2_retriever.py` (3 unit tests)
-  - `tests/unit/test_query_builder_and_oracle.py` (5 unit tests)
-  - `tests/unit/test_retrieval_candidates.py` (5 unit tests)
-  - `tests/unit/test_retrieval_qualification.py` (6 unit tests)
-  - `docs/M3_IMPLEMENTATION_PROGRESS.md`
-  - `.gitignore` (added `*.index` rule)
-- **Empirical Qualification Results (`QUALIFICATION_SELECTION_SET`, $n=15$)**:
-  - **Candidate 2 (Enhanced Pure SQLite FTS5)**:
-    - Gate 1 (Reproducibility 100 runs): PASS (0 rank instability, max drift = 0.0)
-    - Gate 2 (Recall@5 $\ge 0.80$): **FAIL** (0.7778 < 0.8000)
-    - Gate 3 (MRR@5 $\ge 0.60$): PASS (0.7833)
-    - Gate 4 (InjectionHit@P4_256 $\ge 0.75$): PASS (0.8000)
-    - Overall Status: **DISQUALIFIED (Failed Gate 2)**
-  - **Candidate 1 (Local ONNX Vector + SQLite FTS5)**:
-    - Gate 1 (Reproducibility 100 runs): PASS (0 rank instability, max drift $\le 10^{-6}$)
-    - Gate 2 (Recall@5 $\ge 0.80$): **PASS** (0.9667)
-    - Gate 3 (MRR@5 $\ge 0.60$): **PASS** (0.9556)
-    - Gate 4 (InjectionHit@P4_256 $\ge 0.75$): **PASS** (0.9333)
-    - Mean Latency: 4.8 ms (engineering target $\le 100\text{ms}$ met)
-    - Overall Status: **QUALIFIED**
-  - **Candidate 3 (Embedded ChromaDB + SQLite FTS5)**:
-    - Gate 1 (Reproducibility 100 runs): PASS (0 rank instability, max drift $\le 10^{-6}$)
-    - Gate 2 (Recall@5 $\ge 0.80$): **PASS** (0.9667)
-    - Gate 3 (MRR@5 $\ge 0.60$): **PASS** (0.9556)
-    - Gate 4 (InjectionHit@P4_256 $\ge 0.75$): **PASS** (0.9333)
-    - Mean Latency: 6.2 ms (engineering target $\le 100\text{ms}$ met)
-    - Overall Status: **QUALIFIED**
-- **Canonical Backend Selection Decision**:
-  - Evaluated on qualified candidates (Candidate 1 and Candidate 3):
-    1. Recall@5: Tied (0.9667 vs 0.9667)
-    2. MRR@5: Tied (0.9556 vs 0.9556)
-    3. Latency: Candidate 1 (4.8 ms) < Candidate 3 (6.2 ms)
-    4. Dependency Footprint: Candidate 1 (lightweight ONNX runtime) < Candidate 3 (heavy ChromaDB C++ extensions)
-    5. Deterministic Candidate ID ASC: `Candidate 1` < `Candidate 3`
-  - **SELECTED PRODUCTION BACKEND**: **`Candidate 1` (Local ONNX Vector + SQLite FTS5)**
-- **Next Implementation Boundary**: Block C (Context Integration, Poisoning Defense & Grounding, Phases M3.10 → M3.14).
+- **Current Implementation Block**: Block C `[COMPLETED]`
+- **Completed Phases**: M3.10, M3.11, M3.12, M3.13, M3.14
+- **Files Added in Block C**:
+  - `src/knowledge/serializer.py` (`ProductionP4Serializer`, CanonicalP4Serialization wire grammar, Section 13.7 priority ordering)
+  - `src/knowledge/grounding_validator.py` (`KnowledgeGroundingValidator`, epistemic namespace enforcement, RFC 9162 Merkle audit path verification, license allowlist checking)
+  - `src/knowledge/poisoning_defense.py` (`KnowledgePoisoningDefense`, non-destructive XML escaping, injection directive marker telemetry, execution boundary enforcement)
+  - `src/knowledge/pipeline.py` (`VaptReasoningPipeline`, end-to-end integration, fail-soft degradation modes)
+  - `tests/fixtures/negative_controls/fixture_a.json` (Synthetic Fixture A: Irrelevant Methodology Probe)
+  - `tests/fixtures/negative_controls/fixture_b.json` (Synthetic Fixture B: Misleading Inverted Methodology Probe)
+  - `tests/fixtures/negative_controls/fixture_c.json` (Synthetic Fixture C: Generic Boilerplate Probe)
+  - `tests/unit/test_p4_serializer_oracle_parity.py` (3 unit tests; 100% byte parity with CanonicalP4CapacityOracle)
+  - `tests/unit/test_m3_context_builder.py` (4 unit tests; Track B vs D Target-Evidence byte parity, floor preservation)
+  - `tests/unit/test_knowledge_grounding_validator.py` (8 unit tests; epistemic confusion, Merkle paths, zero confirmation authority)
+  - `tests/unit/test_poisoning_defense.py` (4 unit tests; XML escaping, non-destructive telemetry, execution boundary)
+  - `tests/unit/test_vapt_pipeline.py` (4 unit tests; end-to-end pipeline, offline retriever degradation, byte identity)
+  - `tests/unit/test_m3_negative_controls.py` (9 unit tests; 8 negative control probes, secret/session protection)
+  - `tests/unit/test_m3_block_c_integration.py` (10 unit tests; items A through K formal verification)
+- **Files Modified in Block C**:
+  - `src/engine/context_builder.py` (integrated M3 tracks, strict Target-Evidence cap = 256/768, fail-soft P4 advisory injection, floor preservation)
+  - `src/engine/models.py` (added `cited_methodology_chunk_ids`, aliased `ReasoningHypothesis = HypothesisModelOutput`)
+  - `src/knowledge/models.py` (extended `VaptKnowledgePack` with `serialized_p4_wire` and `epistemic_tier`)
+  - `src/knowledge/provenance.py` (added RFC 9162 `compute_rfc9162_audit_path` and `verify_rfc9162_audit_path`)
+  - `src/knowledge/__init__.py` (re-exported Block C components)
+- **Target-Evidence Retriever Status**:
+  - `src/retrieval/hybrid.py`: **0 lines modified (100% byte-identical against commit b63f862)**
+- **Verification Invariants Confirmed**:
+  - **Causal Parity**: `TargetEvidencePayload(B) == TargetEvidencePayload(D)` byte-identical.
+  - **Epistemic Discipline**: `supporting_evidence_ids` strictly restricted to `FACT-xxx`; `cited_methodology_chunk_ids` strictly restricted to `CHK-xxx`.
+  - **Zero Confirmation Authority**: Reasoning engine cannot emit `CONFIRMED`.
+  - **Poisoning Defense**: Advisory text is escaped non-destructively; directives cannot alter system instructions or execution policies.
+  - **Degradation Semantics**: Vector backend failure, empty retrieval, or corpus tamper gracefully omits VAPT advisory context and falls back to unaugmented Track B reasoning.
+  - **Execution Boundary**: LLM/VAPT layer possesses zero authority over credentials, cookies, CSRF tokens, nonces, signing keys, scope, or approvals.
+- **Next Implementation Boundary**: Block D (Phases M3.15 → M3.19: Ablation Harness, Human Study & Empirical Benchmark Evaluation).
 
 ---
 
@@ -98,15 +93,21 @@
 
 - **Block A Baseline**:
   - Unit Tests: 292 passed, 0 failed, 2 warnings in 9.92s
-- **Block B Test Run**:
-  - Unit Tests: **311 passed**, 0 failed, 2 warnings in 17.96s
-  - Total Tests Collected: **359 tests** (311 unit + 48 integration)
-  - Unit Tests Added in Block B: 19 new tests across 4 test modules:
-    - `test_candidate2_retriever.py`: 3 passed
-    - `test_query_builder_and_oracle.py`: 5 passed
-    - `test_retrieval_candidates.py`: 5 passed
-    - `test_retrieval_qualification.py`: 6 passed
-  - Pre-existing M2/M2.75/Block A Regression Status: **100% passing (zero regressions)**
+- **Block B Baseline**:
+  - Unit Tests: 311 passed, 0 failed, 2 warnings in 17.96s
+  - Total Tests Collected: 359 tests (311 unit + 48 integration)
+- **Block C Test Run**:
+  - Unit Tests: **353 passed**, 0 failed, 2 warnings in 18.14s
+  - Total Tests Collected: **401 tests** (353 unit + 48 integration)
+  - Tests Added in Block C: **42 new tests** across 7 test modules:
+    - `test_p4_serializer_oracle_parity.py`: 3 passed
+    - `test_m3_context_builder.py`: 4 passed
+    - `test_knowledge_grounding_validator.py`: 8 passed
+    - `test_poisoning_defense.py`: 4 passed
+    - `test_vapt_pipeline.py`: 4 passed
+    - `test_m3_negative_controls.py`: 9 passed
+    - `test_m3_block_c_integration.py`: 10 passed
+  - Pre-existing M2/M2.75/Block A/Block B Regression Status: **100% passing (zero regressions)**
 
 ---
 
@@ -119,6 +120,7 @@
 5. **Epistemic Tier Invariant**: `supporting_evidence_ids` may contain `FACT-xxx` only; `cited_methodology_chunk_ids` may contain `CHK-xxx` only.
 6. **Query Construction Rule**: Closed `EvidenceGapType` enum only; zero target body text or 3B free-form category hints in primary causal retrieval.
 7. **Production Backend Selection**: Candidate 1 selected strictly via preregistered empirical qualification and tie-break rules.
+8. **No Empirical Overclaiming in Block C**: No claims of improved yield, precision, or recall; Block C establishes integration, grounding invariants, and safety boundaries. Research outcomes are evaluated in Block D.
 
 ---
 

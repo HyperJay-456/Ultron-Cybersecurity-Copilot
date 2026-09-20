@@ -17,12 +17,20 @@ from src.evidence.cascade_models import (
     LosslessStructuralPack,
     TriageMetadataPacket,
 )
+from src.knowledge.models import VaptKnowledgePack
 
 
 # Canonical Track Identifiers per Section 15.1 and Pre-Execution Addendum
 TRACK_A_7B_BASELINE = "TRACK_A_7B_BASELINE"
 TRACK_B_3B_BASELINE = "TRACK_B_3B_BASELINE"
 TRACK_C_CASCADE = "TRACK_C_CASCADE"
+
+# Milestone M3 Track Identifiers (Section 16.1 & Section 23.1)
+TRACK_A = "TRACK_A"  # 7B Baseline (M2 Freeze Repro; no Target Evidence, no VAPT)
+TRACK_B = "TRACK_B"  # 7B + Target-Evidence RAG (evidence.db only)
+TRACK_C = "TRACK_C"  # 7B + VAPT Knowledge (Diagnostic; vapt_knowledge.db only)
+TRACK_D = "TRACK_D"  # 7B + Dual RAG (Primary Test: Target Evidence + VAPT Knowledge)
+TRACK_E = "TRACK_E"  # Optional Cascade: 3B Triage -> Router -> 7B Deep + Dual RAG
 
 # Internal normalization for legacy literals in Section 10 examples
 _LEGACY_TRACK_MAP = {
@@ -54,6 +62,7 @@ class AssembledReasoningContext(BaseModel):
     context_builder_version: str = "2.0.0"
     context_builder_hash: str
     provenance_metadata: Dict[str, Any] = Field(default_factory=dict)
+    vapt_pack: Optional[VaptKnowledgePack] = None
 
 
 class ReasoningContextBuilder:
@@ -85,22 +94,25 @@ class ReasoningContextBuilder:
         budget_tier: int = 4096,
         cascade_mode: str = TRACK_C_CASCADE,
         optional_advisory_content_mode: bool = True,
+        vapt_pack: Optional[VaptKnowledgePack] = None,
     ) -> AssembledReasoningContext:
         """
-        Assembles 7B (or 3B baseline) reasoning prompt according to the Section 10 hierarchy.
+        Assembles 7B (or 3B baseline) reasoning prompt according to the Section 10 / M3 hierarchy.
 
         INPUT:
             - handoff_packet: CascadeHandoffPacket (Channel A structural pack + Channel B triage + routing)
             - model_identifier: str (e.g. "qwen2.5-coder:7b" or "qwen2.5-coder:3b")
             - budget_tier: int (4096 for Tier 1 constrained; 8192 for Tier 2 high-capacity)
-            - cascade_mode: str (TRACK_A_7B_BASELINE, TRACK_B_3B_BASELINE, TRACK_C_CASCADE)
+            - cascade_mode: str (TRACK_A, TRACK_B, TRACK_C, TRACK_D, TRACK_E, or legacy literals)
             - optional_advisory_content_mode: bool (Controls inclusion of Channel B advisory prose)
+            - vapt_pack: Optional[VaptKnowledgePack] (Milestone M3 advisory knowledge pack)
         """
         canonical_mode = normalize_track_identifier(cascade_mode)
         ch_a = handoff_packet.channel_a_structural
 
         # -------------------------------------------------------------------
         # 1. System Policy & Schema Constraints (P0 Protected Floor)
+        # Identical across all tracks per Section 16.1 Parity Table
         # -------------------------------------------------------------------
         system_policy = (
             "You are an authoritative Application Security Reasoning Engine.\n"
@@ -179,12 +191,43 @@ class ReasoningContextBuilder:
 
         remaining_budget = budget_tier - floor_tokens
 
+        # Determine track-specific component inclusion per M3 Section 23.1
+        if canonical_mode in (TRACK_A,):
+            include_triage = False
+            include_target_evidence = False
+            include_vapt = False
+        elif canonical_mode == TRACK_B:
+            include_triage = False
+            include_target_evidence = True
+            include_vapt = False
+        elif canonical_mode == TRACK_C:
+            include_triage = False
+            include_target_evidence = False
+            include_vapt = True
+        elif canonical_mode == TRACK_D:
+            include_triage = False
+            include_target_evidence = True
+            include_vapt = True
+        elif canonical_mode in (TRACK_E, TRACK_C_CASCADE):
+            include_triage = True
+            include_target_evidence = True
+            include_vapt = True if vapt_pack is not None else False
+        elif canonical_mode in (TRACK_A_7B_BASELINE, TRACK_B_3B_BASELINE):
+            # Legacy M2 track modes: target evidence active, triage disabled
+            include_triage = False
+            include_target_evidence = True
+            include_vapt = False
+        else:
+            include_triage = True
+            include_target_evidence = True
+            include_vapt = True if vapt_pack is not None else False
+
         # -------------------------------------------------------------------
-        # 6. Channel B: 3B Triage Packet (P3 Advisory, Track C only)
+        # 6. Channel B: 3B Triage Packet (P3 Advisory)
         # -------------------------------------------------------------------
         triage_block = ""
         p3_tokens = 0
-        if canonical_mode == TRACK_C_CASCADE and optional_advisory_content_mode:
+        if include_triage and optional_advisory_content_mode:
             vt = handoff_packet.validated_triage
             if vt is not None:
                 triage_block = (
@@ -198,7 +241,6 @@ class ReasoningContextBuilder:
                 )
                 p3_tokens = cls.estimate_tokens(triage_block)
                 if p3_tokens > remaining_budget:
-                    # Truncate or omit advisory triage if remaining budget is insufficient
                     triage_block = ""
                     p3_tokens = 0
                 else:
@@ -206,19 +248,42 @@ class ReasoningContextBuilder:
 
         # -------------------------------------------------------------------
         # 7. Encapsulated Raw Evidence Snippets (P4 Untrusted Target Data)
+        # Section 16.1 & 16.2: Target-Evidence budget ceiling = 256 tokens (Tier 1) / 768 (Tier 2).
+        # Causal Parity Rule: Truncation is deterministic and identical between Track B and Track D.
         # -------------------------------------------------------------------
         raw_snippets_block = ""
-        p4_tokens = 0
-        if ch_a.raw_body_sample and remaining_budget > 50:
+        p4_target_tokens = 0
+        target_evidence_cap = 256 if budget_tier <= 4096 else 768
+
+        if include_target_evidence and ch_a.raw_body_sample and remaining_budget > 50:
             sample = ch_a.raw_body_sample
-            max_chars = remaining_budget * 4
+            max_chars = min(remaining_budget, target_evidence_cap) * 4
             if len(sample) > max_chars:
                 sample = sample[:max_chars] + "...[TRUNCATED]"
             raw_snippets_block = (
                 f"=== ENCAPSULATED RAW EVIDENCE SNIPPETS ===\n"
                 f"<untrusted_target_data>\n{sample}\n</untrusted_target_data>\n"
             )
-            p4_tokens = cls.estimate_tokens(raw_snippets_block)
+            p4_target_tokens = cls.estimate_tokens(raw_snippets_block)
+            remaining_budget -= p4_target_tokens
+
+        # -------------------------------------------------------------------
+        # 8. VAPT Knowledge Advisory Block (P4 General VAPT Knowledge)
+        # Section 15 & 16: Formatted strictly under CanonicalP4Serialization.
+        # Advisory-tier: Does NOT displace Target Evidence or protected floor.
+        # -------------------------------------------------------------------
+        vapt_advisory_block = ""
+        p4_vapt_tokens = 0
+        if include_vapt and vapt_pack is not None and vapt_pack.serialized_p4_wire:
+            wire_tokens = cls.estimate_tokens(vapt_pack.serialized_p4_wire)
+            if wire_tokens <= remaining_budget:
+                vapt_advisory_block = vapt_pack.serialized_p4_wire
+                p4_vapt_tokens = wire_tokens
+                remaining_budget -= p4_vapt_tokens
+            else:
+                # Advisory fail-soft: omit VAPT if context headroom exhausted
+                vapt_advisory_block = ""
+                p4_vapt_tokens = 0
 
         user_prompt_sections = [
             target_envelope,
@@ -231,6 +296,8 @@ class ReasoningContextBuilder:
             user_prompt_sections.append(triage_block)
         if raw_snippets_block:
             user_prompt_sections.append(raw_snippets_block)
+        if vapt_advisory_block:
+            user_prompt_sections.append(vapt_advisory_block)
 
         user_prompt = "\n".join(user_prompt_sections)
         full_prompt = f"{system_policy}\n{user_prompt}"
@@ -242,11 +309,25 @@ class ReasoningContextBuilder:
             "p1_contradictions": cls.estimate_tokens(contradictions_block),
             "p1_canonical_evidence": cls.estimate_tokens(canonical_evidence_block),
             "p3_advisory_triage": p3_tokens,
-            "p4_raw_snippets": p4_tokens,
+            "p4_raw_snippets": p4_target_tokens,
+            "p4_vapt_knowledge": p4_vapt_tokens,
         }
         total_tokens = sum(partition_tokens.values())
 
         builder_hash = cls.get_builder_hash()
+
+        prov_meta = {
+            "builder_version": cls.VERSION,
+            "builder_hash": builder_hash,
+            "budget_tier": budget_tier,
+            "cascade_mode": canonical_mode,
+            "model_identifier": model_identifier,
+            "provenance_hash": handoff_packet.provenance_hash,
+        }
+        if vapt_pack is not None:
+            prov_meta["vapt_pack_id"] = vapt_pack.pack_id
+            prov_meta["vapt_provenance_hash"] = vapt_pack.provenance_hash
+            prov_meta["vapt_chunk_ids"] = [item.chunk.chunk_id for item in vapt_pack.items]
 
         return AssembledReasoningContext(
             prompt=full_prompt,
@@ -259,12 +340,6 @@ class ReasoningContextBuilder:
             model_identifier=model_identifier,
             context_builder_version=cls.VERSION,
             context_builder_hash=builder_hash,
-            provenance_metadata={
-                "builder_version": cls.VERSION,
-                "builder_hash": builder_hash,
-                "budget_tier": budget_tier,
-                "cascade_mode": canonical_mode,
-                "model_identifier": model_identifier,
-                "provenance_hash": handoff_packet.provenance_hash,
-            },
+            provenance_metadata=prov_meta,
+            vapt_pack=vapt_pack if include_vapt else None,
         )

@@ -106,6 +106,9 @@ class VaptKnowledgePack(BaseModel):
     retrieval_timestamp: str
     corpus_manifest_hash: str
     provenance_hash: str  # SHA-256 of all chunk hashes + rendered_query_text
+    serialized_p4_wire: str = ""
+    epistemic_tier: EpistemicTier = EpistemicTier.GENERAL_VAPT_KNOWLEDGE
+
 
 
 class SourceAllowlistEntry(BaseModel):

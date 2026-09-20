@@ -149,6 +149,59 @@ def compute_corpus_merkle_root(
     return mth_bytes.hex().lower()
 
 
+def compute_rfc9162_audit_path(leaves: Sequence[bytes], m: int) -> List[bytes]:
+    """
+    Compute RFC 9162 audit path for leaf at index m in an ordered dataset of leaves.
+    Returns list of sibling hash bytes from bottom up to root.
+    """
+    n = len(leaves)
+    if not (0 <= m < n):
+        raise IndexError(f"Leaf index {m} out of range for n={n}")
+    if n <= 1:
+        return []
+
+    k = 1 << ((n - 1).bit_length() - 1)
+    if m < k:
+        return compute_rfc9162_audit_path(leaves[:k], m) + [compute_rfc9162_mth(leaves[k:])]
+    else:
+        return compute_rfc9162_audit_path(leaves[k:], m - k) + [compute_rfc9162_mth(leaves[:k])]
+
+
+def verify_rfc9162_audit_path(
+    leaf_bytes: bytes,
+    m: int,
+    n: int,
+    audit_path: Sequence[bytes],
+    root: bytes,
+) -> bool:
+    """
+    Verify RFC 9162 audit path proving leaf at index m is in tree of size n with root hash.
+    """
+    if not (0 <= m < n):
+        return False
+
+    def _reconstruct_root(cur_m: int, cur_n: int, p: Sequence[bytes]) -> bytes:
+        if cur_n == 1:
+            return hashlib.sha256(b"\x00" + leaf_bytes).digest()
+        k = 1 << ((cur_n - 1).bit_length() - 1)
+        if not p:
+            raise ValueError("Audit path too short")
+        sibling = p[-1]
+        rest = p[:-1]
+        if cur_m < k:
+            left = _reconstruct_root(cur_m, k, rest)
+            return hashlib.sha256(b"\x01" + left + sibling).digest()
+        else:
+            right = _reconstruct_root(cur_m - k, cur_n - k, rest)
+            return hashlib.sha256(b"\x01" + sibling + right).digest()
+
+    try:
+        reconstructed = _reconstruct_root(m, n, audit_path)
+        return reconstructed == root
+    except Exception:
+        return False
+
+
 class CryptographicTrustAuthority:
     """
     Manages offline trust roots, Ed25519 manifest signing, and fail-closed verification.
