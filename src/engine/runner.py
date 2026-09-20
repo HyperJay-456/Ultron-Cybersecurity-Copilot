@@ -470,3 +470,30 @@ CLOSED-LOOP REVISION POLICY:
         """Execute reasoning call and return structured HypothesisModelOutput."""
         prompt = self.build_prompt(target_asset, category_id, retrieved_evidence, invariants, parameters=parameters)
         return self._execute_inference(prompt, target_asset, category_id)
+
+    def call_ollama(self, prompt: str, schema: Optional[Dict[str, Any]] = None) -> str:
+        """Execute raw Ollama inference with structured JSON decoding and return raw response string."""
+        url = f"{self.ollama_runner.base_url}/api/generate"
+        use_schema = schema or HypothesisModelOutput.get_inference_schema()
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "format": use_schema,
+            "keep_alive": "60m",
+            "options": {
+                "temperature": self.ollama_runner.temperature,
+                "num_ctx": self.num_ctx,
+                "num_predict": 300,
+                "seed": 42,
+            },
+        }
+        with httpx.Client(timeout=self.ollama_runner.timeout_seconds) as client:
+            res = client.post(url, json=payload)
+            if res.status_code != 200:
+                raise RuntimeError(
+                    f"Ollama inference failed with HTTP {res.status_code}: {res.text}"
+                )
+            data = res.json()
+            return data.get("response", "{}")
+

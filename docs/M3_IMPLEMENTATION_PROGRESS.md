@@ -193,6 +193,27 @@ The historical baseline artifacts recorded at milestone completion in `data/eval
 
 ---
 
+### 5.3 Live LLM Validation Benchmark (`data/eval/m3_live_llm_benchmark_20260920.json`)
+
+- **Execution Timestamp**: `2026-09-20T07:58:05.706120+00:00`
+- **Execution Mode**: `LIVE_MODEL_INFERENCE` (Local Ollama v0.34.1 at `http://127.0.0.1:11434`)
+- **Reasoning Model**: `qwen2.5-coder:7b` (digest `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`, `Q4_K_M`, 7.6B params)
+- **Parameters**: `temperature=0.0`, `seed=42`, `num_ctx=2048`, `num_predict=300`, `keep_alive="60m"`
+- **Total Evaluations**: 336 (84 scenarios $\times$ 4 tracks) across Tracks A, B, C, D
+- **Wall-Clock Duration**: 6,913.96 seconds (~115.2 minutes)
+- **Strict B/D Causal Parity**: 84/84 pairs verified byte-identical (0 discrepancies, SHA256 hashes matched on all pairs)
+- **Track Results**:
+  - Track A: Hypotheses = 0, Abstentions = 79 (94.05%), Grounding Validity = 1.0 (84/84), TPR = 0.0, TNR = 0.9167
+  - Track B: Hypotheses = 0, Abstentions = 82 (97.62%), Grounding Validity = 1.0 (84/84), TPR = 0.0, TNR = 0.9583
+  - Track C: Hypotheses = 0, Abstentions = 74 (88.10%), Grounding Validity = 0.8690 (73/84), TPR = 0.0, TNR = 0.9167
+  - Track D: Hypotheses = 0, Abstentions = 75 (89.29%), Grounding Validity = 0.8571 (72/84), TPR = 0.0, TNR = 0.9583
+- **Primary Causal Estimand ($\Delta_{\text{UsefulYield}}$)**: 0.0000 (Track B: 0.0000, Track D: 0.0000)
+- **Grounding Findings**: Epistemic namespace confusion detected when VAPT context is provided (`CHK` IDs cited in `supporting_evidence_ids`), caught 100% by `KnowledgeGroundingValidator` (Tracks C & D).
+- **Reproducibility**: Repeated identical prompts with `seed=42`, `temp=0.0` produced 100% byte-identical output strings.
+- **Reference Document**: See `docs/M3_LIVE_LLM_VALIDATION_REPORT.md` for full detailed analysis.
+
+---
+
 ## 6. Known Limitations & Strict Scope Constraints
 
 1. **Pilot Human-Study Sample Size**: The human study contains exactly 20 scenarios (10 vulnerable, 10 control) and 3 raters (120 total ratings). Statistical power is limited by the pilot design; findings reflect the frozen pilot sample and are not extrapolated beyond the specified test set.

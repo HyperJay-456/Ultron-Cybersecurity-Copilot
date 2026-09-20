@@ -179,7 +179,16 @@ class M3AblationHarness:
             try:
                 hypothesis = HypothesisModelOutput.model_validate_json(raw_response)
             except Exception:
-                hypothesis = None
+                try:
+                    data = json.loads(raw_response)
+                    if not data.get("asset_id"):
+                        data["asset_id"] = pack.asset_id
+                    if not data.get("category"):
+                        data["category"] = scenario.category_id
+                    hypothesis = HypothesisModelOutput.model_validate(data)
+                except Exception:
+                    hypothesis = None
+
         else:
             # Hermetic mode: deterministic response
             if scenario.ground_truth_vulnerable:
