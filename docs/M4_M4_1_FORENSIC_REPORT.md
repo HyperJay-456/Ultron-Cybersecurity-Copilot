@@ -78,7 +78,7 @@ Every scheduled evaluation attempt across the 84 scenarios and 4 tracks is assig
   - Minimum raw characters: 1,381
   - Maximum raw characters: 1,567
   - Mean raw characters: 1,474.5 (concordant with 300 sub-word tokens)
-- **Causal Motivation**: Motivates **Intervention I1** (runtime schema-constrained decoding to guarantee JSON syntax closure) and **Intervention I4** (Bounded Analytical Intermediate Representation to enforce compact slot budgets).
+- **Causal Motivation**: Motivates **Intervention I1** (runtime schema-constrained decoding to reduce incomplete or syntactically invalid structured outputs) and **Intervention I4** (Bounded Analytical Intermediate Representation to enforce compact slot budgets).
 
 ### 4.2 Epistemic Namespace Violation Traces ($n=23$)
 - **Mechanism**: When Partition P4 provided security testing methodology chunks, the model cited `CHK-DOC-PLATFORM-INV-...` IDs inside `supporting_evidence_ids`.
@@ -109,9 +109,9 @@ Every scheduled evaluation attempt across the 84 scenarios and 4 tracks is assig
 ## 5. Cross-Track Descriptive Comparison
 
 - **Track A (Baseline Structural Context)**: 5 truncations, 0 namespace violations, 79 valid abstentions.
-- **Track B (Target Evidence Enabled)**: 2 truncations, 0 namespace violations, 82 valid abstentions. Demonstrates higher parseability due to compact target evidence representation.
+- **Track B (Target Evidence Enabled)**: 2 truncations, 0 namespace violations, 82 valid abstentions. Track B produced fewer truncation events in this benchmark configuration than Track A.
 - **Track C (Methodology Context Added)**: 10 truncations, 11 namespace violations, 63 valid abstentions. Adding methodology without field segregation triggered cross-namespace citation and token budget pressure.
-- **Track D (Full Dual-RAG with Causal Parity)**: 9 truncations, 12 namespace violations, 63 valid abstentions. Confirms that methodology without epistemic schema constraints consistently induces namespace confusion ($14.29\%$).
+- **Track D (Full Dual-RAG with Causal Parity)**: 9 truncations, 12 namespace violations, 63 valid abstentions. Track D exhibited namespace violations in this methodology-enabled condition, motivating the controlled I2 experiment.
 
 ---
 
