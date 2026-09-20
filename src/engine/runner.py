@@ -16,6 +16,7 @@ from src.engine.models import (
     I1ExecutionResult,
     I2ExecutionResult,
     I2RawHypothesisOutput,
+    I3ExecutionResult,
     PrimaryFailureCategory,
     ViolationAssessment,
     ViolationRelation,
@@ -988,3 +989,194 @@ INSTRUCTIONS FOR REASONING:
             adapter_error=adapter_error,
         )
 
+    def build_i3_counterfactual_prompt(
+        self,
+        target_asset: Dict[str, Any],
+        category_id: str,
+        retrieved_evidence: List[Dict[str, Any]],
+        template: Optional[Any] = None,
+        parameters: Optional[List[Dict[str, Any]]] = None,
+        invariants: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """
+        Construct prompt for Intervention I3 (Counterfactual Evidence-Gap Reasoning).
+        Uses category-specific counterfactual templates from src.engine.prompts.
+        Preserves canonical S0 output interface with unconstrained token sampling.
+        """
+        from src.engine.prompts import format_counterfactual_reasoning_prompt
+        return format_counterfactual_reasoning_prompt(
+            target_asset=target_asset,
+            category_id=category_id,
+            retrieved_evidence=retrieved_evidence,
+            template=template,
+            parameters=parameters,
+            invariants=invariants,
+        )
+
+    def execute_i3_generation(
+        self,
+        prompt: str,
+        category_id: Optional[str] = None,
+        grounding_validator: Optional[Any] = None,
+        channel_a: Optional[Any] = None,
+        target_asset: Optional[Dict[str, Any]] = None,
+    ) -> I3ExecutionResult:
+        """
+        Executes the authoritative Intervention I3 generation path:
+        Unconstrained Token Sampling (NO I1 schema constraint passed to runtime)
+          ↓
+        Strict JSON parsing (json.loads after markdown fence stripping)
+          ↓
+        Post-generation Canonical S0 schema validation (HypothesisModelOutput)
+          ↓
+        Authoritative Grounding Validation (KnowledgeGroundingValidator)
+
+        Single-Factor Isolation:
+        - Schema constraint (format: {...}) is strictly omitted / schema=None.
+        - Segregated raw namespace fields (empirical_fact_ids / methodology_chunk_ids) are NOT used.
+        - Canonical S0 output schema is preserved intact.
+        - Adheres strictly to the M4 primary failure taxonomy:
+          RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > VALID
+        - Fails closed on any failure.
+        """
+        t0 = time.perf_counter()
+        raw_response = ""
+        eval_count: Optional[int] = None
+        prompt_eval_count: Optional[int] = None
+        done_reason: Optional[str] = None
+        transport_error: Optional[Exception] = None
+
+        # UNCONSTRAINED SAMPLING: schema is strictly None!
+        # Do NOT pass format: {...} under any circumstances
+        if self.llm_caller:
+            try:
+                raw_response = self.llm_caller(prompt, None)
+            except Exception as exc:
+                transport_error = exc
+        else:
+            try:
+                resp_data = self.ollama_runner.generate_raw(
+                    prompt=prompt,
+                    schema=None,  # Pure single-factor I3: unconstrained sampling
+                    num_ctx=PRIMARY_NUM_CTX,
+                    num_predict=PRIMARY_NUM_PREDICT,
+                )
+                raw_response = resp_data.get("response", "")
+                eval_count = resp_data.get("eval_count")
+                prompt_eval_count = resp_data.get("prompt_eval_count")
+                done_reason = resp_data.get("done_reason")
+            except Exception as exc:
+                transport_error = exc
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        if transport_error is not None:
+            classification = classify_primary_failure(
+                transport_error=transport_error,
+                num_predict=PRIMARY_NUM_PREDICT,
+            )
+            return I3ExecutionResult(
+                raw_response=raw_response,
+                parsed_json=None,
+                hypothesis=None,
+                classification=classification,
+                latency_ms=latency_ms,
+                template_category_id=category_id,
+            )
+
+        # Strict JSON parsing
+        parsed_json: Optional[Dict[str, Any]] = None
+        parse_error: Optional[Exception] = None
+        cleaned_response = raw_response.strip()
+        if cleaned_response.startswith("```json"):
+            cleaned_response = cleaned_response[7:]
+        elif cleaned_response.startswith("```"):
+            cleaned_response = cleaned_response[3:]
+        if cleaned_response.endswith("```"):
+            cleaned_response = cleaned_response[:-3]
+        cleaned_response = cleaned_response.strip()
+
+        try:
+            parsed_json = json.loads(cleaned_response)
+            if not isinstance(parsed_json, dict):
+                raise ValueError("Decoded JSON root is not a dictionary")
+        except Exception as exc:
+            parse_error = exc
+
+        # Post-generation typed schema validation against canonical S0 HypothesisModelOutput
+        hypothesis: Optional[HypothesisModelOutput] = None
+        schema_error: Optional[Exception] = None
+
+        if parsed_json is not None:
+            try:
+                # CONFIRMED cannot be emitted by the reasoning engine
+                if parsed_json.get("decision") == "CONFIRMED":
+                    raise ValueError("CONFIRMED decision is forbidden in reasoning engine")
+                hypothesis = HypothesisModelOutput.model_validate(parsed_json)
+                if hypothesis.decision == "CONFIRMED":
+                    raise ValueError("CONFIRMED decision is forbidden in reasoning engine")
+            except Exception as exc:
+                schema_error = exc
+                hypothesis = None
+
+        # Authoritative Grounding Validation (KnowledgeGroundingValidator)
+        grounding_result: Optional[Dict[str, Any]] = None
+        grounding_error: Optional[str] = None
+
+        if hypothesis is not None and grounding_validator is not None:
+            try:
+                g_res = grounding_validator.validate_grounding(
+                    hypothesis=hypothesis,
+                    channel_a=channel_a,
+                )
+                if hasattr(g_res, "model_dump"):
+                    grounding_result = g_res.model_dump()
+                elif isinstance(g_res, dict):
+                    grounding_result = g_res
+
+                is_valid_grounding = getattr(g_res, "valid", True) if hasattr(g_res, "valid") else (
+                    g_res.get("valid", True) if isinstance(g_res, dict) else True
+                )
+                if not is_valid_grounding:
+                    reason = getattr(g_res, "reason", None) or getattr(g_res, "error_code", None)
+                    if not reason and isinstance(g_res, dict):
+                        reason = g_res.get("reason") or g_res.get("error_code")
+                    grounding_error = reason or "KnowledgeGroundingValidator failed-closed"
+                    hypothesis = None  # Fail closed!
+            except Exception as exc:
+                grounding_error = f"Grounding validation exception: {exc}"
+                hypothesis = None
+
+        # Deterministic primary failure classification adhering to M4 precedence
+        classification = classify_primary_failure(
+            raw_response=raw_response,
+            eval_count=eval_count,
+            done_reason=done_reason,
+            num_predict=PRIMARY_NUM_PREDICT,
+            parsed_json=parsed_json,
+            parse_error=parse_error,
+            schema_error=schema_error,
+            grounding_error=grounding_error,
+        )
+
+        # Diagnostic repair (strictly diagnostic only)
+        diagnostic_repair: Optional[Dict[str, Any]] = None
+        if not classification.is_valid and parsed_json is not None:
+            diagnostic_repair = perform_diagnostic_repair(
+                raw_dict=parsed_json,
+                target_asset=target_asset,
+                category_id=category_id,
+            )
+
+        return I3ExecutionResult(
+            raw_response=raw_response,
+            parsed_json=parsed_json,
+            hypothesis=hypothesis if classification.is_valid else None,
+            classification=classification,
+            latency_ms=latency_ms,
+            eval_count=eval_count,
+            prompt_eval_count=prompt_eval_count,
+            template_category_id=category_id,
+            diagnostic_repair=diagnostic_repair,
+            grounding_result=grounding_result,
+        )

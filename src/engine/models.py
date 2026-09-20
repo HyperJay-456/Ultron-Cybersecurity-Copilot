@@ -522,6 +522,20 @@ class I2ExecutionResult(BaseModel):
     adapter_error: Optional[str] = None
 
 
+class I3ExecutionResult(BaseModel):
+    """Result of an authoritative I3 counterfactual evidence-gap reasoning generation attempt."""
+    raw_response: str
+    parsed_json: Optional[Dict[str, Any]] = None
+    hypothesis: Optional[HypothesisModelOutput] = None
+    classification: FailureClassificationResult
+    latency_ms: float = 0.0
+    eval_count: Optional[int] = None
+    prompt_eval_count: Optional[int] = None
+    template_category_id: Optional[str] = None
+    diagnostic_repair: Optional[Dict[str, Any]] = None
+    grounding_result: Optional[Dict[str, Any]] = None
+
+
 def classify_primary_failure(
     transport_error: Optional[Exception] = None,
     raw_response: Optional[str] = None,
