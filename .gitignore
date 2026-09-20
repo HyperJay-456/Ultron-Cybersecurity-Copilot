@@ -61,3 +61,4 @@ Thumbs.db
 # Local Model Weights & Binary Index Artifacts
 *.onnx
 *.bin
+*.index
