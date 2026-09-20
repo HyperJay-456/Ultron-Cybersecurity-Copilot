@@ -3,7 +3,7 @@
     "title": "M4.1 Failure Taxonomy & Trace Profiling Catalog",
     "milestone": "M4.1",
     "analysis_version": "1.0.0",
-    "generation_timestamp": "2026-09-20T12:28:51.675677+00:00",
+    "generation_timestamp": "2026-09-20T12:33:03.641158+00:00",
     "source_benchmark_file": "data/eval/m3_live_llm_benchmark_20260920.json",
     "source_benchmark_sha256": "c516fdc112418e00955ffc7231482ea52dd4b1c96da71a83a5e92ebfcbe31dac",
     "source_data_policy": "STRICTLY_READ_ONLY (zero source modifications made)"
@@ -917,6 +917,14 @@
       }
     ]
   },
+  "reconciliation_and_provenance_note": {
+    "prior_characterization": "The frozen M4 planning document referenced 11/336 truncation-associated structured-output failures as the prior M3 characterization.",
+    "m4_1_classification_methodology": "M4.1 applied the now-explicit mutually exclusive failure taxonomy and precedence rules (RUNTIME_TRANSPORT > MAX_TOKEN_TRUNCATION > PARSER > SCHEMA_VALIDITY > SEMANTIC_GROUNDING > VALID) to the authoritative M3 live benchmark.",
+    "deterministic_reclassification_result": "Under this deterministic classification, exactly 26/336 scheduled evaluation attempts are classified as MAX_TOKEN_TRUNCATION (each having reached the num_predict=300 ceiling with trailing delimiters cut off, causing downstream JSON parse failures).",
+    "supercedence_status": "The 26/336 result supersedes the earlier 11/336 figure for all subsequent M4.1 forensic analysis and M4 engineering motivation.",
+    "provenance_clarification": "This is a reclassification and provenance clarification resulting from a stricter, mutually exclusive taxonomy; it is NOT a mutation or rerun of the frozen M3 benchmark data.",
+    "characterization_note": "The original 11/336 figure represented an earlier, narrower characterization that differs from the exhaustive, mutually exclusive M4.1 primary failure taxonomy."
+  },
   "conservative_abstention_analysis": {
     "parseable_output_count": 310,
     "decision_distribution_on_parseable": {
@@ -945,6 +953,7 @@
   },
   "handoff_3b_to_7b_traces": {
     "channel_b_triage_metadata_in_p3": {
+      "implementation_path_evidence": "Implementation-path evidence: inspection of the M3 context-building path shows that Channel B advisory content can contain natural-language triage rationale and subjective category assertions. This motivates I6, while anchoring bias remains an architectural hypothesis rather than a measured quantity.",
       "structure": "=== CHANNEL B: ADVISORY 3B TRIAGE METADATA ===",
       "observed_fields": [
         "Suspected Category (e.g. BOLA, BFLA, Mass Assignment)",
@@ -953,8 +962,8 @@
         "Triage Rationale (free-text natural language explanation)",
         "Category Invalid Flag (boolean)"
       ],
-      "characterization": "In M3, Partition P3 passed natural-language 3B triage rationale and subjective suspected category guesses. While intended as advisory, this unconstrained text introduced token overhead and potential label priming. This directly motivated Intervention I6 (HandoffSerializer) to restrict P3 to verified Class-1 predicate booleans.",
-      "measurement_boundary_note": "Anchoring bias is noted as an architectural concern, NOT claimed as an empirically measured metric."
+      "characterization": "Inspection of the M3 context-building path shows that Channel B advisory content can pass natural-language 3B triage rationale and subjective suspected category guesses into Partition P3. This motivates Intervention I6 (HandoffSerializer) to restrict P3 to verified Class-1 predicate booleans, while anchoring bias remains an architectural hypothesis rather than an empirically measured quantity.",
+      "measurement_boundary_note": "Anchoring bias is noted as an architectural hypothesis, NOT claimed as an empirically measured metric."
     }
   },
   "cross_track_descriptive_summary": {
