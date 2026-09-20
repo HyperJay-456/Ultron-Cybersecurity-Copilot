@@ -110,7 +110,7 @@ Every scheduled evaluation attempt across the 84 scenarios and 4 tracks is assig
 
 - **Track A (Baseline Structural Context)**: 5 truncations, 0 namespace violations, 79 valid abstentions.
 - **Track B (Target Evidence Enabled)**: 2 truncations, 0 namespace violations, 82 valid abstentions. Track B produced fewer truncation events in this benchmark configuration than Track A.
-- **Track C (Methodology Context Added)**: 10 truncations, 11 namespace violations, 63 valid abstentions. Adding methodology without field segregation triggered cross-namespace citation and token budget pressure.
+- **Track C (Methodology Context Added)**: 10 truncations, 11 namespace violations, 63 valid abstentions. Track C exhibited cross-namespace citations and a higher truncation count in this methodology-enabled condition, motivating the controlled I2 experiment.
 - **Track D (Full Dual-RAG with Causal Parity)**: 9 truncations, 12 namespace violations, 63 valid abstentions. Track D exhibited namespace violations in this methodology-enabled condition, motivating the controlled I2 experiment.
 
 ---
