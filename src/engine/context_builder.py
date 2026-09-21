@@ -212,7 +212,7 @@ class ReasoningContextBuilder:
             if enable_i4_bair:
                 eff_protocol = OutputProtocolIdentifier.JSON_BAIR
             else:
-                eff_protocol = OutputProtocolIdentifier.JSON_BAIR
+                eff_protocol = OutputProtocolIdentifier.S0_JSON
         elif isinstance(eff_protocol, str):
             eff_protocol = OutputProtocolIdentifier(eff_protocol)
 
@@ -331,23 +331,6 @@ class ReasoningContextBuilder:
             triage_block = protected_handoff.serialized_handoff + "\n"
             p3_tokens = cls.estimate_tokens(triage_block)
 
-        # -------------------------------------------------------------------
-        # 8. Calculate Complete Mandatory Protected Floor (P0 + P1 + P3[I6])
-        # -------------------------------------------------------------------
-        p0_tokens = cls.estimate_tokens(system_policy)
-        p1_tokens = cls.estimate_tokens(
-            target_envelope + structural_diffs + contradictions_block + canonical_evidence_block
-        ) + p1_cf_tokens
-        floor_tokens = p0_tokens + p1_tokens + (p3_tokens if enable_i6_handoff else 0)
-
-        # Fail-closed floor check: If canonical floor exceeds budget, raise ContextBudgetOverflowError
-        if floor_tokens > budget_tier:
-            raise ContextBudgetOverflowError(
-                f"Protected canonical evidence floor ({floor_tokens} tokens) exceeds active budget tier ({budget_tier} tokens)."
-            )
-
-        remaining_budget = budget_tier - floor_tokens
-
         # Determine track-specific component inclusion per M3 Section 23.1
         if canonical_mode in (TRACK_A,):
             include_triage = False
@@ -377,6 +360,52 @@ class ReasoningContextBuilder:
             include_triage = True
             include_target_evidence = True
             include_vapt = True if vapt_pack is not None else False
+
+        # Pre-check VAPT chunk availability
+        has_vapt_chunks = (
+            include_vapt
+            and vapt_pack is not None
+            and bool(vapt_pack.serialized_p4_wire)
+            and len(getattr(vapt_pack, "items", [])) > 0
+        )
+
+        # FIX 4: When using JSON_BAIR, if VAPT is not included for the current track OR contains zero items,
+        # emit an explicit model-visible notice instructing methodology_references to be [].
+        # This notice is mandatory contractual instruction (P1 floor) so the model knows methodology_references must be [].
+        no_vapt_block = ""
+        p1_no_vapt_tokens = 0
+        if eff_protocol == OutputProtocolIdentifier.JSON_BAIR and not has_vapt_chunks:
+            no_vapt_notice = (
+                "=== SECURITY TESTING METHODOLOGY ===\n"
+                "[No methodology guidance provided.\n"
+                " Set methodology_references to []]\n"
+            )
+            if enable_i2_namespace_partitioning:
+                no_vapt_block = (
+                    f"<security_testing_methodology>\n"
+                    f"{no_vapt_notice}"
+                    f"</security_testing_methodology>\n"
+                )
+            else:
+                no_vapt_block = no_vapt_notice
+            p1_no_vapt_tokens = cls.estimate_tokens(no_vapt_block)
+
+        # -------------------------------------------------------------------
+        # 8. Calculate Complete Mandatory Protected Floor (P0 + P1 + P3[I6])
+        # -------------------------------------------------------------------
+        p0_tokens = cls.estimate_tokens(system_policy)
+        p1_tokens = cls.estimate_tokens(
+            target_envelope + structural_diffs + contradictions_block + canonical_evidence_block
+        ) + p1_cf_tokens + p1_no_vapt_tokens
+        floor_tokens = p0_tokens + p1_tokens + (p3_tokens if enable_i6_handoff else 0)
+
+        # Fail-closed floor check: If canonical floor exceeds budget, raise ContextBudgetOverflowError
+        if floor_tokens > budget_tier:
+            raise ContextBudgetOverflowError(
+                f"Protected canonical evidence floor ({floor_tokens} tokens) exceeds active budget tier ({budget_tier} tokens)."
+            )
+
+        remaining_budget = budget_tier - floor_tokens
 
         # Advisory Channel B Triage (only when NOT I6)
         if not enable_i6_handoff and include_triage and optional_advisory_content_mode:
@@ -424,7 +453,7 @@ class ReasoningContextBuilder:
         # -------------------------------------------------------------------
         vapt_advisory_block = ""
         p4_vapt_tokens = 0
-        if include_vapt and vapt_pack is not None and vapt_pack.serialized_p4_wire:
+        if has_vapt_chunks:
             raw_vapt = vapt_pack.serialized_p4_wire
             if enable_i2_namespace_partitioning:
                 raw_vapt = (
@@ -444,6 +473,9 @@ class ReasoningContextBuilder:
             else:
                 vapt_advisory_block = ""
                 p4_vapt_tokens = 0
+        elif no_vapt_block:
+            vapt_advisory_block = no_vapt_block
+            p4_vapt_tokens = 0
 
         # -------------------------------------------------------------------
         # 11. Final Prompt Assembly & Budget Verification
@@ -479,6 +511,8 @@ class ReasoningContextBuilder:
         }
         if enable_i3_counterfactual_prompting:
             partition_tokens["p1_counterfactual_instructions"] = p1_cf_tokens
+        if no_vapt_block:
+            partition_tokens["p1_no_vapt_notice"] = p1_no_vapt_tokens
         total_tokens = sum(partition_tokens.values())
 
         if total_tokens > budget_tier:

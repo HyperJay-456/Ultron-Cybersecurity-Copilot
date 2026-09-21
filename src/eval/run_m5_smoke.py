@@ -79,6 +79,7 @@ from src.knowledge.models import EvidenceGapType, VaptKnowledgePack
 from src.knowledge.pipeline import VaptReasoningPipeline
 
 EXPECTED_M4_9_SHA = "459b9ec63c3a2dc760abde12ec196760f7e505fbab5317f0da0c46b32c5eaac7"
+EXPECTED_PHASE6_SMOKE_SHA = "7ee8b6b2ec33eca0fcb8a3f0948d1f36b7e41877354ae4a64190f8e19c679b5e"
 EXPECTED_OLLAMA_VERSION = "0.34.1"
 
 # Pre-registered 3 representative scenarios (Phase 6B)
@@ -185,11 +186,17 @@ def run_pre_smoke_freeze_checks() -> Dict[str, Any]:
     )
     print("5. Protected files: CLEAN (0 diff) [PASS]")
 
-    # 6. Verify smoke output artifact does NOT already exist
-    smoke_out = Path("data/eval/m5_live_smoke.json")
+    # 6. Verify Phase 6 artifact exists and matches pinned SHA; Phase 6.2 artifact does not exist
+    phase6_out = Path("data/eval/m5_live_smoke.json")
+    assert phase6_out.exists(), f"Phase 6 artifact {phase6_out} missing!"
+    p6_sha = hash_file(phase6_out)
+    assert p6_sha == EXPECTED_PHASE6_SMOKE_SHA, f"Phase 6 artifact SHA altered: {p6_sha} != {EXPECTED_PHASE6_SMOKE_SHA}"
+    print("6a. Phase 6 smoke artifact: Pinned SHA verified [PASS]")
+
+    smoke_out = Path("data/eval/m5_live_smoke_v2.json")
     if smoke_out.exists() or Path(str(smoke_out) + ".sha256").exists():
-        raise FileExistsError(f"Smoke artifact {smoke_out} already exists! Refusing to overwrite.")
-    print("6. Smoke output file: Absent, ready for creation [PASS]")
+        raise FileExistsError(f"Smoke v2 artifact {smoke_out} already exists! Refusing to overwrite.")
+    print("6b. Smoke v2 output file: Absent, ready for creation [PASS]")
 
     # 7 & 8. Check Ollama model and digest
     with httpx.Client(timeout=5.0) as client:
@@ -258,6 +265,7 @@ class M5LiveSmokeHarness:
         raw_sample = str(observed_facts[0].get("statement", "")) if observed_facts else ""
 
         # Strictly clean Channel A: ZERO ground-truth leakage!
+        # FIX 1: Faithful LosslessStructuralPack construction from frozen scenario
         pack = LosslessStructuralPack(
             schema_version="2.0.0",
             asset_id=gold_scen.target_asset.get("asset_id", f"ASSET-{gold_scen.scenario_id}"),
@@ -265,6 +273,8 @@ class M5LiveSmokeHarness:
             route_template=gold_scen.target_asset.get("normalized_path", gold_scen.target_asset.get("raw_path", "/api/v1/resource")),
             http_method=gold_scen.target_asset.get("method", "GET"),
             application_mutability=gold_scen.target_asset.get("application_mutability", "READ_ONLY"),
+            parameter_lineage=gold_scen.parameters,
+            identity_matrix=gold_scen.identities,
             has_privilege_level_delta=False,
             has_cross_identity_object_access_success=False,
             observed_facts=observed_facts,
@@ -432,14 +442,18 @@ class M5LiveSmokeHarness:
                     # Verify contract before calling
                     validate_reasoning_contract(contract)
 
-                    # 2. Execute live M5 generation (Strict Single-Call Rule: exactly 1 call)
+                    # FIX 2: Target-asset enrichment (copy without mutating EvaluationScenario)
+                    target_asset_enriched = dict(gold_scen.target_asset)
+                    target_asset_enriched["parameters"] = list(gold_scen.parameters)
+                    target_asset_enriched["identities"] = list(gold_scen.identities)
+
                     t0 = time.perf_counter()
                     result = self.runner.execute_m5_generation(
                         contract=contract,
                         empirical_evidence_present=empirical_present,
                         grounding_validator=self.validator,
                         channel_a=pack,
-                        target_asset=gold_scen.target_asset,
+                        target_asset=target_asset_enriched,
                         category_id=gold_scen.category_id,
                         vapt_pack=vapt_pack,
                     )
@@ -519,7 +533,7 @@ def main():
     artifact = {
         "schema_version": "5.0.0",
         "milestone": "M5",
-        "phase": "PHASE_6_LIVE_SMOKE",
+        "phase": "PHASE_6_2_LIVE_SMOKE",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "metadata": {
             "m4_9_sha": freeze_meta["m4_9_sha"],
@@ -580,12 +594,12 @@ def main():
         "records": [r.model_dump() for r in records],
     }
 
-    # 4. Write data/eval/m5_live_smoke.json and compute SHA
-    out_path = Path("data/eval/m5_live_smoke.json")
+    # 4. Write data/eval/m5_live_smoke_v2.json and compute SHA
+    out_path = Path("data/eval/m5_live_smoke_v2.json")
     out_bytes = json.dumps(artifact, indent=2).encode("utf-8")
     out_path.write_bytes(out_bytes)
     out_sha = hashlib.sha256(out_bytes).hexdigest().lower()
-    sha_path = Path("data/eval/m5_live_smoke.json.sha256")
+    sha_path = Path("data/eval/m5_live_smoke_v2.json.sha256")
     sha_path.write_text(out_sha + "\n", encoding="utf-8")
 
     print(f"Artifact serialized: {out_path}")
@@ -595,7 +609,10 @@ def main():
     # 5. Final Post-Smoke Integrity Verification
     m4_9_post_sha = hash_file(Path("data/eval/m4_live_llm_benchmark_final.json"))
     assert m4_9_post_sha == EXPECTED_M4_9_SHA, f"M4.9 SHA altered during smoke test! {m4_9_post_sha}"
+    p6_post_sha = hash_file(Path("data/eval/m5_live_smoke.json"))
+    assert p6_post_sha == EXPECTED_PHASE6_SMOKE_SHA, f"Phase 6 artifact altered! {p6_post_sha}"
     print("Post-execution M4.9 SHA verified identical [PASS]")
+    print("Post-execution Phase 6 smoke artifact verified identical [PASS]")
 
 
 if __name__ == "__main__":

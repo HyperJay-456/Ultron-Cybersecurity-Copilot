@@ -43,7 +43,7 @@ Emit your evaluation strictly as a single JSON object with exactly these seven f
 
 FIELD CONSTRAINTS & NAMESPACE RULES:
 - 'empirical_facts': cite ONLY valid FACT-xxx IDs from available target evidence.
-- 'methodology_references': cite ONLY valid CHK-xxx IDs from methodology guidance.
+- 'methodology_references': cite ONLY valid CHK-* identifiers actually supplied by available methodology guidance. If no methodology guidance is supplied, emit an empty list: []. Do NOT make up or invent CHK identifiers.
 - A CHK citation MUST NEVER be placed in 'empirical_facts'.
 - A FACT citation MUST NEVER be placed in 'methodology_references'.
 - Do NOT invent or manufacture IDs.
