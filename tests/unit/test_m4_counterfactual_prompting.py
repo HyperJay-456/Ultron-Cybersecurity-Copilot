@@ -285,19 +285,37 @@ def test_14_missing_evidence_does_not_get_fabricated():
 
 def test_15_i3_prompt_selection_is_deterministic():
     """Requirement 15: I3 prompt selection is deterministic from category/evidence-gap type."""
-    for _ in range(5):
-        t1 = get_counterfactual_template("API-BOLA-001")
-        t2 = get_counterfactual_template("api-bola-001")
-        t3 = get_counterfactual_template("BOLA")
-        t4 = get_counterfactual_template("IDOR")
-        assert t1.category_id == "API-BOLA-001"
-        assert t2.category_id == "API-BOLA-001"
-        assert t3.category_id == "API-BOLA-001"
-        assert t4.category_id == "API-BOLA-001"
+    # 1. All 10 exact canonical categories resolve identically across repeated calls
+    for _ in range(3):
+        for cat in EXPECTED_OWASP_API_CATEGORIES:
+            tmpl = get_counterfactual_template(cat)
+            assert tmpl.category_id == cat
+            assert tmpl.category_name == OWASP_API_COUNTERFACTUAL_TEMPLATES[cat].category_name
 
-        # State machine alias
-        t_state = get_counterfactual_template("STATE-MACHINE-001")
-        assert t_state.category_id == "API-STATE-001"
+            # Case insensitivity for canonical IDs
+            lower_tmpl = get_counterfactual_template(cat.lower())
+            assert lower_tmpl.category_id == cat
+
+    # 2. Exact predefined aliases resolve identically
+    alias_expectations = {
+        "BOLA": "API-BOLA-001",
+        "IDOR": "API-BOLA-001",
+        "BFLA": "API-BFLA-001",
+        "CROSS-TENANT": "API-CROSS-TENANT-001",
+        "DEVICE-BOLA": "API-DEVICE-BOLA-001",
+        "LIFECYCLE": "API-LIFECYCLE-001",
+        "MULTI-STEP": "API-MULTI-STEP-AUTH-001",
+        "MUTATION": "API-MUTATION-001",
+        "ROLE-BOUNDARY": "API-ROLE-BOUNDARY-001",
+        "STATE": "API-STATE-001",
+        "AUTH-NONE": "API-AUTH-NONE",
+        "API-BFLA-002": "API-BFLA-001",
+        "STATE-MACHINE-001": "API-STATE-001",
+        "INFO-EXPOSURE-001": "API-MUTATION-001",
+    }
+    for alias, expected_target in alias_expectations.items():
+        assert get_counterfactual_template(alias).category_id == expected_target
+        assert get_counterfactual_template(alias.lower()).category_id == expected_target
 
 
 def test_15b_unknown_category_fails_closed():
@@ -400,6 +418,55 @@ def test_15f_context_builder_fails_closed_on_unknown_category():
             enable_i3_counterfactual_prompting=True,
             category_id=None,
         )
+
+
+def test_15g_decorated_prefixed_suffixed_and_natural_language_fail_closed():
+    """Hardening: Decorated, prefixed, suffixed, and natural language category strings fail closed."""
+    # 1. Decorated canonical IDs
+    decorated_cases = [
+        "[API-BOLA-001]",
+        "{API-BOLA-001}",
+        "<API-BOLA-001>",
+        "**API-BOLA-001**",
+        "(API-BOLA-001)",
+        "API-BOLA-001.",
+    ]
+    for dec in decorated_cases:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            get_counterfactual_template(dec)
+
+    # 2. Prefixed canonical IDs
+    prefixed_cases = [
+        "PREFIX_API-BOLA-001",
+        "VULN_API-BOLA-001",
+        "CATEGORY_API-BFLA-001",
+        "OWASP_API-CROSS-TENANT-001",
+    ]
+    for pref in prefixed_cases:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            get_counterfactual_template(pref)
+
+    # 3. Suffixed canonical IDs
+    suffixed_cases = [
+        "API-BOLA-001_SUFFIX",
+        "API-BOLA-001-EXTRA",
+        "API-BOLA-001_v2",
+        "API-BFLA-001_VARIANT",
+    ]
+    for suff in suffixed_cases:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            get_counterfactual_template(suff)
+
+    # 4. Natural-language strings containing a canonical ID
+    natural_lang_cases = [
+        "This looks like an API-BOLA-001 vulnerability",
+        "Endpoint exhibits API-BFLA-001 behavior",
+        "Testing for API-CROSS-TENANT-001 in customer endpoints",
+        "API-AUTH-NONE is suspected here",
+    ]
+    for nl in natural_lang_cases:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            get_counterfactual_template(nl)
 
 
 def test_16_negative_control_wording_remains_non_leading():

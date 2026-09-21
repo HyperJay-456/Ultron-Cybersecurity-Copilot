@@ -304,9 +304,8 @@ def get_counterfactual_template(
 
     Deterministic resolution precedence:
     1. Exact canonical category match (e.g. 'API-BOLA-001')
-    2. Deterministic alias match (e.g. 'BOLA' -> 'API-BOLA-001')
-    3. Deterministic normalized key-in-string match where canonical category ID is embedded
-    4. Fail closed (raises UnknownCounterfactualCategoryError)
+    2. Exact predefined alias match (e.g. 'BOLA' -> 'API-BOLA-001')
+    3. Fail closed (raises UnknownCounterfactualCategoryError)
     """
     if not category_id or not isinstance(category_id, str) or not category_id.strip():
         raise UnknownCounterfactualCategoryError(
@@ -315,21 +314,16 @@ def get_counterfactual_template(
 
     normalized = category_id.strip().upper()
 
-    # 1. Direct canonical match
+    # 1. Exact canonical category match
     if normalized in OWASP_API_COUNTERFACTUAL_TEMPLATES:
         return OWASP_API_COUNTERFACTUAL_TEMPLATES[normalized]
 
-    # 2. Deterministic alias match
+    # 2. Exact predefined alias match
     if normalized in _CATEGORY_ALIAS_MAP:
         target = _CATEGORY_ALIAS_MAP[normalized]
         return OWASP_API_COUNTERFACTUAL_TEMPLATES[target]
 
-    # 3. Deterministic key-in-string match where canonical key is explicitly embedded
-    for key, template in OWASP_API_COUNTERFACTUAL_TEMPLATES.items():
-        if key in normalized:
-            return template
-
-    # 4. Unknown, malformed, or unsupported category -> FAIL CLOSED
+    # 3. Unknown, malformed, decorated, or unsupported category -> FAIL CLOSED
     raise UnknownCounterfactualCategoryError(
         f"Unsupported or unknown counterfactual category: {category_id!r}"
     )
