@@ -147,18 +147,16 @@ class ConfirmatoryScenarioRecord(BaseModel):
 
 
 def infer_evidence_gap_type(category_id: str) -> EvidenceGapType:
-    cat_upper = category_id.upper()
-    if "BOLA" in cat_upper:
-        return EvidenceGapType.MISSING_OBJECT_AUTHORIZATION
-    elif "BFLA" in cat_upper:
-        return EvidenceGapType.MISSING_FUNCTION_AUTHORIZATION
-    elif "MULTI-STEP" in cat_upper or "STATE" in cat_upper:
-        return EvidenceGapType.STATE_MACHINE_DEPENDENCY
-    elif "CROSS-TENANT" in cat_upper or "ROLE" in cat_upper:
-        return EvidenceGapType.TENANT_ISOLATION_FAILURE
-    elif "MUTATION" in cat_upper or "LIFECYCLE" in cat_upper:
-        return EvidenceGapType.ASYMMETRIC_ACCESS_CONTROL
-    return EvidenceGapType.INSUFFICIENT_OBSERVATIONS
+    cat = category_id.upper()
+    if "BOLA" in cat or "CROSS-TENANT" in cat:
+        return EvidenceGapType.MISSING_CROSS_IDENTITY_OBJECT_VERIFICATION
+    elif "STATE" in cat or "WORKFLOW" in cat or "LIFECYCLE" in cat or "MUTATION" in cat:
+        return EvidenceGapType.MISSING_MUTATION_STATE_BOUNDARY
+    elif "AUTH" in cat or "ROLE" in cat or "BFLA" in cat:
+        return EvidenceGapType.MISSING_ROLE_HIERARCHY_ENFORCEMENT
+    elif "NONE" in cat:
+        return EvidenceGapType.MISSING_UNAUTHENTICATED_ACCESS_CHECK
+    return EvidenceGapType.MISSING_CROSS_IDENTITY_OBJECT_VERIFICATION
 
 
 class M4ConfirmatoryHarness:
