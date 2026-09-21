@@ -187,6 +187,7 @@ def main():
     print("\n=== [7/8] GENERATING FINAL SCREENING SUMMARY ARTIFACT ===")
     summary_payload = {
         "summary_schema_version": "1.0.0",
+        "run_status": "OFFICIAL_M4_8_SCREENING",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_screening_calls": 160,
         "pre_screening_integrity": {

@@ -401,6 +401,7 @@ def freeze_final_configuration_manifest(
     """
     payload = {
         "manifest_schema_version": "1.0.0",
+        "run_status": "OFFICIAL_M4_8_SCREENING",
         "configuration_id": f"M4-COMBINED-{'-'.join(selected_interventions) if selected_interventions else 'BASELINE'}",
         "frozen_timestamp": datetime.now(timezone.utc).isoformat(),
         "selection_rule": "Deterministic Section 11.2 Greedy Selection Protocol",
