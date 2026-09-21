@@ -403,10 +403,8 @@ class M5Phase67LiveSmokeHarness:
             target_ev_bytes = match.group(1).strip().encode("utf-8")
 
         # Compute vapt pack hash
-        if effective_vapt is not None and effective_vapt.chunks:
-            vapt_hash = hashlib.sha256(
-                json.dumps([c.model_dump() for c in effective_vapt.chunks], sort_keys=True).encode("utf-8")
-            ).hexdigest()
+        if effective_vapt is not None and effective_vapt.items:
+            vapt_hash = effective_vapt.provenance_hash
         else:
             vapt_hash = "NONE"
 
