@@ -30,7 +30,7 @@ from src.engine.bair_extractor import (
 )
 
 JSON_BAIR_PROMPT_INSTRUCTION = """OUTPUT FORMAT (BOUNDED ANALYTICAL INFERENCE REPRESENTATION - JSON_BAIR):
-Emit your evaluation strictly as a single JSON object with exactly these seven fields:
+Emit your evaluation strictly as a single JSON object with these fields:
 {
   "invariant": "Security invariant statement evaluated against target",
   "evidence_gap": "Missing observation or gap in evidence (null if none)",
@@ -38,7 +38,10 @@ Emit your evaluation strictly as a single JSON object with exactly these seven f
   "decision": "HYPOTHESIS" | "INSUFFICIENT_EVIDENCE" | "NO_RELEVANT_FUNCTIONALITY",
   "empirical_facts": ["FACT-xxx", "FACT-yyy"],
   "methodology_references": ["CHK-xxx"],
-  "falsification_plan": "observation supporting hypothesis AND observation disproving/falsifying hypothesis"
+  "experiment_action": "SUBSTITUTE_RESOURCE_IDENTIFIER" | "EXECUTE_OUT_OF_ORDER_TRANSITION" | "REPLAY_STEP_WITH_LOWER_ROLE" | "INVOKE_WITHOUT_CREDENTIALS" | "TAMPER_REQUEST_PARAMETER" | null,
+  "supporting_outcome": "HTTP_200_OK" | "CROSS_IDENTITY_OBJECT_ACCESSIBLE" | "STATE_TRANSITION_ACCEPTED" | "PRIVILEGE_ELEVATION_SUCCEEDS" | "STATUS_SUCCESS_2XX" | null,
+  "disproving_outcome": "HTTP_403_FORBIDDEN" | "CROSS_IDENTITY_OBJECT_DENIED" | "STATE_TRANSITION_REJECTED" | "PRIVILEGE_ELEVATION_DENIED" | "HTTP_404_NOT_FOUND" | "HTTP_409_CONFLICT" | "STATUS_CLIENT_ERROR_4XX" | null,
+  "falsification_description": "Brief explanation of verification experiment (or null if none)"
 }
 
 FIELD CONSTRAINTS & NAMESPACE RULES:
@@ -46,7 +49,10 @@ FIELD CONSTRAINTS & NAMESPACE RULES:
 - 'methodology_references': cite ONLY valid CHK-* identifiers actually supplied by available methodology guidance. If no methodology guidance is supplied, emit an empty list: []. Do NOT make up or invent CHK identifiers.
 - A CHK citation MUST NEVER be placed in 'empirical_facts'.
 - A FACT citation MUST NEVER be placed in 'methodology_references'.
-- Do NOT invent or manufacture IDs.
+- For HYPOTHESIS: 'experiment_action', 'supporting_outcome', and 'disproving_outcome' are MANDATORY and must be chosen from the closed taxonomy. 'supporting_outcome' must represent an observation demonstrating invariant breach; 'disproving_outcome' must represent an observation demonstrating the invariant holds safely.
+- For INSUFFICIENT_EVIDENCE or NO_RELEVANT_FUNCTIONALITY: experiment fields may be null.
+- Note: Legacy unanchored 'falsification_plan' is replaced by typed fields ('experiment_action', 'supporting_outcome', 'disproving_outcome', 'falsification_description').
+- Do NOT invent or manufacture IDs or enum values.
 - NEVER emit CONFIRMED as the decision.
 - Do NOT wrap output in markdown formatting or add extra keys."""
 

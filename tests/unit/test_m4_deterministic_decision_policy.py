@@ -71,6 +71,10 @@ def make_valid_candidate(
     supporting_evidence_ids: Optional[List[str]] = None,
     methodology_references: Optional[List[str]] = None,
     experiment_proposal: str = "Observation supporting hypothesis: HTTP 200 with tenant data. Observation disproving/falsifying hypothesis: HTTP 403 Forbidden.",
+    experiment_action: Optional[str] = "SUBSTITUTE_RESOURCE_IDENTIFIER",
+    supporting_outcome: Optional[str] = "HTTP_200_OK",
+    disproving_outcome: Optional[str] = "HTTP_403_FORBIDDEN",
+    falsification_description: Optional[str] = None,
 ) -> HypothesisModelOutput:
     """Helper to build canonical HypothesisModelOutput candidate."""
     return HypothesisModelOutput(
@@ -81,6 +85,10 @@ def make_valid_candidate(
         supporting_evidence_ids=supporting_evidence_ids or ["FACT-001"],
         methodology_references=methodology_references or [],
         experiment_proposal=experiment_proposal,
+        experiment_action=experiment_action,
+        supporting_outcome=supporting_outcome,
+        disproving_outcome=disproving_outcome,
+        falsification_description=falsification_description,
         reasoning_summary="Evidence indicates potential authorization bypass.",
         category="API-BOLA-001",
         asset_id="/api/v1/tenants/{tenant_id}",
@@ -202,6 +210,7 @@ def test_03_hypothesis_fails_closed_when_falsification_is_incomplete():
     cand = make_valid_candidate(
         decision="HYPOTHESIS",
         experiment_proposal="Only supporting: send request and get 200 OK.",
+        disproving_outcome=None,
     )
     state = make_evidence_state()
 
@@ -639,6 +648,9 @@ def test_30_exactly_one_llm_call():
             "methodology_references": [],
             "reasoning_summary": "Analysis",
             "experiment_proposal": "Observation supporting: 200. Observation disproving: 403.",
+            "experiment_action": "SUBSTITUTE_RESOURCE_IDENTIFIER",
+            "supporting_outcome": "HTTP_200_OK",
+            "disproving_outcome": "HTTP_403_FORBIDDEN",
         })
 
     runner = ReasoningRunner(llm_caller=mock_caller)

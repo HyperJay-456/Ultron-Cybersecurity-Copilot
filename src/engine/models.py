@@ -5,7 +5,7 @@ Milestone M4: Canonical Base Schema (S0) and Deterministic Primary Failure Taxon
 
 import re
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 FACT_NAMESPACE_PATTERN = r"^FACT-[A-Z0-9_-]+$"
@@ -36,6 +36,49 @@ class ViolationRelation(str, Enum):
     SUPPORTED = "SUPPORTED"
     CONTRADICTED = "CONTRADICTED"
     UNRESOLVED = "UNRESOLVED"
+
+
+class HttpOutcomePredicate(str, Enum):
+    """Machine-readable HTTP status outcome predicates."""
+    HTTP_200_OK = "HTTP_200_OK"
+    HTTP_201_CREATED = "HTTP_201_CREATED"
+    HTTP_204_NO_CONTENT = "HTTP_204_NO_CONTENT"
+    HTTP_400_BAD_REQUEST = "HTTP_400_BAD_REQUEST"
+    HTTP_401_UNAUTHORIZED = "HTTP_401_UNAUTHORIZED"
+    HTTP_403_FORBIDDEN = "HTTP_403_FORBIDDEN"
+    HTTP_404_NOT_FOUND = "HTTP_404_NOT_FOUND"
+    HTTP_409_CONFLICT = "HTTP_409_CONFLICT"
+
+
+class SemanticOutcomePredicate(str, Enum):
+    """Machine-readable security invariant outcome predicates."""
+    STATUS_SUCCESS_2XX = "STATUS_SUCCESS_2XX"
+    STATUS_CLIENT_ERROR_4XX = "STATUS_CLIENT_ERROR_4XX"
+    CROSS_IDENTITY_OBJECT_ACCESSIBLE = "CROSS_IDENTITY_OBJECT_ACCESSIBLE"
+    CROSS_IDENTITY_OBJECT_DENIED = "CROSS_IDENTITY_OBJECT_DENIED"
+    OWNERSHIP_NOT_ENFORCED = "OWNERSHIP_NOT_ENFORCED"
+    OWNERSHIP_ENFORCED = "OWNERSHIP_ENFORCED"
+    STATE_TRANSITION_ACCEPTED = "STATE_TRANSITION_ACCEPTED"
+    STATE_TRANSITION_REJECTED = "STATE_TRANSITION_REJECTED"
+    PRIVILEGE_ELEVATION_SUCCEEDS = "PRIVILEGE_ELEVATION_SUCCEEDS"
+    PRIVILEGE_ELEVATION_DENIED = "PRIVILEGE_ELEVATION_DENIED"
+    UNAUTHENTICATED_ACCESS_ALLOWED = "UNAUTHENTICATED_ACCESS_ALLOWED"
+    UNAUTHENTICATED_ACCESS_DENIED = "UNAUTHENTICATED_ACCESS_DENIED"
+
+
+class ExperimentActionPredicate(str, Enum):
+    """Machine-readable experiment perturbation action predicates."""
+    SUBSTITUTE_RESOURCE_IDENTIFIER = "SUBSTITUTE_RESOURCE_IDENTIFIER"
+    EXECUTE_OUT_OF_ORDER_TRANSITION = "EXECUTE_OUT_OF_ORDER_TRANSITION"
+    REPLAY_STEP_WITH_LOWER_ROLE = "REPLAY_STEP_WITH_LOWER_ROLE"
+    INVOKE_WITHOUT_CREDENTIALS = "INVOKE_WITHOUT_CREDENTIALS"
+    TAMPER_REQUEST_PARAMETER = "TAMPER_REQUEST_PARAMETER"
+
+
+VALID_ACTION_PREDICATES: Set[str] = {e.value for e in ExperimentActionPredicate}
+VALID_OUTCOME_PREDICATES: Set[str] = (
+    {e.value for e in HttpOutcomePredicate} | {e.value for e in SemanticOutcomePredicate}
+)
 
 
 class PrimaryFailureCategory(str, Enum):
@@ -111,6 +154,22 @@ class HypothesisModelOutput(BaseModel):
     experiment_proposal: Optional[str] = Field(
         default=None,
         description="Proposed verification experiment to confirm or refute the hypothesis."
+    )
+    experiment_action: Optional[str] = Field(
+        default=None,
+        description="Machine-readable experiment perturbation action predicate."
+    )
+    supporting_outcome: Optional[str] = Field(
+        default=None,
+        description="Machine-readable observation indicating security invariant breach."
+    )
+    disproving_outcome: Optional[str] = Field(
+        default=None,
+        description="Machine-readable observation indicating security invariant holds."
+    )
+    falsification_description: Optional[str] = Field(
+        default=None,
+        description="Optional brief natural-language explanation of verification experiment."
     )
 
     # M2 / M3 backwards-compatibility & telemetry fields
@@ -463,9 +522,25 @@ class BairJsonObject(BaseModel):
         default_factory=list,
         description="Referenced VAPT methodology guidance identifiers (^CHK-[A-Z0-9_-]+$)."
     )
+    experiment_action: Optional[str] = Field(
+        default=None,
+        description="Machine-readable experiment perturbation action predicate."
+    )
+    supporting_outcome: Optional[str] = Field(
+        default=None,
+        description="Machine-readable observation indicating security invariant breach."
+    )
+    disproving_outcome: Optional[str] = Field(
+        default=None,
+        description="Machine-readable observation indicating security invariant holds."
+    )
+    falsification_description: Optional[str] = Field(
+        default=None,
+        description="Optional brief natural-language description of verification experiment."
+    )
     falsification_plan: Optional[str] = Field(
         default=None,
-        description="Proposed verification experiment with supporting and disproving observations."
+        description="Deprecated legacy unanchored falsification plan."
     )
 
     @field_validator("empirical_facts")
@@ -502,6 +577,34 @@ class BairJsonObject(BaseModel):
                 raise ValueError(f"Placeholder token {item!r} is strictly forbidden in methodology_references")
         return v
 
+    @field_validator("experiment_action")
+    @classmethod
+    def validate_experiment_action(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v_clean = v.strip()
+        if v_clean not in VALID_ACTION_PREDICATES:
+            raise ValueError(
+                f"Unknown experiment_action predicate: '{v_clean}'. Must be one of {sorted(list(VALID_ACTION_PREDICATES))}"
+            )
+        return v_clean
+
+    @field_validator("supporting_outcome", "disproving_outcome")
+    @classmethod
+    def validate_outcome_predicate(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v_clean = v.strip()
+        if v_clean not in VALID_OUTCOME_PREDICATES:
+            raise ValueError(
+                f"Unknown outcome predicate: '{v_clean}'. Must be one of {sorted(list(VALID_OUTCOME_PREDICATES))}"
+            )
+        return v_clean
+
     @model_validator(mode="after")
     def validate_decision_dependent_slots(self) -> "BairJsonObject":
         # CONFIRMED is unconditionally rejected
@@ -511,7 +614,6 @@ class BairJsonObject(BaseModel):
         inv = (self.invariant or "").strip()
         target = (self.affected_target or "").strip()
         gap = (self.evidence_gap or "").strip() if self.evidence_gap else ""
-        plan = (self.falsification_plan or "").strip() if self.falsification_plan else ""
 
         placeholder_tokens = {"none", "n/a", "na", "null", "[]", "{}", "todo", "unknown"}
         if not inv:
@@ -528,21 +630,29 @@ class BairJsonObject(BaseModel):
                 raise ValueError("Mandatory evidence_gap slot missing or empty for HYPOTHESIS")
             if not self.empirical_facts:
                 raise ValueError("Mandatory empirical_facts slot missing or empty for HYPOTHESIS")
-            if not plan:
-                raise ValueError("Mandatory falsification_plan slot missing or empty for HYPOTHESIS")
-            lower = plan.lower()
-            has_supporting = any(term in lower for term in ["support", "confirm", "positive", "observed", "expected"])
-            has_disproving = any(term in lower for term in ["disprov", "falsif", "reject", "refut", "negative", "403", "404", "400", "block"])
-            if not has_supporting:
-                raise ValueError("Falsification plan missing supporting observation specification")
-            if not has_disproving:
-                raise ValueError("Falsification plan missing disproving/falsifying observation specification")
+
+            # Typed experiment predicates are mandatory for HYPOTHESIS
+            if not self.experiment_action or not self.supporting_outcome or not self.disproving_outcome:
+                if self.falsification_plan:
+                    raise ValueError(
+                        "Legacy free-text falsification_plan cannot authorize a HYPOTHESIS under JSON_BAIR protocol; "
+                        "typed experiment fields (experiment_action, supporting_outcome, disproving_outcome) are mandatory"
+                    )
+                if not self.experiment_action:
+                    raise ValueError("Mandatory experiment_action slot missing or empty for HYPOTHESIS")
+                if not self.supporting_outcome:
+                    raise ValueError("Mandatory supporting_outcome slot missing or empty for HYPOTHESIS")
+                if not self.disproving_outcome:
+                    raise ValueError("Mandatory disproving_outcome slot missing or empty for HYPOTHESIS")
+
+            if self.supporting_outcome == self.disproving_outcome:
+                raise ValueError(
+                    f"supporting_outcome and disproving_outcome cannot be identical ('{self.supporting_outcome}')"
+                )
 
         elif self.decision == HypothesisDecision.INSUFFICIENT_EVIDENCE:
             if not gap:
                 raise ValueError("Mandatory evidence_gap slot missing or empty for INSUFFICIENT_EVIDENCE")
-            if not plan:
-                raise ValueError("Mandatory falsification_plan slot missing or empty for INSUFFICIENT_EVIDENCE")
 
         elif self.decision == HypothesisDecision.NO_RELEVANT_FUNCTIONALITY:
             pass
@@ -592,9 +702,28 @@ class BairJsonObject(BaseModel):
                     },
                     "description": "Referenced VAPT methodology guidance identifiers (^CHK-[A-Z0-9_-]+$)",
                 },
+                "experiment_action": {
+                    "type": ["string", "null"],
+                    "enum": sorted(list(VALID_ACTION_PREDICATES)) + [None],
+                    "description": "Machine-readable experiment perturbation action predicate",
+                },
+                "supporting_outcome": {
+                    "type": ["string", "null"],
+                    "enum": sorted(list(VALID_OUTCOME_PREDICATES)) + [None],
+                    "description": "Machine-readable observation indicating security invariant breach",
+                },
+                "disproving_outcome": {
+                    "type": ["string", "null"],
+                    "enum": sorted(list(VALID_OUTCOME_PREDICATES)) + [None],
+                    "description": "Machine-readable observation indicating security invariant holds",
+                },
+                "falsification_description": {
+                    "type": ["string", "null"],
+                    "description": "Optional brief natural-language description of verification experiment",
+                },
                 "falsification_plan": {
                     "type": ["string", "null"],
-                    "description": "Concrete verification experiment with supporting and disproving observations",
+                    "description": "Deprecated legacy unanchored falsification plan",
                 },
             },
             "required": [
@@ -604,7 +733,10 @@ class BairJsonObject(BaseModel):
                 "decision",
                 "empirical_facts",
                 "methodology_references",
-                "falsification_plan",
+                "experiment_action",
+                "supporting_outcome",
+                "disproving_outcome",
+                "falsification_description",
             ],
         }
 

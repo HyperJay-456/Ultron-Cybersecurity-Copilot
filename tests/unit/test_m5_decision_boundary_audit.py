@@ -235,7 +235,7 @@ def test_i5_rejects_hypothesis_with_incomplete_falsification_plan():
 
 def test_bair_json_schema_fails_closed_on_one_sided_falsification():
     """BairJsonObject validator strictly rejects one-sided falsification plans."""
-    with pytest.raises(ValueError, match="Falsification plan missing supporting observation specification"):
+    with pytest.raises(ValueError, match=r"(Falsification plan missing supporting observation specification|Legacy free-text falsification_plan cannot authorize a HYPOTHESIS)"):
         BairJsonObject(
             invariant="Object access must verify ownership.",
             evidence_gap="Missing verification.",

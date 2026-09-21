@@ -60,15 +60,16 @@ def _create_base_pack() -> LosslessStructuralPack:
 def test_current_validator_accepts_semantically_inverted_falsification_plan():
     """
     CRITICAL PROOF TEST:
-    Demonstrates that the current BairJsonObject schema and decision policy accept
-    a proposal that has completely INVERTED semantic polarity.
+    Demonstrates that the legacy lexical is_falsification_complete() accepts
+    a proposal that has completely INVERTED semantic polarity, but the Phase 6.6
+    typed protocol strictly FAILS CLOSED against legacy plans and inverted polarities.
 
     In Scenario 2 (Ecommerce Refund), the model claims:
     - Rejection (HTTP 409/400) SUPPORTS the vulnerability hypothesis.
     - Successful out-of-order execution DISPROVES the hypothesis.
 
     This is logically reversed: rejection enforces the state machine invariant,
-    while success breaches it. Yet lexical checks pass because both keyword groups exist.
+    while success breaches it.
     """
     inverted_falsification = (
         "An observation supporting the hypothesis would be a state machine validation that "
@@ -76,31 +77,43 @@ def test_current_validator_accepts_semantically_inverted_falsification_plan():
         "An observation disproving the hypothesis would be a successful out-of-order transition without such a rejection."
     )
 
-    # 1. Lexical decision-policy check evaluates to True!
+    # 1. Lexical check evaluates to True, demonstrating its flaw!
     assert is_falsification_complete(inverted_falsification) is True
 
-    # 2. BairJsonObject Pydantic validation passes without error!
-    bair = BairJsonObject(
+    # 2. Under Phase 6.6, legacy free-text plan without typed fields strictly FAILS CLOSED:
+    with pytest.raises(ValueError, match="Legacy free-text falsification_plan cannot authorize a HYPOTHESIS"):
+        BairJsonObject(
+            invariant="Business logic state transitions must follow a valid finite state machine.",
+            evidence_gap="The endpoint does not validate that the target entity is currently in an eligible state.",
+            affected_target="/api/v1/orders/{id}/refund",
+            decision=HypothesisDecision.HYPOTHESIS,
+            empirical_facts=["FACT-ECOMMERCE_ORDERS-ORD-REFUND-DOC"],
+            methodology_references=[],
+            falsification_plan=inverted_falsification,
+        )
+
+    # 3. If inverted polarity is checked via ExperimentPolarityValidator, it strictly FAILS:
+    from src.engine.decision_policy import ExperimentPolarityValidator
+    is_valid, reason = ExperimentPolarityValidator.validate_tuple(
+        category_id="API-STATE-001",
+        experiment_action="EXECUTE_OUT_OF_ORDER_TRANSITION",
+        supporting_outcome="HTTP_409_CONFLICT",
+        disproving_outcome="STATE_TRANSITION_ACCEPTED",
+    )
+    assert is_valid is False
+    assert "not a valid breach outcome" in reason
+
+    # 4. Deterministic decision policy also rejects inverted candidate as FAIL_CLOSED_INCOMPLETE_HYPOTHESIS:
+    cand = HypothesisModelOutput(
+        decision=HypothesisDecision.HYPOTHESIS,
         invariant="Business logic state transitions must follow a valid finite state machine.",
         evidence_gap="The endpoint does not validate that the target entity is currently in an eligible state.",
         affected_target="/api/v1/orders/{id}/refund",
-        decision=HypothesisDecision.HYPOTHESIS,
-        empirical_facts=["FACT-ECOMMERCE_ORDERS-ORD-REFUND-DOC"],
+        supporting_evidence_ids=["FACT-ECOMMERCE_ORDERS-ORD-REFUND-DOC"],
         methodology_references=[],
-        falsification_plan=inverted_falsification,
-    )
-    assert bair.decision == HypothesisDecision.HYPOTHESIS
-    assert bair.falsification_plan == inverted_falsification
-
-    # 3. Deterministic decision policy accepts the candidate as HYPOTHESIS_GROUNDED!
-    cand = HypothesisModelOutput(
-        decision=HypothesisDecision.HYPOTHESIS,
-        invariant=bair.invariant,
-        evidence_gap=bair.evidence_gap,
-        affected_target=bair.affected_target,
-        supporting_evidence_ids=bair.empirical_facts,
-        methodology_references=bair.methodology_references,
-        experiment_proposal=bair.falsification_plan,
+        experiment_action="EXECUTE_OUT_OF_ORDER_TRANSITION",
+        supporting_outcome="HTTP_409_CONFLICT",
+        disproving_outcome="STATE_TRANSITION_ACCEPTED",
     )
     ev_state = EvidenceState(
         channel_a=_create_base_pack(),
@@ -109,9 +122,8 @@ def test_current_validator_accepts_semantically_inverted_falsification_plan():
         empirical_evidence_present=True,
     )
     res = deterministic_decide(candidate=cand, evidence_state=ev_state)
-    assert res.is_valid is True
-    assert res.final_decision == HypothesisDecision.HYPOTHESIS
-    assert res.predicate_identifier == DecisionPredicate.HYPOTHESIS_GROUNDED
+    assert res.is_valid is False
+    assert res.predicate_identifier == DecisionPredicate.FAIL_CLOSED_INCOMPLETE_HYPOTHESIS
 
 
 def test_lexical_presence_is_insufficient_for_semantic_polarity():
@@ -137,7 +149,7 @@ def test_falsification_missing_supporting_fails_closed():
     )
     assert not is_falsification_complete(plan_no_supporting)
 
-    with pytest.raises(ValueError, match="Falsification plan missing supporting observation specification"):
+    with pytest.raises(ValueError, match="(Falsification plan missing supporting observation specification|Legacy free-text falsification_plan cannot authorize a HYPOTHESIS)"):
         BairJsonObject(
             invariant="Tenant isolation must be enforced.",
             evidence_gap="Missing tenant checks.",
@@ -156,7 +168,7 @@ def test_falsification_missing_disproving_fails_closed():
     )
     assert not is_falsification_complete(plan_no_disproving)
 
-    with pytest.raises(ValueError, match="Falsification plan missing disproving/falsifying observation specification"):
+    with pytest.raises(ValueError, match="(Falsification plan missing disproving/falsifying observation specification|Legacy free-text falsification_plan cannot authorize a HYPOTHESIS)"):
         BairJsonObject(
             invariant="Tenant isolation must be enforced.",
             evidence_gap="Missing tenant checks.",

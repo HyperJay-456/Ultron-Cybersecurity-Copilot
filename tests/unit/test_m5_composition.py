@@ -167,7 +167,7 @@ def protected_handoff(structural_pack):
 # ---------------------------------------------------------------------------
 
 def test_bair_json_object_valid_hypothesis():
-    """BairJsonObject accepts a valid HYPOTHESIS structure with all 7 slots."""
+    """BairJsonObject accepts a valid HYPOTHESIS structure with all slots."""
     obj = BairJsonObject(
         invariant="Tenants must not access other tenants' data",
         evidence_gap="Missing server-side ownership verification check",
@@ -175,9 +175,15 @@ def test_bair_json_object_valid_hypothesis():
         decision=HypothesisDecision.HYPOTHESIS,
         empirical_facts=["FACT-ORDERS-01", "FACT-ORDERS-02"],
         methodology_references=["CHK-DOC-WSTG-ATHZ-04-001-01"],
-        falsification_plan="Support if user B reads user A order; disprove if returns 403 Forbidden",
+        experiment_action="SUBSTITUTE_RESOURCE_IDENTIFIER",
+        supporting_outcome="CROSS_IDENTITY_OBJECT_ACCESSIBLE",
+        disproving_outcome="CROSS_IDENTITY_OBJECT_DENIED",
+        falsification_description="Support if user B reads user A order; disprove if returns 403 Forbidden",
     )
     assert obj.decision == HypothesisDecision.HYPOTHESIS
+    assert obj.experiment_action == "SUBSTITUTE_RESOURCE_IDENTIFIER"
+    assert obj.supporting_outcome == "CROSS_IDENTITY_OBJECT_ACCESSIBLE"
+    assert obj.disproving_outcome == "CROSS_IDENTITY_OBJECT_DENIED"
     assert len(obj.empirical_facts) == 2
     assert len(obj.methodology_references) == 1
 
@@ -273,7 +279,10 @@ def test_map_bair_json_to_s0():
         decision=HypothesisDecision.HYPOTHESIS,
         empirical_facts=["FACT-A", "FACT-B"],
         methodology_references=["CHK-1"],
-        falsification_plan="Support if 200, disprove if 403",
+        experiment_action="SUBSTITUTE_RESOURCE_IDENTIFIER",
+        supporting_outcome="CROSS_IDENTITY_OBJECT_ACCESSIBLE",
+        disproving_outcome="CROSS_IDENTITY_OBJECT_DENIED",
+        falsification_description="Support if 200, disprove if 403",
     )
     s0 = map_bair_json_to_s0(bair, target_asset={"asset_id": "AST-ORDERS"}, category_id="API-BOLA-001")
     assert s0.invariant == "Tenant invariant"
@@ -282,7 +291,11 @@ def test_map_bair_json_to_s0():
     assert s0.decision == HypothesisDecision.HYPOTHESIS
     assert s0.supporting_evidence_ids == ["FACT-A", "FACT-B"]
     assert s0.methodology_references == ["CHK-1"]
-    assert s0.experiment_proposal == "Support if 200, disprove if 403"
+    assert s0.experiment_action == "SUBSTITUTE_RESOURCE_IDENTIFIER"
+    assert s0.supporting_outcome == "CROSS_IDENTITY_OBJECT_ACCESSIBLE"
+    assert s0.disproving_outcome == "CROSS_IDENTITY_OBJECT_DENIED"
+    assert s0.falsification_description == "Support if 200, disprove if 403"
+    assert "Action: SUBSTITUTE_RESOURCE_IDENTIFIER" in s0.experiment_proposal
     assert s0.category == "API-BOLA-001"
     assert s0.asset_id == "AST-ORDERS"
 
@@ -953,7 +966,10 @@ def test_m5_runner_end_to_end_mock_success(sample_handoff, protected_handoff):
         "decision": "HYPOTHESIS",
         "empirical_facts": ["FACT-ORDERS-01", "FACT-ORDERS-02"],
         "methodology_references": ["CHK-DOC-WSTG-ATHZ-04-001-01"],
-        "falsification_plan": "Support if 200 returned with other user order; disprove if 403 Forbidden returned",
+        "experiment_action": "SUBSTITUTE_RESOURCE_IDENTIFIER",
+        "supporting_outcome": "CROSS_IDENTITY_OBJECT_ACCESSIBLE",
+        "disproving_outcome": "CROSS_IDENTITY_OBJECT_DENIED",
+        "falsification_description": "Support if 200 returned with other user order; disprove if 403 Forbidden returned",
     })
 
     runner = ReasoningRunner(llm_caller=lambda prompt, schema: mock_llm_emission)

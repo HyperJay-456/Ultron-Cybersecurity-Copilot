@@ -287,7 +287,10 @@ def test_m5_end_to_end_valid_hypothesis_path(
   "decision": "HYPOTHESIS",
   "empirical_facts": ["FACT-SYNTH-01", "FACT-SYNTH-02"],
   "methodology_references": ["CHK-DOC-WSTG-ATHZ-04-001-01"],
-  "falsification_plan": "Support if user B reads order of user A; disprove if returns 403 Forbidden"
+  "experiment_action": "SUBSTITUTE_RESOURCE_IDENTIFIER",
+  "supporting_outcome": "CROSS_IDENTITY_OBJECT_ACCESSIBLE",
+  "disproving_outcome": "CROSS_IDENTITY_OBJECT_DENIED",
+  "falsification_description": "Support if user B reads order of user A; disprove if returns 403 Forbidden"
 }
 ```"""
 
@@ -312,8 +315,11 @@ def test_m5_end_to_end_valid_hypothesis_path(
     assert result.canonical_hypothesis.decision == HypothesisDecision.HYPOTHESIS
     assert result.canonical_hypothesis.invariant == "Resource access must be restricted to resource owner"
     assert result.canonical_hypothesis.supporting_evidence_ids == ["FACT-SYNTH-01", "FACT-SYNTH-02"]
-    assert result.canonical_hypothesis.methodology_references == ["CHK-DOC-WSTG-ATHZ-04-001-01"]
-    assert result.canonical_hypothesis.experiment_proposal == "Support if user B reads order of user A; disprove if returns 403 Forbidden"
+    assert result.canonical_hypothesis.experiment_action == "SUBSTITUTE_RESOURCE_IDENTIFIER"
+    assert result.canonical_hypothesis.supporting_outcome == "CROSS_IDENTITY_OBJECT_ACCESSIBLE"
+    assert result.canonical_hypothesis.disproving_outcome == "CROSS_IDENTITY_OBJECT_DENIED"
+    assert result.canonical_hypothesis.falsification_description == "Support if user B reads order of user A; disprove if returns 403 Forbidden"
+    assert "SUBSTITUTE_RESOURCE_IDENTIFIER" in result.canonical_hypothesis.experiment_proposal
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +591,7 @@ def test_m5_end_to_end_valid_no_relevant_functionality_path(
             PrimaryFailureCategory.SCHEMA_VALIDITY_FAILURE,
             "does not match ^FACT",
         ),
-        # 9. Malformed falsification plan (whitespace only)
+        # 9. Malformed falsification plan (legacy free-text only)
         (
             "malformed_falsification_plan",
             json.dumps({
@@ -598,7 +604,7 @@ def test_m5_end_to_end_valid_no_relevant_functionality_path(
                 "falsification_plan": "   ",
             }),
             PrimaryFailureCategory.SCHEMA_VALIDITY_FAILURE,
-            "Mandatory falsification_plan slot missing or empty",
+            "Legacy free-text falsification_plan cannot authorize a HYPOTHESIS",
         ),
         # 10. Empty invariant placeholder
         (
@@ -1095,7 +1101,10 @@ def test_m5_end_to_end_repeatability(
             "decision": "HYPOTHESIS",
             "empirical_facts": ["FACT-SYNTH-01", "FACT-SYNTH-02"],
             "methodology_references": ["CHK-DOC-WSTG-ATHZ-04-001-01"],
-            "falsification_plan": "Support if user B reads order of user A; disprove if returns 403 Forbidden",
+            "experiment_action": "SUBSTITUTE_RESOURCE_IDENTIFIER",
+            "supporting_outcome": "CROSS_IDENTITY_OBJECT_ACCESSIBLE",
+            "disproving_outcome": "CROSS_IDENTITY_OBJECT_DENIED",
+            "falsification_description": "Support if user B reads order of user A; disprove if returns 403 Forbidden",
         })
         runner = ReasoningRunner(llm_caller=lambda p, s: mock_emission)
         res = runner.execute_m5_generation(

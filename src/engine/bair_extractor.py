@@ -393,6 +393,10 @@ def parse_bair_json(raw_text: str) -> Dict[str, Any]:
         "decision",
         "empirical_facts",
         "methodology_references",
+        "experiment_action",
+        "supporting_outcome",
+        "disproving_outcome",
+        "falsification_description",
         "falsification_plan",
     }
     for k in data.keys():
@@ -409,9 +413,11 @@ def validate_bair_json(
     """
     Apply decision-dependent structural validation rules to parsed BAIR JSON object.
     Preserves exact behavior matrix:
-    - HYPOTHESIS: invariant, evidence_gap, affected_target, decision, empirical_facts, falsification_plan (supporting+disproving) required.
-    - INSUFFICIENT_EVIDENCE: invariant, evidence_gap, affected_target, decision, falsification_plan required.
+    - HYPOTHESIS: invariant, evidence_gap, affected_target, decision, empirical_facts,
+      typed experiment fields (experiment_action, supporting_outcome, disproving_outcome) required.
+    - INSUFFICIENT_EVIDENCE: invariant, evidence_gap, affected_target, decision required.
       empirical_facts is REQUIRED if empirical_evidence_present==True, OPTIONAL if False.
+      typed experiment fields are optional.
     - NO_RELEVANT_FUNCTIONALITY: invariant, affected_target, decision required.
     - CONFIRMED: Strictly rejected.
     """
@@ -447,10 +453,25 @@ def map_bair_json_to_s0(
     if not isinstance(bair, BairJsonObject):
         raise TypeError(f"Expected BairJsonObject, got {type(bair).__name__}")
 
-    experiment_proposal = bair.falsification_plan or "None required"
+    # Build experiment_proposal from typed fields or legacy plan
+    if bair.experiment_action and bair.supporting_outcome and bair.disproving_outcome:
+        action_val = bair.experiment_action.value if hasattr(bair.experiment_action, "value") else str(bair.experiment_action)
+        supp_val = bair.supporting_outcome.value if hasattr(bair.supporting_outcome, "value") else str(bair.supporting_outcome)
+        disp_val = bair.disproving_outcome.value if hasattr(bair.disproving_outcome, "value") else str(bair.disproving_outcome)
+        desc_str = f" ({bair.falsification_description})" if bair.falsification_description else ""
+        experiment_proposal = f"Action: {action_val}; Breach: {supp_val}; Safe: {disp_val}{desc_str}"
+    elif bair.falsification_plan:
+        experiment_proposal = bair.falsification_plan
+    else:
+        experiment_proposal = "None required"
+
     reasoning_summary = f"BAIR evaluation: {bair.invariant}. Evidence gap: {bair.evidence_gap or 'None'}."
 
     asset_id = (target_asset or {}).get("asset_id") or bair.affected_target
+
+    action_val = bair.experiment_action.value if hasattr(bair.experiment_action, "value") else (str(bair.experiment_action) if bair.experiment_action else None)
+    supp_val = bair.supporting_outcome.value if hasattr(bair.supporting_outcome, "value") else (str(bair.supporting_outcome) if bair.supporting_outcome else None)
+    disp_val = bair.disproving_outcome.value if hasattr(bair.disproving_outcome, "value") else (str(bair.disproving_outcome) if bair.disproving_outcome else None)
 
     return HypothesisModelOutput(
         invariant=bair.invariant,
@@ -462,6 +483,10 @@ def map_bair_json_to_s0(
         cited_methodology_chunk_ids=list(bair.methodology_references),
         reasoning_summary=reasoning_summary,
         experiment_proposal=experiment_proposal,
+        experiment_action=action_val,
+        supporting_outcome=supp_val,
+        disproving_outcome=disp_val,
+        falsification_description=bair.falsification_description,
         category=category_id,
         asset_id=asset_id,
     )

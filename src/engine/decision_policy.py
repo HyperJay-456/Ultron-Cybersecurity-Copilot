@@ -23,7 +23,7 @@ Deterministic Invariants:
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.models import (
@@ -31,6 +31,9 @@ from src.engine.models import (
     HypothesisModelOutput,
     FACT_NAMESPACE_REGEX,
     CHK_NAMESPACE_REGEX,
+    HttpOutcomePredicate,
+    SemanticOutcomePredicate,
+    ExperimentActionPredicate,
 )
 from src.engine.bair_extractor import determine_empirical_evidence_present, _is_canonical_target_empirical_fact
 
@@ -237,7 +240,7 @@ def is_discriminating_evidence_absent(evidence_state: EvidenceState) -> bool:
             if not (has_obj_id and has_distinct_ids):
                 return True
 
-        elif cat_id == "API-BFLA-002":
+        elif cat_id in ("API-BFLA-001", "API-BFLA-002"):
             # Requires distinct roles and privileged/state-changing function
             has_role_delta = (
                 getattr(ch_a, "has_privilege_level_delta", False)
@@ -251,17 +254,295 @@ def is_discriminating_evidence_absent(evidence_state: EvidenceState) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Predicate 3: Falsification Completeness
+# Predicate 3: Typed Experiment Polarity & Tuple Compatibility
 # ---------------------------------------------------------------------------
+
+class ExperimentPolarityValidator:
+    """
+    Deterministic validator enforcing semantic compatibility and polarity across:
+    (category, experiment_action, supporting_outcome, disproving_outcome)
+    as ONE deterministic tuple.
+
+    Zero semantic NLP, zero fuzzy matching, zero heuristic polarity repair.
+    Fails closed on:
+    - unknown category
+    - unknown action
+    - unknown outcome
+    - category / action mismatch
+    - action / outcome mismatch
+    - identical supporting and disproving outcomes (zero discriminative power)
+    """
+
+    # CATEGORY -> ACTION -> (VALID_BREACH_OUTCOMES, VALID_INVARIANT_HOLDS_OUTCOMES)
+    TUPLE_COMPATIBILITY_REGISTRY: Dict[str, Dict[str, Tuple[Set[str], Set[str]]]] = {
+        # 1. Object Authorization / BOLA
+        "API-BOLA-001": {
+            ExperimentActionPredicate.SUBSTITUTE_RESOURCE_IDENTIFIER.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_ACCESSIBLE.value,
+                    SemanticOutcomePredicate.OWNERSHIP_NOT_ENFORCED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    HttpOutcomePredicate.HTTP_404_NOT_FOUND.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_DENIED.value,
+                    SemanticOutcomePredicate.OWNERSHIP_ENFORCED.value,
+                },
+            ),
+        },
+        "API-DEVICE-BOLA-001": {
+            ExperimentActionPredicate.SUBSTITUTE_RESOURCE_IDENTIFIER.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_ACCESSIBLE.value,
+                    SemanticOutcomePredicate.OWNERSHIP_NOT_ENFORCED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    HttpOutcomePredicate.HTTP_404_NOT_FOUND.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_DENIED.value,
+                    SemanticOutcomePredicate.OWNERSHIP_ENFORCED.value,
+                },
+            ),
+        },
+        "API-CROSS-TENANT-001": {
+            ExperimentActionPredicate.SUBSTITUTE_RESOURCE_IDENTIFIER.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_ACCESSIBLE.value,
+                    SemanticOutcomePredicate.OWNERSHIP_NOT_ENFORCED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    HttpOutcomePredicate.HTTP_404_NOT_FOUND.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.CROSS_IDENTITY_OBJECT_DENIED.value,
+                    SemanticOutcomePredicate.OWNERSHIP_ENFORCED.value,
+                },
+            ),
+        },
+
+        # 2. State Machine / Business Logic / Lifecycle / Multi-Step
+        "API-STATE-001": {
+            ExperimentActionPredicate.EXECUTE_OUT_OF_ORDER_TRANSITION.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_ACCEPTED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_400_BAD_REQUEST.value,
+                    HttpOutcomePredicate.HTTP_409_CONFLICT.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_REJECTED.value,
+                },
+            ),
+        },
+        "API-LIFECYCLE-001": {
+            ExperimentActionPredicate.EXECUTE_OUT_OF_ORDER_TRANSITION.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_ACCEPTED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_400_BAD_REQUEST.value,
+                    HttpOutcomePredicate.HTTP_409_CONFLICT.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_REJECTED.value,
+                },
+            ),
+        },
+        "API-MULTI-STEP-AUTH-001": {
+            ExperimentActionPredicate.EXECUTE_OUT_OF_ORDER_TRANSITION.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_ACCEPTED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_400_BAD_REQUEST.value,
+                    HttpOutcomePredicate.HTTP_409_CONFLICT.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.STATE_TRANSITION_REJECTED.value,
+                },
+            ),
+        },
+
+        # 3. Function Level Authorization (BFLA) & Role Boundaries
+        "API-BFLA-001": {
+            ExperimentActionPredicate.REPLAY_STEP_WITH_LOWER_ROLE.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_SUCCEEDS.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_401_UNAUTHORIZED.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_DENIED.value,
+                },
+            ),
+        },
+        "API-BFLA-002": {
+            ExperimentActionPredicate.REPLAY_STEP_WITH_LOWER_ROLE.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_SUCCEEDS.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_401_UNAUTHORIZED.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_DENIED.value,
+                },
+            ),
+        },
+        "API-ROLE-BOUNDARY-001": {
+            ExperimentActionPredicate.REPLAY_STEP_WITH_LOWER_ROLE.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    HttpOutcomePredicate.HTTP_204_NO_CONTENT.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_SUCCEEDS.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_401_UNAUTHORIZED.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_DENIED.value,
+                },
+            ),
+        },
+
+        # 4. Parameter Tampering / Mutation
+        "API-MUTATION-001": {
+            ExperimentActionPredicate.TAMPER_REQUEST_PARAMETER.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    HttpOutcomePredicate.HTTP_201_CREATED.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_SUCCEEDS.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_400_BAD_REQUEST.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_DENIED.value,
+                },
+            ),
+            ExperimentActionPredicate.REPLAY_STEP_WITH_LOWER_ROLE.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_SUCCEEDS.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_401_UNAUTHORIZED.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.PRIVILEGE_ELEVATION_DENIED.value,
+                },
+            ),
+        },
+
+        # 5. Authentication / Public Endpoints (Negative Controls)
+        "API-AUTH-NONE": {
+            ExperimentActionPredicate.INVOKE_WITHOUT_CREDENTIALS.value: (
+                {
+                    HttpOutcomePredicate.HTTP_200_OK.value,
+                    SemanticOutcomePredicate.STATUS_SUCCESS_2XX.value,
+                    SemanticOutcomePredicate.UNAUTHENTICATED_ACCESS_ALLOWED.value,
+                },
+                {
+                    HttpOutcomePredicate.HTTP_401_UNAUTHORIZED.value,
+                    HttpOutcomePredicate.HTTP_403_FORBIDDEN.value,
+                    SemanticOutcomePredicate.STATUS_CLIENT_ERROR_4XX.value,
+                    SemanticOutcomePredicate.UNAUTHENTICATED_ACCESS_DENIED.value,
+                },
+            ),
+        },
+    }
+
+    @classmethod
+    def validate_tuple(
+        cls,
+        category_id: Optional[str],
+        experiment_action: Optional[str] = None,
+        supporting_outcome: Optional[str] = None,
+        disproving_outcome: Optional[str] = None,
+        action: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Validate (category, action, supporting, disproving) as one deterministic compatibility tuple.
+        Returns (is_valid, failure_reason).
+        """
+        if not category_id or not category_id.strip():
+            return False, "Category ID is missing or null"
+        cat = category_id.strip()
+
+        if cat not in cls.TUPLE_COMPATIBILITY_REGISTRY:
+            return False, f"Unrecognized category ID in compatibility registry: '{cat}'"
+
+        cat_actions = cls.TUPLE_COMPATIBILITY_REGISTRY[cat]
+        act_raw = experiment_action or action
+        if not act_raw or not act_raw.strip():
+            return False, "Experiment action is missing or null"
+        act = act_raw.strip()
+        if act not in cat_actions:
+            return False, f"Experiment action '{act}' is not compatible with category '{cat}'"
+
+        if not supporting_outcome or not supporting_outcome.strip():
+            return False, "supporting_outcome is missing or null"
+        if not disproving_outcome or not disproving_outcome.strip():
+            return False, "disproving_outcome is missing or null"
+
+        supp = supporting_outcome.strip()
+        disp = disproving_outcome.strip()
+
+        if supp == disp:
+            return False, f"supporting_outcome and disproving_outcome cannot be identical ('{supp}')"
+
+        valid_breaches, valid_safes = cat_actions[act]
+        if supp not in valid_breaches:
+            return False, f"Outcome '{supp}' is not a valid breach outcome for category '{cat}' and action '{act}'"
+        if disp not in valid_safes:
+            return False, f"Outcome '{disp}' is not a valid safe outcome for category '{cat}' and action '{act}'"
+
+        return True, None
+
 
 def is_falsification_complete(experiment_proposal: Optional[str]) -> bool:
     """
-    Deterministic Predicate: Bounded Falsification Completeness.
-    Reuses canonical bounded experiment validation:
-    Must specify BOTH:
-    1. A concrete observation that would support the hypothesis.
-    2. A concrete observation that would disprove/falsify the hypothesis.
-    Zero unrestricted CoT, zero semantic inference, zero heuristic completeness score.
+    Deterministic Predicate: Bounded Falsification Completeness [LEGACY HELPER].
+    Retained for backward-compatibility with historical test fixtures.
+    NOTE: Under the Phase 6.6 Typed Experiment-Outcome Protocol, this keyword-based
+    helper MUST NEVER authorize a new HYPOTHESIS decision in deterministic_decide().
     """
     if not experiment_proposal or not experiment_proposal.strip():
         return False
@@ -506,19 +787,7 @@ def deterministic_decide(
                 canonical_hypothesis=None,
             )
 
-        # Falsification proposal must be complete
-        if not is_falsification_complete(candidate.experiment_proposal):
-            return DecisionPolicyResult(
-                final_decision=None,
-                candidate_decision=cand_dec_str,
-                decision_changed=False,
-                predicate_identifier=DecisionPredicate.FAIL_CLOSED_INCOMPLETE_HYPOTHESIS,
-                is_valid=False,
-                fail_closed_reason="HYPOTHESIS experiment proposal is incomplete or missing supporting/disproving specification",
-                canonical_hypothesis=None,
-            )
-
-        # Grounding check
+        # Grounding check (empirical facts from target evidence)
         if not is_empirical_evidence_grounded(candidate, evidence_state):
             return DecisionPolicyResult(
                 final_decision=None,
@@ -527,6 +796,44 @@ def deterministic_decide(
                 predicate_identifier=DecisionPredicate.FAIL_CLOSED_GROUNDING_REJECTION,
                 is_valid=False,
                 fail_closed_reason="HYPOTHESIS empirical evidence grounding check failed",
+                canonical_hypothesis=None,
+            )
+
+        # Typed experiment verification (Option B deterministic 4-tuple compatibility)
+        action = candidate.experiment_action
+        supp = candidate.supporting_outcome
+        disp = candidate.disproving_outcome
+
+        if not action or not supp or not disp:
+            return DecisionPolicyResult(
+                final_decision=None,
+                candidate_decision=cand_dec_str,
+                decision_changed=False,
+                predicate_identifier=DecisionPredicate.FAIL_CLOSED_INCOMPLETE_HYPOTHESIS,
+                is_valid=False,
+                fail_closed_reason="HYPOTHESIS experiment proposal is incomplete or missing supporting/disproving specification: missing typed experiment fields",
+                canonical_hypothesis=None,
+            )
+
+        cat_id = (
+            (evidence_state.category_id if evidence_state and evidence_state.category_id else None)
+            or (candidate.category if candidate and candidate.category else None)
+        )
+
+        is_compat, reason = ExperimentPolarityValidator.validate_tuple(
+            category_id=cat_id,
+            action=action,
+            supporting_outcome=supp,
+            disproving_outcome=disp,
+        )
+        if not is_compat:
+            return DecisionPolicyResult(
+                final_decision=None,
+                candidate_decision=cand_dec_str,
+                decision_changed=False,
+                predicate_identifier=DecisionPredicate.FAIL_CLOSED_INCOMPLETE_HYPOTHESIS,
+                is_valid=False,
+                fail_closed_reason=f"HYPOTHESIS experiment proposal is incomplete or missing supporting/disproving specification: {reason}",
                 canonical_hypothesis=None,
             )
 
