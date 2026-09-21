@@ -536,6 +536,19 @@ class I3ExecutionResult(BaseModel):
     grounding_result: Optional[Dict[str, Any]] = None
 
 
+class I4ExecutionResult(BaseModel):
+    """Result of an authoritative I4 BAIR analytical inference generation attempt."""
+    raw_response: str
+    extracted_bair: Optional[Dict[str, Any]] = None
+    canonical_hypothesis: Optional[HypothesisModelOutput] = None
+    classification: FailureClassificationResult
+    latency_ms: float = 0.0
+    eval_count: Optional[int] = None
+    prompt_eval_count: Optional[int] = None
+    bair_error: Optional[str] = None
+    grounding_result: Optional[Dict[str, Any]] = None
+
+
 def classify_primary_failure(
     transport_error: Optional[Exception] = None,
     raw_response: Optional[str] = None,
