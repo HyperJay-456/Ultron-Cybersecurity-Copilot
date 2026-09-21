@@ -353,6 +353,168 @@ def test_m5_pairwise_composition(
         assert protected_handoff.invariant in full_prompt
 
 
+@pytest.mark.parametrize(
+    "enable_i2,enable_i3,enable_i4,enable_i5,enable_i6,pair_name",
+    [
+        (True, False, False, False, False, "I1+I2"),
+        (False, True, False, False, False, "I1+I3"),
+        (False, False, True, False, False, "I1+I4"),
+        (False, False, False, True, False, "I1+I5"),
+        (False, False, False, False, True, "I1+I6"),
+    ],
+)
+def test_m5_i1_pairwise_composition(
+    sample_handoff,
+    vapt_pack,
+    protected_handoff,
+    enable_i2,
+    enable_i3,
+    enable_i4,
+    enable_i5,
+    enable_i6,
+    pair_name,
+):
+    """
+    Test all 5 I1 pairwise combinations (I1+I2, I1+I3, I1+I4, I1+I5, I1+I6).
+    Enforces all 11 Phase 4.1 contract and isolation invariants.
+    """
+    ctx = ReasoningContextBuilder.build_context(
+        handoff_packet=sample_handoff,
+        model_identifier="qwen2.5-coder:7b",
+        cascade_mode=TRACK_D,
+        vapt_pack=vapt_pack if enable_i2 else None,
+        category_id="API-BOLA-001",
+        enable_i2_namespace_partitioning=enable_i2,
+        enable_i3_counterfactual_prompting=enable_i3,
+        enable_i4_bair=enable_i4,
+        enable_i5_decision_policy=enable_i5,
+        enable_i6_handoff=enable_i6,
+        protected_handoff=protected_handoff if enable_i6 else None,
+        output_protocol=OutputProtocolIdentifier.JSON_BAIR,
+    )
+
+    # 1. Exactly one OutputProtocolContract
+    proto_contract = get_protocol_contract(OutputProtocolIdentifier.JSON_BAIR)
+    assert isinstance(proto_contract, OutputProtocolContract)
+    assert proto_contract.identifier == OutputProtocolIdentifier.JSON_BAIR
+
+    # 2. JSON_BAIR remains the selected protocol
+    assert ctx.provenance_metadata["output_protocol"] == OutputProtocolIdentifier.JSON_BAIR.value
+    assert "OUTPUT FORMAT (BOUNDED ANALYTICAL INFERENCE REPRESENTATION - JSON_BAIR)" in ctx.system_prompt
+
+    # 3. I1=1 binds the runtime schema to the JSON_BAIR schema
+    runtime_schema = proto_contract.runtime_schema_factory(True)
+    assert runtime_schema is not None
+    assert runtime_schema == BairJsonObject.get_inference_schema()
+    assert "properties" in runtime_schema
+    assert "empirical_facts" in runtime_schema["properties"]
+    assert "methodology_references" in runtime_schema["properties"]
+    assert "falsification_plan" in runtime_schema["properties"]
+
+    # 4. Parser remains parse_bair_json
+    assert proto_contract.parser == parse_bair_json
+
+    # 5. Validator remains validate_bair_json
+    assert proto_contract.validator == validate_bair_json
+
+    # 6. Adapter remains map_bair_json_to_s0
+    assert proto_contract.adapter == map_bair_json_to_s0
+
+    # 7. The enabled second intervention remains present
+    if enable_i2:
+        assert "EPISTEMIC BOUNDARY RULES & NAMESPACE CONSTRAINTS" in ctx.system_prompt
+        assert "<empirical_target_evidence>" in ctx.user_prompt
+    if enable_i3:
+        assert "EVALUATION FRAMEWORK (DO NOT ASSUME A VULNERABILITY EXISTS)" in ctx.system_prompt
+        assert "COUNTERFACTUAL REASONING INSTRUCTIONS" in ctx.user_prompt
+    if enable_i4:
+        assert ctx.provenance_metadata.get("i4_bair_enabled") is True
+        assert "falsification_plan" in ctx.system_prompt
+    if enable_i5:
+        assert "CALIBRATED ABSTENTION CONTRACT" in ctx.system_prompt
+    if enable_i6:
+        assert "PROTECTED 3B -> 7B INVARIANT HANDOFF" in ctx.user_prompt
+        assert protected_handoff.invariant in ctx.user_prompt
+
+    # 8. No intervention shadows another
+    assert "OUTPUT FORMAT (BOUNDED ANALYTICAL INFERENCE REPRESENTATION - JSON_BAIR)" in ctx.system_prompt
+
+    # 9. No contradictory serialization directives exist
+    assert "<bair>" not in ctx.prompt
+    assert "</bair>" not in ctx.prompt
+    assert "Emit your evaluation strictly as XML" not in ctx.prompt
+
+    # 10. Contract validation succeeds for a valid configuration
+    valid_contract = ReasoningExecutionContract(
+        protocol=OutputProtocolIdentifier.JSON_BAIR,
+        enable_i1=True,
+        enable_i2=enable_i2,
+        enable_i3=enable_i3,
+        enable_i4=enable_i4,
+        enable_i5=enable_i5,
+        enable_i6=enable_i6,
+        system_prompt=ctx.system_prompt,
+        user_prompt=ctx.user_prompt,
+        runtime_schema=runtime_schema,
+        parser=proto_contract.parser,
+        validator=proto_contract.validator,
+        adapter=proto_contract.adapter,
+        budget_tier=4096,
+        floor_tokens=500,
+        total_tokens=ctx.token_count,
+        protected_handoff_present=enable_i6,
+        category_id="API-BOLA-001",
+    )
+    validate_reasoning_contract(valid_contract)
+
+    # 11. Contract validation fails closed when deliberately given a mismatched protocol
+    mismatched_protocol_contract = ReasoningExecutionContract(
+        protocol=OutputProtocolIdentifier.BAIR_XML,
+        enable_i1=True,
+        enable_i2=enable_i2,
+        enable_i3=enable_i3,
+        enable_i4=enable_i4,
+        enable_i5=enable_i5,
+        enable_i6=enable_i6,
+        system_prompt=ctx.system_prompt,
+        user_prompt=ctx.user_prompt,
+        runtime_schema=runtime_schema,
+        parser=proto_contract.parser,
+        validator=proto_contract.validator,
+        adapter=proto_contract.adapter,
+        budget_tier=4096,
+        floor_tokens=500,
+        total_tokens=ctx.token_count,
+        protected_handoff_present=enable_i6,
+        category_id="API-BOLA-001",
+    )
+    with pytest.raises(ContractCompilationError):
+        validate_reasoning_contract(mismatched_protocol_contract)
+
+    mismatched_schema_contract = ReasoningExecutionContract(
+        protocol=OutputProtocolIdentifier.JSON_BAIR,
+        enable_i1=True,
+        enable_i2=enable_i2,
+        enable_i3=enable_i3,
+        enable_i4=enable_i4,
+        enable_i5=enable_i5,
+        enable_i6=enable_i6,
+        system_prompt=ctx.system_prompt,
+        user_prompt=ctx.user_prompt,
+        runtime_schema=None,  # Deliberate missing schema when I1=True
+        parser=proto_contract.parser,
+        validator=proto_contract.validator,
+        adapter=proto_contract.adapter,
+        budget_tier=4096,
+        floor_tokens=500,
+        total_tokens=ctx.token_count,
+        protected_handoff_present=enable_i6,
+        category_id="API-BOLA-001",
+    )
+    with pytest.raises(ContractCompilationError):
+        validate_reasoning_contract(mismatched_schema_contract)
+
+
 # ---------------------------------------------------------------------------
 # Phase 4K: Full-Composition Invariant ({I1:0, I2:1, I3:1, I4:1, I5:1, I6:1})
 # ---------------------------------------------------------------------------
@@ -442,16 +604,104 @@ def test_full_composition_invariant_i1_on(sample_handoff, vapt_pack, protected_h
     """
     Full composition with I1=1:
     I1=1, I2=1, I3=1, I4=1, I5=1, I6=1.
-    Verifies runtime schema is the JSON_BAIR schema.
+    Verifies runtime schema is the JSON_BAIR schema, prompt invariants hold,
+    and contract validation passes.
     """
+    ctx = ReasoningContextBuilder.build_context(
+        handoff_packet=sample_handoff,
+        model_identifier="qwen2.5-coder:7b",
+        cascade_mode=TRACK_D,
+        vapt_pack=vapt_pack,
+        category_id="API-BOLA-001",
+        enable_i2_namespace_partitioning=True,
+        enable_i3_counterfactual_prompting=True,
+        enable_i4_bair=True,
+        enable_i5_decision_policy=True,
+        enable_i6_handoff=True,
+        protected_handoff=protected_handoff,
+        output_protocol=OutputProtocolIdentifier.JSON_BAIR,
+    )
+
     proto_contract = get_protocol_contract(OutputProtocolIdentifier.JSON_BAIR)
     schema = proto_contract.runtime_schema_factory(True)
+
+    # 1. Runtime schema is JSON_BAIR schema
     assert schema is not None
     assert schema == BairJsonObject.get_inference_schema()
     assert "properties" in schema
     assert "empirical_facts" in schema["properties"]
     assert "methodology_references" in schema["properties"]
     assert "falsification_plan" in schema["properties"]
+
+    # 2. I2 semantics present
+    assert "EPISTEMIC BOUNDARY RULES & NAMESPACE CONSTRAINTS" in ctx.system_prompt
+    assert "<empirical_target_evidence>" in ctx.user_prompt
+    assert "<security_testing_methodology>" in ctx.user_prompt
+
+    # 3. I3 semantics present
+    assert "EVALUATION FRAMEWORK (DO NOT ASSUME A VULNERABILITY EXISTS)" in ctx.system_prompt
+    assert "COUNTERFACTUAL REASONING INSTRUCTIONS" in ctx.user_prompt
+
+    # 4. I5 semantics present
+    assert "CALIBRATED ABSTENTION CONTRACT" in ctx.system_prompt
+
+    # 5. I6 protected handoff present
+    assert "PROTECTED 3B -> 7B INVARIANT HANDOFF" in ctx.user_prompt
+    assert protected_handoff.invariant in ctx.user_prompt
+
+    # 6. JSON_BAIR protocol instructions present
+    assert "OUTPUT FORMAT (BOUNDED ANALYTICAL INFERENCE REPRESENTATION - JSON_BAIR)" in ctx.system_prompt
+
+    # 7. NO XML BAIR serialization instructions
+    assert "<bair>" not in ctx.prompt
+    assert "</bair>" not in ctx.prompt
+    assert "Emit your evaluation strictly as XML" not in ctx.prompt
+
+    # 8. Protocol exclusivity & no duplicate formatting commands
+    json_instructions = [
+        line for line in ctx.system_prompt.splitlines()
+        if "output valid json" in line.lower() or "strictly as a single json object" in line.lower()
+    ]
+    assert len(json_instructions) == 1
+    assert ctx.provenance_metadata["output_protocol"] == OutputProtocolIdentifier.JSON_BAIR.value
+
+    # 9. Pipeline bindings
+    assert proto_contract.parser == parse_bair_json
+    assert proto_contract.validator == validate_bair_json
+    assert proto_contract.adapter == map_bair_json_to_s0
+
+    # 10. Ground truth absent
+    assert "is_vulnerable" not in ctx.prompt.lower()
+    assert "expected_label" not in ctx.prompt.lower()
+
+    # 11. No intervention silently suppressed
+    assert ctx.provenance_metadata.get("i3_counterfactual_enabled") is True
+    assert ctx.provenance_metadata.get("i4_bair_enabled") is True
+    assert ctx.provenance_metadata.get("i5_decision_policy_enabled") is True
+    assert ctx.provenance_metadata.get("i6_handoff_enabled") is True
+
+    # 12. Full contract validation succeeds under I1=1
+    full_contract = ReasoningExecutionContract(
+        protocol=OutputProtocolIdentifier.JSON_BAIR,
+        enable_i1=True,
+        enable_i2=True,
+        enable_i3=True,
+        enable_i4=True,
+        enable_i5=True,
+        enable_i6=True,
+        system_prompt=ctx.system_prompt,
+        user_prompt=ctx.user_prompt,
+        runtime_schema=schema,
+        parser=proto_contract.parser,
+        validator=proto_contract.validator,
+        adapter=proto_contract.adapter,
+        budget_tier=4096,
+        floor_tokens=1000,
+        total_tokens=ctx.token_count,
+        protected_handoff_present=True,
+        category_id="API-BOLA-001",
+    )
+    validate_reasoning_contract(full_contract)
 
 
 # ---------------------------------------------------------------------------

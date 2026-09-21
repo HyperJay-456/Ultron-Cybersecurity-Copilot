@@ -240,13 +240,15 @@ Crucially, under both I1=0 and I1=1, the prompt instructions, parser, validator,
 Deterministic test suites were executed with live LLM calls disabled (`$env:SKIP_LIVE_OLLAMA="1"`):
 
 - **New M5 Composition Suite** (`tests/unit/test_m5_composition.py`):
-  - 28 test cases executed.
-  - 28 passed, 0 failed.
-  - Covers all 10 pairwise combinations ($I_2+I_3$, $I_2+I_4$, $I_2+I_5$, $I_2+I_6$, $I_3+I_4$, $I_3+I_5$, $I_3+I_6$, $I_4+I_5$, $I_4+I_6$, $I_5+I_6$).
-  - Covers full composition $\{I_1: 0, I_2: 1, I_3: 1, I_4: 1, I_5: 1, I_6: 1\}$ and $\{I_1: 1, ...\}$.
+  - 33 test cases executed.
+  - 33 passed, 0 failed.
+  - Covers all 15 pairwise combinations across the entire supported intervention set:
+    - 10 prompt/context pairwise combinations ($I_2+I_3$, $I_2+I_4$, $I_2+I_5$, $I_2+I_6$, $I_3+I_4$, $I_3+I_5$, $I_3+I_6$, $I_4+I_5$, $I_4+I_6$, $I_5+I_6$).
+    - 5 schema-decoding pairwise combinations ($I_1+I_2$, $I_1+I_3$, $I_1+I_4$, $I_1+I_5$, $I_1+I_6$), verifying protocol exclusivity, runtime schema binding, parser/validator/adapter consistency, and fail-closed mismatch gating.
+  - Covers full composition $\{I_1: 0, I_2: 1, I_3: 1, I_4: 1, I_5: 1, I_6: 1\}$ and $\{I_1: 1, I_2: 1, I_3: 1, I_4: 1, I_5: 1, I_6: 1\}$.
   - Covers contradiction detection, budget repair, I6 protection, pre-flight gating, and offline mock execution.
 - **Full Unit Test Suite Regression** (`tests/unit/`):
-  - 553 passed, 3 skipped (live Ollama tests skipped offline), 0 failed.
+  - 558 passed, 3 skipped (live Ollama tests skipped offline), 0 failed.
   - 100% pass rate across all existing unit test modules.
 
 ---
