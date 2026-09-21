@@ -317,7 +317,7 @@ def test_determine_empirical_evidence_present_sources():
     assert determine_empirical_evidence_present(explicit_signal=True) is True
     assert determine_empirical_evidence_present(explicit_signal=False) is False
 
-    # 2. From channel_a LosslessStructuralPack
+    # 2. Canonical target empirical evidence present in channel_a -> True
     pack_with_facts = LosslessStructuralPack(
         asset_id="AST-01",
         endpoint_id="EP-01",
@@ -328,6 +328,7 @@ def test_determine_empirical_evidence_present_sources():
     )
     assert determine_empirical_evidence_present(channel_a=pack_with_facts) is True
 
+    # 3. No canonical target empirical evidence in channel_a -> False
     pack_empty = LosslessStructuralPack(
         asset_id="AST-01",
         endpoint_id="EP-01",
@@ -338,11 +339,38 @@ def test_determine_empirical_evidence_present_sources():
     )
     assert determine_empirical_evidence_present(channel_a=pack_empty) is False
 
-    # 3. From retrieved_evidence list
-    assert determine_empirical_evidence_present(retrieved_evidence=[{"fact_id": "FACT-01"}]) is True
+    # 4. Canonical target empirical evidence in retrieved_evidence -> True
+    assert determine_empirical_evidence_present(retrieved_evidence=[{"fact_id": "FACT-01", "statement": "Observed"}]) is True
     assert determine_empirical_evidence_present(retrieved_evidence=[]) is False
 
-    # 4. Default when nothing provided
+    # 5. VAPT Knowledge RAG present but no target empirical evidence -> False
+    vapt_rag_chunks = [
+        {"chunk_id": "CHK-00000001", "content": "WSTG guide for testing BOLA", "source_name": "OWASP-WSTG"},
+        {"chunk_id": "CHK-00000002", "content": "ASVS 4.0 Access Control", "source_name": "OWASP-ASVS"},
+    ]
+    assert determine_empirical_evidence_present(retrieved_evidence=vapt_rag_chunks) is False
+
+    # 6. Methodology / CHK material present but no target empirical evidence -> False
+    methodology_items = [
+        {"evidence_id": "CHK-METHODOLOGY-01", "guidance": "Check role headers"},
+        {"chunk_id": "CHK-REF-002", "statement": "Reference testing checklist"},
+    ]
+    assert determine_empirical_evidence_present(retrieved_evidence=methodology_items) is False
+
+    # 7. Model-derived text present but no target empirical evidence -> False
+    model_derived_items = [
+        {"model_derived": True, "analysis": "Model inferred that auth might be missing"},
+        {"is_synthetic": True, "statement": "Generated hypothesis thought"},
+        {"source": "model", "statement": "Model predicted gap"},
+    ]
+    assert determine_empirical_evidence_present(retrieved_evidence=model_derived_items) is False
+
+    # 8. Repeated evaluation with identical canonical evidence -> byte-identical / deterministic result
+    res1 = determine_empirical_evidence_present(channel_a=pack_with_facts)
+    res2 = determine_empirical_evidence_present(channel_a=pack_with_facts)
+    assert res1 == res2 is True
+
+    # 9. Default when nothing provided -> False
     assert determine_empirical_evidence_present() is False
 
 
@@ -352,8 +380,9 @@ def test_extractor_never_derives_empirical_evidence_from_bair_prose():
     xml_prose_claims_evidence = make_bair_xml(
         decision="INSUFFICIENT_EVIDENCE",
         invariant="Evidence observed in response was valid 200 OK but ungrounded",
-        evidence_gap="Some evidence was observed and available",
+        evidence_gap="Some evidence was observed and available in target response",
         facts=None,
+        methodology="CHK-001",
         falsification="Observation to resolve: probe endpoint",
     )
     raw_slots = parse_bair(xml_prose_claims_evidence)
@@ -365,6 +394,27 @@ def test_extractor_never_derives_empirical_evidence_from_bair_prose():
     # When caller specifies True, extractor respects True and rejects missing facts (Case 1)
     with pytest.raises(BairSchemaError, match="requires non-empty <facts> slot"):
         validate_bair(raw_slots, empirical_evidence_present=True)
+
+
+def test_flag_never_inferred_from_slots_or_content():
+    """Requirement B.7: The flag is never inferred from <facts>, <decision>, prose, <evidence_gap>, <falsification>, or methodology."""
+    # BAIR text has all fields populated, including facts
+    xml_full = make_bair_xml(
+        decision="INSUFFICIENT_EVIDENCE",
+        invariant="Invariant claim",
+        evidence_gap="GAP-001",
+        affected_target="/api/resource",
+        facts="FACT-001",
+        methodology="CHK-001",
+        falsification="Observation to resolve: compare role headers",
+    )
+    slots = parse_bair(xml_full)
+
+    # Calling with empirical_evidence_present=False does NOT set empirical_evidence_present to True
+    # The decision remains INSUFFICIENT_EVIDENCE and is not rewritten to HYPOTHESIS
+    val = validate_bair(slots, empirical_evidence_present=False)
+    assert val["decision"] == "INSUFFICIENT_EVIDENCE"
+    assert val["parsed_facts"] == ["FACT-001"]
 
 
 # ---------------------------------------------------------------------------
@@ -550,52 +600,118 @@ def test_context_builder_enable_i4_bair():
 
 
 # ---------------------------------------------------------------------------
-# Live Ollama Sanity Check (Optional under SKIP_LIVE_OLLAMA)
+# Part F: Single-Factor Isolation Verification (Hermetic)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(
-    os.environ.get("SKIP_LIVE_OLLAMA") == "1",
-    reason="Live Ollama execution skipped by environment flag",
-)
-def test_live_ollama_i4_unconstrained_sanity_check():
-    """Lightweight live Ollama sanity check under unconstrained sampling for BAIR."""
-    runner = OllamaRunner(num_predict=300, temperature=0.0)
-    if not runner.is_available():
-        pytest.skip("Local Ollama daemon is not reachable at 127.0.0.1:11434")
+def test_i4_single_factor_isolation_schema_none():
+    """Requirement F.I1: I4 executes under unconstrained sampling; schema is strictly None (no format={...})."""
+    captured_schema = "SENTINEL"
 
-    reasoning_runner = ReasoningRunner(ollama_runner=runner)
-    prompt = reasoning_runner.build_i4_bair_prompt(
-        target_asset={
-            "asset_id": "AST-PUBLIC-HEALTH",
-            "method": "GET",
-            "normalized_path": "/health",
-        },
-        category_id="API-AUTH-NONE",
-        retrieved_evidence=[
-            {"fact_id": "FACT-HEALTH-01", "statement": "GET /health returns HTTP 200 with status UP."},
-        ],
+    def mock_caller(prompt: str, schema: Any) -> str:
+        nonlocal captured_schema
+        captured_schema = schema
+        return make_bair_xml(decision="INSUFFICIENT_EVIDENCE", facts=None)
+
+    runner = ReasoningRunner(llm_caller=mock_caller)
+    res = runner.execute_i4_generation(prompt="test prompt", empirical_evidence_present=False)
+
+    assert captured_schema is None, f"I4 violated isolation: passed schema={captured_schema}"
+    assert res.classification.is_valid is True
+
+
+def test_i4_single_factor_isolation_no_i2_namespace_partitioning():
+    """Requirement F.I2: I4 prompt does NOT activate I2 namespace partitioning."""
+    runner = ReasoningRunner()
+    prompt = runner.build_i4_bair_prompt(
+        target_asset={"asset_id": "AST-01", "method": "GET", "normalized_path": "/test"},
+        category_id="API-BOLA-001",
+        retrieved_evidence=[{"fact_id": "FACT-001", "statement": "Target observation"}],
+        vapt_knowledge=[{"chunk_id": "CHK-001", "content": "Methodology reference"}],
     )
 
+    # Must NOT contain I2 epistemic namespace partition tags or JSON fields
+    assert "<empirical_target_evidence>" not in prompt
+    assert "<security_testing_methodology>" not in prompt
+    assert "empirical_fact_ids" not in prompt
+    assert "methodology_chunk_ids" not in prompt
+    assert "<bair>" in prompt
+    assert "</bair>" in prompt
+
+
+def test_i4_single_factor_isolation_no_i3_counterfactual_templates():
+    """Requirement F.I3: I4 prompt does NOT activate I3 counterfactual category/template resolver."""
+    runner = ReasoningRunner()
+    prompt = runner.build_i4_bair_prompt(
+        target_asset={"asset_id": "AST-01", "method": "GET", "normalized_path": "/test"},
+        category_id="API-BOLA-001",
+        retrieved_evidence=[{"fact_id": "FACT-001", "statement": "Target observation"}],
+    )
+
+    # Must NOT contain I3 counterfactual instructions or templates
+    assert "COUNTERFACTUAL REASONING INSTRUCTIONS" not in prompt
+    assert "EVALUATION FRAMEWORK (DO NOT ASSUME A VULNERABILITY EXISTS)" not in prompt
+    assert "COUNTERFACTUAL VIOLATION CONDITION" not in prompt
+
+
+def test_i4_single_factor_isolation_no_i5_decision_rewriting():
+    """Requirement F.I5: I4 extractor preserves exact model decision without heuristic policy rewriting."""
+    for dec in ["NO_RELEVANT_FUNCTIONALITY", "INSUFFICIENT_EVIDENCE", "HYPOTHESIS"]:
+        xml = make_bair_xml(
+            decision=dec,
+            facts="FACT-001" if dec != "NO_RELEVANT_FUNCTIONALITY" else None,
+            falsification="Observation supporting hypothesis: 200 OK. Observation disproving hypothesis: 403 Forbidden.",
+        )
+        slots = parse_bair(xml)
+        val = validate_bair(slots, empirical_evidence_present=(dec == "HYPOTHESIS"))
+        s0 = map_bair_to_s0(val)
+        assert s0.decision.value == dec, f"Decision {dec} was rewritten to {s0.decision.value}"
+
+
+def test_i4_single_factor_isolation_no_i6_handoff_serializer():
+    """Requirement F.I6: I4 does not invoke or depend on I6 3B->7B invariant handoff serializer."""
+    # Context builder with enable_i4_bair=True maintains standard handoff packet without invoking I6 serializer
     pack = LosslessStructuralPack(
-        asset_id="AST-PUBLIC-HEALTH",
-        endpoint_id="EP-HEALTH",
-        route_template="/health",
+        asset_id="AST-01",
+        endpoint_id="EP-01",
+        route_template="/api/test",
         http_method="GET",
         application_mutability="READ_ONLY",
-        observed_facts=[{"fact_id": "FACT-HEALTH-01", "statement": "GET /health returns HTTP 200 with status UP."}],
+        observed_facts=[],
+    )
+    handoff = CascadeHandoffPacket(
+        channel_a_structural=pack,
+        validated_triage=None,
+        routing_decision=DeterministicRoutingDecision(
+            route_to_7b=True,
+            reason="Unit test",
+            escalate=False,
+            has_high_risk_signal=False,
+            fail_safe_triggered=False,
+        ),
+        provenance_hash="0" * 64,
     )
 
-    result = reasoning_runner.execute_i4_generation(
-        prompt=prompt,
-        channel_a=pack,
-        category_id="API-AUTH-NONE",
+    ctx = ReasoningContextBuilder.build_context(
+        handoff_packet=handoff,
+        model_identifier="qwen2.5-coder:7b",
+        cascade_mode=TRACK_D,
+        enable_i4_bair=True,
     )
-    assert isinstance(result, I4ExecutionResult)
-    assert len(result.raw_response) > 0
-    assert result.latency_ms > 0
-    assert result.classification.primary_category in (
-        PrimaryFailureCategory.VALID,
-        PrimaryFailureCategory.SCHEMA_VALIDITY_FAILURE,
-        PrimaryFailureCategory.MAX_TOKEN_TRUNCATION,
-        PrimaryFailureCategory.PARSER_FAILURE,
-    )
+    # I6 pure invariant handoff serializer is not active
+    assert ctx.provenance_metadata.get("i6_handoff_enabled") is None
+
+
+def test_i4_single_factor_isolation_exactly_one_llm_call():
+    """Requirement F: I4 execution path issues strictly ONE LLM inference call."""
+    call_count = 0
+
+    def mock_caller(prompt: str, schema: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        return make_bair_xml(decision="INSUFFICIENT_EVIDENCE", facts=None)
+
+    runner = ReasoningRunner(llm_caller=mock_caller)
+    res = runner.execute_i4_generation(prompt="test prompt", empirical_evidence_present=False)
+
+    assert call_count == 1, f"Expected exactly 1 LLM call, got {call_count}"
+    assert res.classification.is_valid is True
