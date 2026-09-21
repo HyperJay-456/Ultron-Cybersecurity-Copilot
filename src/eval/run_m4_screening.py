@@ -19,6 +19,10 @@ import subprocess
 import sys
 import time
 
+repo_root = Path(__file__).resolve().parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 from src.eval.m4_screening_harness import (
     M4ScreeningHarness,
     ScreeningTrackId,
