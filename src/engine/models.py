@@ -6,7 +6,7 @@ Milestone M4: Canonical Base Schema (S0) and Deterministic Primary Failure Taxon
 import re
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 FACT_NAMESPACE_PATTERN = r"^FACT-[A-Z0-9_-]+$"
 CHK_NAMESPACE_PATTERN = r"^CHK-[A-Z0-9_-]+$"
@@ -547,6 +547,26 @@ class I4ExecutionResult(BaseModel):
     prompt_eval_count: Optional[int] = None
     bair_error: Optional[str] = None
     grounding_result: Optional[Dict[str, Any]] = None
+
+
+class I5ExecutionResult(BaseModel):
+    """Result of an authoritative I5 deterministic decision policy generation attempt."""
+    raw_response: str
+    parsed_json: Optional[Dict[str, Any]] = None
+    candidate_hypothesis: Optional[HypothesisModelOutput] = None
+    canonical_hypothesis: Optional[HypothesisModelOutput] = None
+    candidate_decision: Optional[str] = None
+    final_decision: Optional[str] = None
+    decision_changed: bool = False
+    predicate_identifier: Optional[str] = None
+    fail_closed: bool = False
+    fail_closed_reason: Optional[str] = None
+    classification: FailureClassificationResult
+    latency_ms: float = 0.0
+    eval_count: Optional[int] = None
+    prompt_eval_count: Optional[int] = None
+    grounding_result: Optional[Dict[str, Any]] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def classify_primary_failure(
