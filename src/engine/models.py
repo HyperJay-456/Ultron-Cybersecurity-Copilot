@@ -569,6 +569,26 @@ class I5ExecutionResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class I6ExecutionResult(BaseModel):
+    """Result of an authoritative I6 protected 3B->7B invariant handoff generation attempt."""
+    raw_response: str
+    parsed_json: Optional[Dict[str, Any]] = None
+    canonical_hypothesis: Optional[HypothesisModelOutput] = None
+    serialized_handoff: str
+    handoff_hash: str
+    invariant: str
+    evidence_gap_type: str
+    raw_3b_output: Optional[Dict[str, Any]] = None
+    classification: FailureClassificationResult
+    latency_ms: float = 0.0
+    eval_count: Optional[int] = None
+    prompt_eval_count: Optional[int] = None
+    grounding_result: Optional[Dict[str, Any]] = None
+    fail_closed: bool = False
+    fail_closed_reason: Optional[str] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 def classify_primary_failure(
     transport_error: Optional[Exception] = None,
     raw_response: Optional[str] = None,

@@ -110,6 +110,8 @@ class ReasoningContextBuilder:
         category_id: Optional[str] = None,
         enable_i4_bair: bool = False,
         enable_i5_decision_policy: bool = False,
+        enable_i6_handoff: bool = False,
+        protected_handoff: Optional[Any] = None,
     ) -> AssembledReasoningContext:
         """
         Assembles 7B (or 3B baseline) reasoning prompt according to the Section 10 / M3 hierarchy.
@@ -126,6 +128,8 @@ class ReasoningContextBuilder:
             - category_id: Optional[str] (Explicit OWASP API category ID for I3 counterfactual template)
             - enable_i4_bair: bool (Intervention I4 Bounded Analytical Inference Representation)
             - enable_i5_decision_policy: bool (Intervention I5 Deterministic Decision Policy)
+            - enable_i6_handoff: bool (Intervention I6 Pure Invariant 3B Handoff Serializer)
+            - protected_handoff: Optional[ProtectedHandoffDescriptor] (Pre-serialized immutable handoff)
         """
         canonical_mode = normalize_track_identifier(cascade_mode)
         ch_a = handoff_packet.channel_a_structural
@@ -154,7 +158,7 @@ class ReasoningContextBuilder:
         elif enable_i3_counterfactual_prompting:
             from src.engine.prompts import get_counterfactual_template
             eff_category = category_id
-            if not eff_category and handoff_packet.validated_triage:
+            if not eff_category and not enable_i6_handoff and handoff_packet.validated_triage:
                 eff_category = handoff_packet.validated_triage.suspected_category
             tmpl = get_counterfactual_template(eff_category)
             system_policy = (
@@ -360,7 +364,18 @@ class ReasoningContextBuilder:
         # -------------------------------------------------------------------
         triage_block = ""
         p3_tokens = 0
-        if include_triage and optional_advisory_content_mode:
+        if enable_i6_handoff and protected_handoff is not None:
+            # I6 Pure Invariant Handoff: suppresses natural-language 3B notes
+            # and serializes strictly verified Class-1 predicate booleans
+            # and the exact EvidenceGapType into Partition P3.
+            triage_block = protected_handoff.serialized_handoff + "\n"
+            p3_tokens = cls.estimate_tokens(triage_block)
+            if p3_tokens > remaining_budget:
+                triage_block = ""
+                p3_tokens = 0
+            else:
+                remaining_budget -= p3_tokens
+        elif include_triage and optional_advisory_content_mode:
             vt = handoff_packet.validated_triage
             if vt is not None:
                 triage_block = (
@@ -447,7 +462,7 @@ class ReasoningContextBuilder:
         p1_cf_tokens = 0
         if enable_i3_counterfactual_prompting:
             eff_category = category_id
-            if not eff_category and handoff_packet.validated_triage:
+            if not eff_category and not enable_i6_handoff and handoff_packet.validated_triage:
                 eff_category = handoff_packet.validated_triage.suspected_category
             from src.engine.prompts import get_counterfactual_template
             tmpl = get_counterfactual_template(eff_category)
@@ -496,6 +511,10 @@ class ReasoningContextBuilder:
             prov_meta["i4_bair_enabled"] = True
         if enable_i5_decision_policy:
             prov_meta["i5_decision_policy_enabled"] = True
+        if enable_i6_handoff:
+            prov_meta["i6_handoff_enabled"] = True
+            if protected_handoff is not None:
+                prov_meta["i6_handoff_hash"] = getattr(protected_handoff, "handoff_hash", None)
         if vapt_pack is not None:
             prov_meta["vapt_pack_id"] = vapt_pack.pack_id
             prov_meta["vapt_provenance_hash"] = vapt_pack.provenance_hash
