@@ -2056,6 +2056,9 @@ AVAILABLE TARGET EVIDENCE:
                 schema_error = exc
 
         # 4. Intervention I5 Decision Policy (if active and hypothesis parsed)
+        policy_res: Optional[DecisionPolicyResult] = None
+        polarity_error: Optional[str] = None
+        grounding_error: Optional[str] = None
         if canonical_hypothesis is not None and contract.enable_i5:
             ev_state = EvidenceState(
                 channel_a=channel_a,
@@ -2071,10 +2074,16 @@ AVAILABLE TARGET EVIDENCE:
                 canonical_hypothesis = canonical_hypothesis.model_copy(
                     update={"decision": policy_res.final_decision}
                 )
+            elif not policy_res.is_valid:
+                if policy_res.predicate_identifier == DecisionPredicate.FAIL_CLOSED_INCOMPLETE_HYPOTHESIS:
+                    polarity_error = policy_res.fail_closed_reason or "Experiment polarity or incomplete hypothesis rejection"
+                    canonical_hypothesis = None
+                elif policy_res.predicate_identifier == DecisionPredicate.FAIL_CLOSED_GROUNDING_REJECTION:
+                    grounding_error = policy_res.fail_closed_reason or "Decision policy empirical grounding failure"
+                    canonical_hypothesis = None
 
         # 5. Authoritative Grounding Validation
         grounding_result: Optional[Dict[str, Any]] = None
-        grounding_error: Optional[str] = None
         if canonical_hypothesis is not None and grounding_validator is not None:
             try:
                 try:
@@ -2114,6 +2123,7 @@ AVAILABLE TARGET EVIDENCE:
             parse_error=parse_error,
             schema_error=schema_error,
             grounding_error=grounding_error,
+            polarity_error=polarity_error,
         )
 
         return M5ExecutionResult(
@@ -2126,5 +2136,6 @@ AVAILABLE TARGET EVIDENCE:
             eval_count=eval_count,
             prompt_eval_count=prompt_eval_count,
             grounding_result=grounding_result,
+            policy_result=policy_res.model_dump() if policy_res and hasattr(policy_res, "model_dump") else None,
             contract_valid=True,
         )

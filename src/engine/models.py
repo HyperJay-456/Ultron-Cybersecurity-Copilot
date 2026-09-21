@@ -85,7 +85,7 @@ class PrimaryFailureCategory(str, Enum):
     """
     Authoritative M4 Primary Failure Taxonomy (Mutually Exclusive).
     Precedence:
-    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > VALID
+    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
     """
     VALID = "VALID"
     RUNTIME_TRANSPORT_FAILURE = "RUNTIME_TRANSPORT_FAILURE"
@@ -93,6 +93,7 @@ class PrimaryFailureCategory(str, Enum):
     PARSER_FAILURE = "PARSER_FAILURE"
     SCHEMA_VALIDITY_FAILURE = "SCHEMA_VALIDITY_FAILURE"
     SEMANTIC_GROUNDING_FAILURE = "SEMANTIC_GROUNDING_FAILURE"
+    SEMANTIC_EXPERIMENT_POLARITY_FAILURE = "SEMANTIC_EXPERIMENT_POLARITY_FAILURE"
 
 
 class FailureClassificationResult(BaseModel):
@@ -928,6 +929,7 @@ class M5ExecutionResult(BaseModel):
     eval_count: Optional[int] = None
     prompt_eval_count: Optional[int] = None
     grounding_result: Optional[Dict[str, Any]] = None
+    policy_result: Optional[Any] = None
     contract_valid: bool = True
     compilation_error: Optional[str] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -943,12 +945,13 @@ def classify_primary_failure(
     parse_error: Optional[Exception] = None,
     schema_error: Optional[Exception] = None,
     grounding_error: Optional[str] = None,
+    polarity_error: Optional[str] = None,
 ) -> FailureClassificationResult:
     """
     Deterministically classify an evaluation attempt into exactly one mutually exclusive PRIMARY category.
 
     Precedence:
-    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > VALID
+    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
     """
     cascade: List[str] = []
 
@@ -1016,6 +1019,16 @@ def classify_primary_failure(
             error_message=f"Grounding failure: {grounding_error}",
             downstream_cascade=[],
             diagnostic_details={"grounding_error": grounding_error},
+        )
+
+    # 6. SEMANTIC_EXPERIMENT_POLARITY_FAILURE (Precedence 6)
+    if polarity_error is not None:
+        return FailureClassificationResult(
+            primary_category=PrimaryFailureCategory.SEMANTIC_EXPERIMENT_POLARITY_FAILURE,
+            is_valid=False,
+            error_message=f"Experiment polarity failure: {polarity_error}",
+            downstream_cascade=[],
+            diagnostic_details={"polarity_error": polarity_error},
         )
 
     # 0. VALID
