@@ -513,10 +513,15 @@ class BairJsonObject(BaseModel):
         gap = (self.evidence_gap or "").strip() if self.evidence_gap else ""
         plan = (self.falsification_plan or "").strip() if self.falsification_plan else ""
 
+        placeholder_tokens = {"none", "n/a", "na", "null", "[]", "{}", "todo", "unknown"}
         if not inv:
             raise ValueError("Mandatory invariant slot missing or empty")
+        if inv.lower() in placeholder_tokens:
+            raise ValueError(f"invariant cannot be a placeholder value: {inv!r}")
         if not target:
             raise ValueError("Mandatory affected_target slot missing or empty")
+        if target.lower() in placeholder_tokens:
+            raise ValueError(f"affected_target cannot be a placeholder value: {target!r}")
 
         if self.decision == HypothesisDecision.HYPOTHESIS:
             if not gap:
