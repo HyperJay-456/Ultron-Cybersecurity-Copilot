@@ -23,6 +23,7 @@ from src.engine.models import (
 from src.engine.prompts import (
     CounterfactualTemplate,
     OWASP_API_COUNTERFACTUAL_TEMPLATES,
+    UnknownCounterfactualCategoryError,
     format_counterfactual_reasoning_prompt,
     get_counterfactual_template,
 )
@@ -284,22 +285,121 @@ def test_14_missing_evidence_does_not_get_fabricated():
 
 def test_15_i3_prompt_selection_is_deterministic():
     """Requirement 15: I3 prompt selection is deterministic from category/evidence-gap type."""
-    t1 = get_counterfactual_template("API-BOLA-001")
-    t2 = get_counterfactual_template("api-bola-001")
-    t3 = get_counterfactual_template("BOLA")
-    t4 = get_counterfactual_template("IDOR")
-    assert t1.category_id == "API-BOLA-001"
-    assert t2.category_id == "API-BOLA-001"
-    assert t3.category_id == "API-BOLA-001"
-    assert t4.category_id == "API-BOLA-001"
+    for _ in range(5):
+        t1 = get_counterfactual_template("API-BOLA-001")
+        t2 = get_counterfactual_template("api-bola-001")
+        t3 = get_counterfactual_template("BOLA")
+        t4 = get_counterfactual_template("IDOR")
+        assert t1.category_id == "API-BOLA-001"
+        assert t2.category_id == "API-BOLA-001"
+        assert t3.category_id == "API-BOLA-001"
+        assert t4.category_id == "API-BOLA-001"
 
-    # State machine alias
-    t_state = get_counterfactual_template("STATE-MACHINE-001")
-    assert t_state.category_id == "API-STATE-001"
+        # State machine alias
+        t_state = get_counterfactual_template("STATE-MACHINE-001")
+        assert t_state.category_id == "API-STATE-001"
 
-    # Unknown fallback
-    t_unknown = get_counterfactual_template("UNKNOWN-NONEXISTENT-CATEGORY")
-    assert t_unknown.category_id == "API-BOLA-001"
+
+def test_15b_unknown_category_fails_closed():
+    """Safety Patch: Unknown category fails closed with UnknownCounterfactualCategoryError."""
+    unknown_categories = [
+        "UNKNOWN-NONEXISTENT-CATEGORY",
+        "SQLI-001",
+        "XSS-REFLECTED",
+        "API-INJECTION-999",
+        "RANDOM-SECURITY-LABEL",
+    ]
+    for cat in unknown_categories:
+        with pytest.raises(UnknownCounterfactualCategoryError) as exc_info:
+            get_counterfactual_template(cat)
+        assert "Unsupported or unknown counterfactual category" in str(exc_info.value)
+
+
+def test_15c_empty_category_fails_closed():
+    """Safety Patch: Empty, whitespace, or None category fails closed."""
+    for empty_val in ["", "   ", "\t\n", None]:
+        with pytest.raises(UnknownCounterfactualCategoryError) as exc_info:
+            get_counterfactual_template(empty_val)
+        assert "Category ID cannot be empty or malformed" in str(exc_info.value)
+
+
+def test_15d_malformed_category_fails_closed():
+    """Safety Patch: Malformed category identifiers fail closed."""
+    malformed_categories = [
+        "12345",
+        "!@#$%^&*()",
+        "A",  # Short prefix must NOT loosely match API-AUTH-NONE
+        "API-",
+        "NONE",
+    ]
+    for malformed in malformed_categories:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            get_counterfactual_template(malformed)
+
+
+def test_15e_no_unknown_input_can_resolve_to_api_bola_001():
+    """Safety Patch: No unknown input can resolve to API-BOLA-001 (silent fallback eliminated)."""
+    probe_inputs = [
+        "UNKNOWN-NONEXISTENT-CATEGORY",
+        "BOLA-ATTACK-SIMULATOR",
+        "API-UNKNOWN",
+        "GENERIC_AUTH",
+        "",
+        "   ",
+        None,
+        "default",
+        "fallback",
+    ]
+    for probe in probe_inputs:
+        with pytest.raises(UnknownCounterfactualCategoryError):
+            template = get_counterfactual_template(probe)
+            # Extra assertion if somehow it didn't raise
+            assert template.category_id != "API-BOLA-001"
+
+
+def test_15f_context_builder_fails_closed_on_unknown_category():
+    """Safety Patch: ReasoningContextBuilder fails closed when I3 category is unknown or missing."""
+    ch_a = LosslessStructuralPack(
+        asset_id="AST-01",
+        endpoint_id="EP-01",
+        route_template="/api/users",
+        http_method="GET",
+        application_mutability="READ_ONLY",
+    )
+    routing = DeterministicRoutingDecision(
+        schema_version="2.0.0",
+        escalate=False,
+        has_high_risk_signal=False,
+        high_risk_signals=[],
+        fail_safe_triggered=False,
+    )
+    handoff = CascadeHandoffPacket(
+        schema_version="2.0.0",
+        channel_a_structural=ch_a,
+        validated_triage=None,
+        routing_decision=routing,
+        provenance_hash="hash123",
+    )
+
+    # Unknown category passed explicitly
+    with pytest.raises(UnknownCounterfactualCategoryError):
+        ReasoningContextBuilder.build_context(
+            handoff_packet=handoff,
+            model_identifier="qwen2.5-coder:7b",
+            cascade_mode=TRACK_D,
+            enable_i3_counterfactual_prompting=True,
+            category_id="UNKNOWN-CATEGORY",
+        )
+
+    # Missing category_id and triage is None
+    with pytest.raises(UnknownCounterfactualCategoryError):
+        ReasoningContextBuilder.build_context(
+            handoff_packet=handoff,
+            model_identifier="qwen2.5-coder:7b",
+            cascade_mode=TRACK_D,
+            enable_i3_counterfactual_prompting=True,
+            category_id=None,
+        )
 
 
 def test_16_negative_control_wording_remains_non_leading():

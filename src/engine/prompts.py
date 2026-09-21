@@ -288,32 +288,51 @@ _CATEGORY_ALIAS_MAP: Dict[str, str] = {
 }
 
 
+class UnknownCounterfactualCategoryError(ValueError):
+    """Raised when an unknown, malformed, empty, or unsupported category is supplied to the I3 template resolver."""
+    pass
+
+
 def get_counterfactual_template(
-    category_id: str,
+    category_id: Optional[str],
     evidence_gap_type: Optional[str] = None,
 ) -> CounterfactualTemplate:
     """
     Deterministically retrieve the counterfactual template for a category identifier.
-    Pure function with fallback to normalized aliases.
+    Fails closed by raising UnknownCounterfactualCategoryError for unknown, malformed, empty,
+    or unsupported categories.
+
+    Deterministic resolution precedence:
+    1. Exact canonical category match (e.g. 'API-BOLA-001')
+    2. Deterministic alias match (e.g. 'BOLA' -> 'API-BOLA-001')
+    3. Deterministic normalized key-in-string match where canonical category ID is embedded
+    4. Fail closed (raises UnknownCounterfactualCategoryError)
     """
+    if not category_id or not isinstance(category_id, str) or not category_id.strip():
+        raise UnknownCounterfactualCategoryError(
+            f"Category ID cannot be empty or malformed: {category_id!r}"
+        )
+
     normalized = category_id.strip().upper()
 
-    # Direct match
+    # 1. Direct canonical match
     if normalized in OWASP_API_COUNTERFACTUAL_TEMPLATES:
         return OWASP_API_COUNTERFACTUAL_TEMPLATES[normalized]
 
-    # Alias match
+    # 2. Deterministic alias match
     if normalized in _CATEGORY_ALIAS_MAP:
         target = _CATEGORY_ALIAS_MAP[normalized]
         return OWASP_API_COUNTERFACTUAL_TEMPLATES[target]
 
-    # Partial / substring match
+    # 3. Deterministic key-in-string match where canonical key is explicitly embedded
     for key, template in OWASP_API_COUNTERFACTUAL_TEMPLATES.items():
-        if key in normalized or normalized in key:
+        if key in normalized:
             return template
 
-    # Fallback to API-BOLA-001 as baseline generic authorization invariant
-    return OWASP_API_COUNTERFACTUAL_TEMPLATES["API-BOLA-001"]
+    # 4. Unknown, malformed, or unsupported category -> FAIL CLOSED
+    raise UnknownCounterfactualCategoryError(
+        f"Unsupported or unknown counterfactual category: {category_id!r}"
+    )
 
 
 def format_counterfactual_reasoning_prompt(

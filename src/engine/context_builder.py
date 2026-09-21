@@ -152,7 +152,7 @@ class ReasoningContextBuilder:
             eff_category = category_id
             if not eff_category and handoff_packet.validated_triage:
                 eff_category = handoff_packet.validated_triage.suspected_category
-            tmpl = get_counterfactual_template(eff_category or "API-BOLA-001")
+            tmpl = get_counterfactual_template(eff_category)
             system_policy = (
                 "You are an authoritative Application Security Reasoning Engine.\n"
                 "Evaluate the provided canonical structural observations using evidence-gap counterfactual analysis.\n\n"
@@ -390,7 +390,7 @@ class ReasoningContextBuilder:
             if not eff_category and handoff_packet.validated_triage:
                 eff_category = handoff_packet.validated_triage.suspected_category
             from src.engine.prompts import get_counterfactual_template
-            tmpl = get_counterfactual_template(eff_category or "API-BOLA-001")
+            tmpl = get_counterfactual_template(eff_category)
             counterfactual_block = (
                 "=== COUNTERFACTUAL REASONING INSTRUCTIONS ===\n"
                 f"Category: [{tmpl.category_id}] - {tmpl.category_name}\n"
@@ -431,7 +431,7 @@ class ReasoningContextBuilder:
         }
         if enable_i3_counterfactual_prompting:
             prov_meta["i3_counterfactual_enabled"] = True
-            prov_meta["i3_category_id"] = eff_category or "API-BOLA-001"
+            prov_meta["i3_category_id"] = tmpl.category_id
         if vapt_pack is not None:
             prov_meta["vapt_pack_id"] = vapt_pack.pack_id
             prov_meta["vapt_provenance_hash"] = vapt_pack.provenance_hash
