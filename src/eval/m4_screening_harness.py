@@ -844,21 +844,27 @@ class M4ScreeningHarness:
 
             if activation.i4 == 1:
                 # BAIR parsing path
-                from src.engine.bair_extractor import parse_bair, validate_bair, map_bair_to_s0
-                bair_data, p_err = parse_bair(raw_response)
-                if p_err:
-                    parse_error = p_err
-                elif bair_data:
-                    schema_res = validate_bair(bair_data, empirical_evidence_present=empirical_evidence_present)
-                    if schema_res.error:
-                        schema_error = schema_res.error
-                    else:
-                        extracted_bair = bair_data
-                        canonical_s0 = map_bair_to_s0(
-                            bair=bair_data,
-                            target_asset=gold_scen.target_asset,
-                            category_id=gold_scen.category_id,
-                        )
+                from src.engine.bair_extractor import (
+                    parse_bair,
+                    validate_bair,
+                    map_bair_to_s0,
+                    BairParseError,
+                    BairSchemaError,
+                )
+                try:
+                    raw_slots = parse_bair(raw_response)
+                    extracted_bair = validate_bair(raw_slots, empirical_evidence_present=empirical_evidence_present)
+                    canonical_s0 = map_bair_to_s0(
+                        bair=extracted_bair,
+                        target_asset=gold_scen.target_asset,
+                        category_id=gold_scen.category_id,
+                    )
+                except BairParseError as exc:
+                    parse_error = exc
+                except BairSchemaError as exc:
+                    schema_error = exc
+                except Exception as exc:
+                    schema_error = exc
             else:
                 # Standard JSON / I2 parsing path
                 clean_text = raw_response.strip()
