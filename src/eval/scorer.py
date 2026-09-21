@@ -1,7 +1,8 @@
 """Deterministic scoring engine evaluating grounding, precision, recall, and abstention."""
 
+from enum import Enum
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 
@@ -44,8 +45,7 @@ class EvaluationMetrics(BaseModel):
 
 
 def wilson_score_interval(p: Optional[float], n: int, confidence: float = 0.95) -> Optional[Tuple[float, float]]:
-    """
-    Computes Wilson score confidence interval for a binomial proportion.
+    """Computes Wilson score confidence interval for a binomial proportion.
     Denominator n MUST be the specific sample size for the metric in question.
     Returns None if n <= 0 or p is None (undefined / N/A).
     """
@@ -56,6 +56,181 @@ def wilson_score_interval(p: Optional[float], n: int, confidence: float = 0.95) 
     center = (p + (z ** 2) / (2.0 * n)) / denom
     spread = (z * math.sqrt((p * (1.0 - p) + (z ** 2) / (4.0 * n)) / n)) / denom
     return (round(max(0.0, center - spread), 4), round(min(1.0, center + spread), 4))
+
+
+class EvaluationApplicabilityState(str, Enum):
+    """Evaluator-side classification of scenario applicability under Policy 3.
+
+    Determined strictly from canonical structured evidence and target metadata.
+    Zero access to hidden ground truth, expected_decision, or model prose.
+    """
+    VULNERABILITY_EVALUATION_APPLICABLE = "VULNERABILITY_EVALUATION_APPLICABLE"
+    EXPLORATORY_EVALUATION_APPLICABLE = "EXPLORATORY_EVALUATION_APPLICABLE"
+    NON_RELEVANT_EVALUATION = "NON_RELEVANT_EVALUATION"
+    INVALID_OUTPUT = "INVALID_OUTPUT"
+
+
+class ReviewerPresentationLabel(str, Enum):
+    """Reviewer triage presentation category under Policy 3."""
+    VULNERABILITY_FINDING = "VULNERABILITY_FINDING"
+    EXPLORATORY_VERIFICATION_PROPOSAL = "EXPLORATORY_VERIFICATION_PROPOSAL"
+    ABSTENTION_CONFIRMED = "ABSTENTION_CONFIRMED"
+    INVALID_PROPOSAL = "INVALID_PROPOSAL"
+
+
+CANONICAL_ANOMALY_KEYS: Set[str] = {
+    # Class-1 structural predicate booleans from LosslessStructuralPack
+    "has_cross_identity_object_access_success",
+    "has_privilege_level_delta",
+    "status_code_changed_under_different_role",
+    "has_unauthenticated_success",
+    "has_cross_role_response_shape_delta",
+    "has_observed_contradictions",
+    "has_evidence_parse_asymmetry",
+    # Structured anomaly flags in observation records
+    "observed_cross_identity_access",
+    "observed_privilege_delta",
+    "status_code_differential",
+    "response_shape_differential",
+    "observed_invariant_contradiction",
+    "observed_unauthorized_success",
+    "observed_state_transition_violation",
+}
+
+
+def canonical_vulnerability_evidence_present(
+    evidence: Optional[List[Dict[str, Any]]] = None,
+    structural_pack: Optional[Any] = None,
+) -> bool:
+    """Deterministic predicate evaluating whether canonical structured evidence
+    contains an approved empirical anomaly or invariant breach indication.
+
+    MUST NOT use:
+    - expected_decision
+    - ground_truth_vulnerable
+    - scenario ID suffixes (-VULN-, -PATCH-)
+    - model prose / reasoning_summary / evidence_gap text
+    - model confidence
+    - model decision
+    - methodology presence
+    """
+    # 1. Check structural_pack (LosslessStructuralPack or dict)
+    if structural_pack is not None:
+        if isinstance(structural_pack, dict):
+            for key in CANONICAL_ANOMALY_KEYS:
+                if structural_pack.get(key) is True:
+                    return True
+        else:
+            for key in CANONICAL_ANOMALY_KEYS:
+                if getattr(structural_pack, key, False) is True:
+                    return True
+
+    # 2. Check canonical evidence items
+    if evidence:
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            # Check explicit anomaly keys
+            for key in CANONICAL_ANOMALY_KEYS:
+                if item.get(key) is True:
+                    return True
+            # Check explicit anomaly_detected / is_anomaly boolean if present
+            if item.get("anomaly_detected") is True or item.get("is_anomaly") is True:
+                return True
+
+    return False
+
+
+def determine_applicability_state(
+    is_valid_output: bool,
+    target_relevant: bool,
+    canonical_evidence_has_anomaly: bool,
+) -> EvaluationApplicabilityState:
+    """Deterministic state machine for evaluator-side applicability classification."""
+    if not is_valid_output:
+        return EvaluationApplicabilityState.INVALID_OUTPUT
+    if not target_relevant:
+        return EvaluationApplicabilityState.NON_RELEVANT_EVALUATION
+    if canonical_evidence_has_anomaly:
+        return EvaluationApplicabilityState.VULNERABILITY_EVALUATION_APPLICABLE
+    return EvaluationApplicabilityState.EXPLORATORY_EVALUATION_APPLICABLE
+
+
+class Policy3ScenarioEvaluation(BaseModel):
+    """Detailed Policy 3 evaluation result for a single scenario execution."""
+    scenario_id: str
+    applicability_state: EvaluationApplicabilityState
+    reviewer_presentation: ReviewerPresentationLabel
+    ground_truth_vulnerable: bool
+    model_decision: str
+    is_valid_output: bool
+
+    # Vulnerability track fields (applicable when VULNERABILITY_EVALUATION_APPLICABLE)
+    is_vulnerability_tp: bool = False
+    is_vulnerability_fp: bool = False
+    is_vulnerability_tn: bool = False
+    is_vulnerability_fn: bool = False
+    is_useful_vulnerability_hypothesis: bool = False
+
+    # Exploratory track fields (applicable when EXPLORATORY_EVALUATION_APPLICABLE)
+    is_valid_exploratory_proposal: bool = False
+    polarity_compatible: bool = False
+    grounding_passed: bool = False
+
+    # Audit tracking
+    canonical_evidence_anomaly_present: bool = False
+    target_relevant: bool = True
+
+
+class Policy3EvaluationMetrics(BaseModel):
+    """Policy 3 Evaluation Metrics decomposing vulnerability detection and exploratory verification
+    while preserving the frozen primary research estimand.
+    """
+    # 1. FROZEN PRIMARY RESEARCH ESTIMAND (Exact Historical Formula)
+    useful_hypothesis_yield_at_fixed_reviewer_minutes: Optional[float] = None
+    useful_hypothesis_yield: Optional[float] = None
+    total_vulnerable_scenarios: int = 0
+    useful_vulnerable_scenarios: int = 0
+
+    # 2. DECOMPOSED VULNERABILITY-HYPOTHESIS METRICS (Track 1)
+    vulnerability_applicable_scenarios: int = 0
+    vulnerability_true_positives: int = 0
+    vulnerability_false_positives: int = 0
+    vulnerability_true_negatives: int = 0
+    vulnerability_false_negatives: int = 0
+    vulnerability_precision: Optional[float] = None
+    vulnerability_recall_tpr: Optional[float] = None
+    vulnerability_specificity_tnr: Optional[float] = None
+    useful_vulnerability_hypothesis_yield: Optional[float] = None
+
+    # 3. DECOMPOSED EXPLORATORY-VERIFICATION METRICS (Track 2)
+    exploratory_applicable_scenarios: int = 0
+    valid_exploratory_proposals: int = 0
+    exploratory_verification_validity_rate: Optional[float] = None
+    polarity_compatibility_rate: Optional[float] = None
+    grounding_rate: float = 0.0
+
+    # 4. REVIEWER PRESENTATION DISTRIBUTION
+    vulnerability_findings_count: int = 0
+    exploratory_proposals_count: int = 0
+    abstentions_confirmed_count: int = 0
+    invalid_proposals_count: int = 0
+
+    # 5. GENERAL & APPLICABILITY TOTALS
+    total_scenarios: int = 0
+    non_relevant_scenarios: int = 0
+    invalid_output_scenarios: int = 0
+
+    # 6. HISTORICAL / LEGACY METRICS EMBEDDED
+    legacy_metrics: EvaluationMetrics
+
+    # Wilson Score CIs for primary and decomposed metrics
+    vulnerability_precision_ci_95: Optional[Tuple[float, float]] = None
+    vulnerability_recall_ci_95: Optional[Tuple[float, float]] = None
+    useful_yield_ci_95: Optional[Tuple[float, float]] = None
+    exploratory_validity_ci_95: Optional[Tuple[float, float]] = None
+
+    per_scenario_evaluations: List[Policy3ScenarioEvaluation] = Field(default_factory=list)
 
 
 class DeterministicScorer:
@@ -221,6 +396,242 @@ class DeterministicScorer:
             recall_ci_95=recall_ci,
             useful_yield_ci_95=useful_yield_ci,
         )
+
+    def score_policy3(self, run_results: List[Dict[str, Any]]) -> Policy3EvaluationMetrics:
+        """Policy 3 deterministic evaluation scoring.
+
+        Decomposes vulnerability detection and exploratory verification tracks
+        while strictly reproducing the frozen primary research estimand.
+        """
+        # 1. Compute legacy metrics (100% historical parity)
+        legacy = self.score(run_results)
+
+        total = len(run_results)
+        if total == 0:
+            return Policy3EvaluationMetrics(legacy_metrics=legacy)
+
+        v_applicable = 0
+        v_tp = 0
+        v_fp = 0
+        v_tn = 0
+        v_fn = 0
+        v_useful = 0
+        v_total_vuln = 0
+
+        exp_applicable = 0
+        exp_valid_count = 0
+        polarity_valid_count = 0
+        hyp_polarity_eval_count = 0
+        grounded_count = 0
+
+        non_relevant_count = 0
+        invalid_output_count = 0
+
+        v_findings_count = 0
+        exp_proposals_count = 0
+        abstentions_confirmed_count = 0
+        invalid_proposals_count = 0
+
+        per_scenario_evals: List[Policy3ScenarioEvaluation] = []
+
+        for r in run_results:
+            sid = str(r.get("scenario_id", ""))
+            is_vuln = bool(r.get("ground_truth_vulnerable", False))
+            dec = str(r.get("decision", ""))
+            is_hyp = (dec == "HYPOTHESIS")
+
+            # Grounding and validity flags
+            is_grounded = bool(r.get("grounded", False))
+            if is_grounded:
+                grounded_count += 1
+
+            # Output validity (model level)
+            pfc = r.get("primary_failure_category")
+            is_valid_output = bool(r.get("is_valid", True))
+            if pfc is not None and str(pfc) not in ("VALID", "None"):
+                is_valid_output = False
+
+            # Polarity compatibility
+            polarity_valid = bool(r.get("polarity_valid", True))
+            if is_hyp:
+                hyp_polarity_eval_count += 1
+                if polarity_valid and is_valid_output:
+                    polarity_valid_count += 1
+
+            # Check target relevance
+            target_rel = r.get("target_relevant")
+            if target_rel is None:
+                ta = r.get("target_asset", {})
+                norm_path = ta.get("normalized_path") or ta.get("raw_path") or ""
+                params = r.get("parameters", [])
+                if norm_path in ("/catalog", "/.well-known/openid-configuration") or (
+                    ta.get("application_mutability") == "READ_ONLY" and len(params) == 0 and not r.get("initial_evidence")
+                ):
+                    target_rel = False
+                else:
+                    target_rel = True
+            else:
+                target_rel = bool(target_rel)
+
+            # Check canonical evidence (ZERO oracle access)
+            has_anomaly = canonical_vulnerability_evidence_present(
+                evidence=r.get("initial_evidence"),
+                structural_pack=r.get("structural_pack"),
+            )
+
+            # Determine applicability state (ZERO oracle access)
+            app_state = determine_applicability_state(
+                is_valid_output=is_valid_output,
+                target_relevant=target_rel,
+                canonical_evidence_has_anomaly=has_anomaly,
+            )
+
+            is_v_tp = False
+            is_v_fp = False
+            is_v_tn = False
+            is_v_fn = False
+            is_useful_v = False
+            is_exp_valid = False
+
+            if app_state == EvaluationApplicabilityState.INVALID_OUTPUT:
+                invalid_output_count += 1
+                reviewer_label = ReviewerPresentationLabel.INVALID_PROPOSAL
+                invalid_proposals_count += 1
+
+            elif app_state == EvaluationApplicabilityState.NON_RELEVANT_EVALUATION:
+                non_relevant_count += 1
+                if is_hyp:
+                    reviewer_label = ReviewerPresentationLabel.INVALID_PROPOSAL
+                    invalid_proposals_count += 1
+                else:
+                    reviewer_label = ReviewerPresentationLabel.ABSTENTION_CONFIRMED
+                    abstentions_confirmed_count += 1
+
+            elif app_state == EvaluationApplicabilityState.VULNERABILITY_EVALUATION_APPLICABLE:
+                v_applicable += 1
+                if is_vuln:
+                    v_total_vuln += 1
+
+                # Vulnerability track scoring
+                if is_hyp and is_valid_output and is_grounded and polarity_valid:
+                    if is_vuln:
+                        is_v_tp = True
+                        v_tp += 1
+                        if r.get("useful", False):
+                            is_useful_v = True
+                            v_useful += 1
+                    else:
+                        is_v_fp = True
+                        v_fp += 1
+                    reviewer_label = ReviewerPresentationLabel.VULNERABILITY_FINDING
+                    v_findings_count += 1
+                else:
+                    # Abstained or failed
+                    if not is_vuln:
+                        is_v_tn = True
+                        v_tn += 1
+                        reviewer_label = ReviewerPresentationLabel.ABSTENTION_CONFIRMED
+                        abstentions_confirmed_count += 1
+                    else:
+                        is_v_fn = True
+                        v_fn += 1
+                        if is_valid_output:
+                            reviewer_label = ReviewerPresentationLabel.ABSTENTION_CONFIRMED
+                            abstentions_confirmed_count += 1
+                        else:
+                            reviewer_label = ReviewerPresentationLabel.INVALID_PROPOSAL
+                            invalid_proposals_count += 1
+
+            elif app_state == EvaluationApplicabilityState.EXPLORATORY_EVALUATION_APPLICABLE:
+                exp_applicable += 1
+                # Check valid exploratory proposal
+                # Must be HYPOTHESIS, valid output, grounded, polarity valid
+                if is_hyp and is_valid_output and is_grounded and polarity_valid:
+                    is_exp_valid = True
+                    exp_valid_count += 1
+                    reviewer_label = ReviewerPresentationLabel.EXPLORATORY_VERIFICATION_PROPOSAL
+                    exp_proposals_count += 1
+                else:
+                    if not is_hyp and is_valid_output:
+                        reviewer_label = ReviewerPresentationLabel.ABSTENTION_CONFIRMED
+                        abstentions_confirmed_count += 1
+                    else:
+                        reviewer_label = ReviewerPresentationLabel.INVALID_PROPOSAL
+                        invalid_proposals_count += 1
+
+            per_scenario_evals.append(
+                Policy3ScenarioEvaluation(
+                    scenario_id=sid,
+                    applicability_state=app_state,
+                    reviewer_presentation=reviewer_label,
+                    ground_truth_vulnerable=is_vuln,
+                    model_decision=dec,
+                    is_valid_output=is_valid_output,
+                    is_vulnerability_tp=is_v_tp,
+                    is_vulnerability_fp=is_v_fp,
+                    is_vulnerability_tn=is_v_tn,
+                    is_vulnerability_fn=is_v_fn,
+                    is_useful_vulnerability_hypothesis=is_useful_v,
+                    is_valid_exploratory_proposal=is_exp_valid,
+                    polarity_compatible=polarity_valid,
+                    grounding_passed=is_grounded,
+                    canonical_evidence_anomaly_present=has_anomaly,
+                    target_relevant=target_rel,
+                )
+            )
+
+        # Decomposed calculations
+        v_prec = round(v_tp / (v_tp + v_fp), 4) if (v_tp + v_fp) > 0 else None
+        v_recall = round(v_tp / (v_tp + v_fn), 4) if (v_tp + v_fn) > 0 else None
+        v_tnr = round(v_tn / (v_tn + v_fp), 4) if (v_tn + v_fp) > 0 else None
+        v_yield = round(v_useful / v_total_vuln, 4) if v_total_vuln > 0 else None
+
+        exp_validity_rate = round(exp_valid_count / exp_applicable, 4) if exp_applicable > 0 else None
+        polarity_rate = round(polarity_valid_count / hyp_polarity_eval_count, 4) if hyp_polarity_eval_count > 0 else None
+        grounding_rate = round(grounded_count / total, 4) if total > 0 else 0.0
+
+        v_prec_ci = wilson_score_interval(v_prec, v_tp + v_fp)
+        v_recall_ci = wilson_score_interval(v_recall, v_tp + v_fn)
+        exp_validity_ci = wilson_score_interval(exp_validity_rate, exp_applicable)
+
+        return Policy3EvaluationMetrics(
+            useful_hypothesis_yield_at_fixed_reviewer_minutes=legacy.useful_hypothesis_yield_at_fixed_reviewer_minutes,
+            useful_hypothesis_yield=legacy.useful_hypothesis_yield,
+            total_vulnerable_scenarios=legacy.total_vulnerable_scenarios,
+            useful_vulnerable_scenarios=legacy.useful_vulnerable_scenarios,
+            vulnerability_applicable_scenarios=v_applicable,
+            vulnerability_true_positives=v_tp,
+            vulnerability_false_positives=v_fp,
+            vulnerability_true_negatives=v_tn,
+            vulnerability_false_negatives=v_fn,
+            vulnerability_precision=v_prec,
+            vulnerability_recall_tpr=v_recall,
+            vulnerability_specificity_tnr=v_tnr,
+            useful_vulnerability_hypothesis_yield=v_yield,
+            exploratory_applicable_scenarios=exp_applicable,
+            valid_exploratory_proposals=exp_valid_count,
+            exploratory_verification_validity_rate=exp_validity_rate,
+            polarity_compatibility_rate=polarity_rate,
+            grounding_rate=grounding_rate,
+            vulnerability_findings_count=v_findings_count,
+            exploratory_proposals_count=exp_proposals_count,
+            abstentions_confirmed_count=abstentions_confirmed_count,
+            invalid_proposals_count=invalid_proposals_count,
+            total_scenarios=total,
+            non_relevant_scenarios=non_relevant_count,
+            invalid_output_scenarios=invalid_output_count,
+            legacy_metrics=legacy,
+            vulnerability_precision_ci_95=v_prec_ci,
+            vulnerability_recall_ci_95=v_recall_ci,
+            useful_yield_ci_95=legacy.useful_yield_ci_95,
+            exploratory_validity_ci_95=exp_validity_ci,
+            per_scenario_evaluations=per_scenario_evals,
+        )
+
+
+class Policy3DeterministicScorer(DeterministicScorer):
+    """Dedicated Policy 3 deterministic evaluation scorer."""
+    pass
 
 
 def compute_paired_contingency_table(
