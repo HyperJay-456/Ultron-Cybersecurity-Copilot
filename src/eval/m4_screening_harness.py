@@ -377,7 +377,6 @@ class M4ScreeningHarness:
                         num_ctx=PRIMARY_NUM_CTX,
                         num_predict=PRIMARY_NUM_PREDICT,
                         temperature=PRIMARY_TEMPERATURE,
-                        seed=PRIMARY_SEED,
                     )
                     raw_response = resp_data.get("response", "")
                     eval_count = resp_data.get("eval_count")
@@ -647,7 +646,7 @@ class M4ScreeningHarness:
                 target_asset=gold_scen.target_asset,
                 category_id=gold_scen.category_id,
             )
-            decision_str = res.canonical_s0_output.decision.value if (res.canonical_s0_output and res.canonical_s0_output.decision) else None
+            decision_str = res.canonical_hypothesis.decision.value if (res.canonical_hypothesis and res.canonical_hypothesis.decision) else None
             return ScenarioScreeningRecord(
                 scenario_id=scenario_id,
                 category_id=gold_scen.category_id,
@@ -658,12 +657,12 @@ class M4ScreeningHarness:
                 canonical_input_hash=canonical_input_hash,
                 prompt=prompt,
                 raw_model_response=res.raw_response,
-                parsed_output=res.extracted_bair.model_dump() if res.extracted_bair else None,
-                canonical_s0_output=res.canonical_s0_output.model_dump() if res.canonical_s0_output else None,
+                parsed_output=res.extracted_bair if isinstance(res.extracted_bair, dict) else (res.extracted_bair.model_dump() if res.extracted_bair else None),
+                canonical_s0_output=res.canonical_hypothesis.model_dump() if res.canonical_hypothesis else None,
                 decision=decision_str,
                 primary_failure_category=res.classification.primary_category.value,
                 is_valid=res.classification.is_valid,
-                grounding_status=res.grounding_result.status if res.grounding_result else "INVALID",
+                grounding_status=res.grounding_result.get("status", "INVALID") if isinstance(res.grounding_result, dict) else (getattr(res.grounding_result, "status", "INVALID") if res.grounding_result else "INVALID"),
                 raw_namespace_breach=None,
                 validator_bypass=None,
                 latency_ms=res.latency_ms,
@@ -689,7 +688,7 @@ class M4ScreeningHarness:
                 target_asset=gold_scen.target_asset,
                 category_id=gold_scen.category_id,
             )
-            decision_str = res.calibrated_output.decision.value if (res.calibrated_output and res.calibrated_output.decision) else None
+            decision_str = res.canonical_hypothesis.decision.value if (res.canonical_hypothesis and res.canonical_hypothesis.decision) else None
             return ScenarioScreeningRecord(
                 scenario_id=scenario_id,
                 category_id=gold_scen.category_id,
@@ -701,11 +700,11 @@ class M4ScreeningHarness:
                 prompt=prompt,
                 raw_model_response=res.raw_response,
                 parsed_output=res.parsed_json,
-                canonical_s0_output=res.calibrated_output.model_dump() if res.calibrated_output else None,
+                canonical_s0_output=res.canonical_hypothesis.model_dump() if res.canonical_hypothesis else None,
                 decision=decision_str,
                 primary_failure_category=res.classification.primary_category.value,
                 is_valid=res.classification.is_valid,
-                grounding_status=res.grounding_result.status if res.grounding_result else "INVALID",
+                grounding_status=res.grounding_result.get("status", "INVALID") if isinstance(res.grounding_result, dict) else (getattr(res.grounding_result, "status", "INVALID") if res.grounding_result else "INVALID"),
                 raw_namespace_breach=None,
                 validator_bypass=None,
                 latency_ms=res.latency_ms,
@@ -731,7 +730,7 @@ class M4ScreeningHarness:
                 target_asset=gold_scen.target_asset,
                 category_id=gold_scen.category_id,
             )
-            decision_str = res.canonical_output.decision.value if (res.canonical_output and res.canonical_output.decision) else None
+            decision_str = res.canonical_hypothesis.decision.value if (res.canonical_hypothesis and res.canonical_hypothesis.decision) else None
             return ScenarioScreeningRecord(
                 scenario_id=scenario_id,
                 category_id=gold_scen.category_id,
@@ -743,11 +742,11 @@ class M4ScreeningHarness:
                 prompt=prompt,
                 raw_model_response=res.raw_response,
                 parsed_output=res.parsed_json,
-                canonical_s0_output=res.canonical_output.model_dump() if res.canonical_output else None,
+                canonical_s0_output=res.canonical_hypothesis.model_dump() if res.canonical_hypothesis else None,
                 decision=decision_str,
                 primary_failure_category=res.classification.primary_category.value,
                 is_valid=res.classification.is_valid,
-                grounding_status=res.grounding_result.status if res.grounding_result else "INVALID",
+                grounding_status=res.grounding_result.get("status", "INVALID") if isinstance(res.grounding_result, dict) else (getattr(res.grounding_result, "status", "INVALID") if res.grounding_result else "INVALID"),
                 raw_namespace_breach=None,
                 validator_bypass=None,
                 latency_ms=res.latency_ms,
@@ -789,7 +788,6 @@ class M4ScreeningHarness:
                         num_ctx=PRIMARY_NUM_CTX,
                         num_predict=PRIMARY_NUM_PREDICT,
                         temperature=PRIMARY_TEMPERATURE,
-                        seed=PRIMARY_SEED,
                     )
                     raw_response = resp_data.get("response", "")
                     eval_count = resp_data.get("eval_count")
@@ -1023,6 +1021,7 @@ class M4ScreeningHarness:
 
         artifact_payload = {
             "schema_version": "1.0.0",
+            "run_status": "OFFICIAL_M4_8_SCREENING",
             "track_id": track_id.value,
             "activation_matrix": eff_activation.as_dict(),
             "manifest_sha256": "92f741b9e2c425a9f884df3286b4363a172ee938e43999636dbafef46e233dc1",
