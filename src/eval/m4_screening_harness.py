@@ -838,6 +838,8 @@ class M4ScreeningHarness:
             # Combined parsing and downstream extraction
             parsed_json = None
             parse_error = None
+            schema_error = None
+            canonical_s0 = None
             extracted_bair = None
             raw_ns_breach = None
             val_bypass = None
