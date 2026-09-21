@@ -392,11 +392,7 @@ class M4ConfirmatoryHarness:
             try:
                 raw_slots = parse_bair(raw_response)
                 extracted_bair = validate_bair(raw_slots, empirical_evidence_present=empirical_evidence_present)
-                canonical_s0 = map_bair_to_s0(
-                    bair=extracted_bair,
-                    target_asset=gold_scen.target_asset,
-                    category_id=gold_scen.category_id,
-                )
+                canonical_s0 = map_bair_to_s0(extracted_bair)
             except BairParseError as exc:
                 parse_error = exc
             except BairSchemaError as exc:
@@ -406,14 +402,18 @@ class M4ConfirmatoryHarness:
 
         # Apply I5 decision policy if valid candidate hypothesis exists
         if canonical_s0 is not None:
-            ev_state = EvidenceState.from_empirical_flag(empirical_evidence_present)
-            policy_res = deterministic_decide(
-                candidate_decision=canonical_s0.decision,
-                evidence_state=ev_state,
-                has_falsifiable_experiment=bool(canonical_s0.experiment_proposal and canonical_s0.experiment_proposal.strip() and canonical_s0.experiment_proposal != "None required"),
-                category_id=canonical_s0.category or gold_scen.category_id,
+            ev_state = EvidenceState(
+                channel_a=pack,
+                target_asset=gold_scen.target_asset,
+                category_id=gold_scen.category_id,
+                empirical_evidence_present=empirical_evidence_present,
             )
-            canonical_s0 = canonical_s0.model_copy(update={"decision": policy_res.final_decision})
+            policy_res = deterministic_decide(
+                candidate=canonical_s0,
+                evidence_state=ev_state,
+            )
+            if policy_res.final_decision is not None:
+                canonical_s0 = canonical_s0.model_copy(update={"decision": policy_res.final_decision})
 
         # Grounding validation
         grounding_result = None
