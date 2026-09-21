@@ -14,6 +14,18 @@ FACT_NAMESPACE_REGEX = re.compile(FACT_NAMESPACE_PATTERN)
 CHK_NAMESPACE_REGEX = re.compile(CHK_NAMESPACE_PATTERN)
 
 
+class ContractCompilationError(ValueError):
+    """Raised when an M5 Reasoning Execution Contract violates pre-flight compilation invariants."""
+    pass
+
+
+class OutputProtocolIdentifier(str, Enum):
+    """Authoritative output protocol identifiers for the M5 Reasoning Interface."""
+    JSON_BAIR = "JSON_BAIR"
+    BAIR_XML = "BAIR_XML"
+    S0_JSON = "S0_JSON"
+
+
 class HypothesisDecision(str, Enum):
     NO_RELEVANT_FUNCTIONALITY = "NO_RELEVANT_FUNCTIONALITY"
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
@@ -413,6 +425,185 @@ class I2RawHypothesisOutput(BaseModel):
         }
 
 
+class BairJsonObject(BaseModel):
+    """
+    Authoritative JSON-Native Bounded Analytical Intermediate Representation (M5 JSON_BAIR).
+    Represents the seven canonical BAIR analytical slots in a typed JSON structure:
+    1. invariant: target security invariant statement evaluated against target.
+    2. evidence_gap: missing observation or gap in evidence (optional for NO_RELEVANT_FUNCTIONALITY).
+    3. affected_target: target endpoint, canonical asset ID, or parameter under evaluation.
+    4. decision: hypothesis decision (NO_RELEVANT_FUNCTIONALITY, INSUFFICIENT_EVIDENCE, HYPOTHESIS).
+    5. empirical_facts: canonical observation fact IDs only (^FACT-[A-Z0-9_-]+$).
+    6. methodology_references: referenced VAPT methodology guidance identifiers (^CHK-[A-Z0-9_-]+$).
+    7. falsification_plan: concrete verification experiment with supporting and disproving observations.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    invariant: str = Field(
+        ...,
+        description="Target security invariant statement evaluated against target."
+    )
+    evidence_gap: Optional[str] = Field(
+        default=None,
+        description="Identified evidence gap or uncertainty regarding target application state."
+    )
+    affected_target: str = Field(
+        ...,
+        description="Target endpoint, canonical asset ID, or parameter under evaluation."
+    )
+    decision: HypothesisDecision = Field(
+        ...,
+        description="One of NO_RELEVANT_FUNCTIONALITY, INSUFFICIENT_EVIDENCE, HYPOTHESIS (never CONFIRMED)."
+    )
+    empirical_facts: List[str] = Field(
+        default_factory=list,
+        description="Canonical observation fact IDs supporting the invariant evaluation (^FACT-[A-Z0-9_-]+$)."
+    )
+    methodology_references: List[str] = Field(
+        default_factory=list,
+        description="Referenced VAPT methodology guidance identifiers (^CHK-[A-Z0-9_-]+$)."
+    )
+    falsification_plan: Optional[str] = Field(
+        default=None,
+        description="Proposed verification experiment with supporting and disproving observations."
+    )
+
+    @field_validator("empirical_facts")
+    @classmethod
+    def validate_empirical_facts(cls, v: List[str]) -> List[str]:
+        placeholder_tokens = {"none", "n/a", "na", "null", "[]", "{}"}
+        for item in v:
+            if not isinstance(item, str) or not FACT_NAMESPACE_REGEX.match(item):
+                raise ValueError(
+                    f"INVALID_NAMESPACE_BREACH: empirical_facts item '{item}' does not match {FACT_NAMESPACE_PATTERN}"
+                )
+            if "CHK-" in item:
+                raise ValueError(
+                    f"INVALID_NAMESPACE_BREACH: methodology chunk ID '{item}' placed in empirical_facts"
+                )
+            if item.lower() in placeholder_tokens:
+                raise ValueError(f"Placeholder token {item!r} is strictly forbidden in empirical_facts")
+        return v
+
+    @field_validator("methodology_references")
+    @classmethod
+    def validate_methodology_references(cls, v: List[str]) -> List[str]:
+        placeholder_tokens = {"none", "n/a", "na", "null", "[]", "{}"}
+        for item in v:
+            if not isinstance(item, str) or not CHK_NAMESPACE_REGEX.match(item):
+                raise ValueError(
+                    f"INVALID_NAMESPACE_BREACH: methodology_references item '{item}' does not match {CHK_NAMESPACE_PATTERN}"
+                )
+            if "FACT-" in item:
+                raise ValueError(
+                    f"INVALID_NAMESPACE_BREACH: empirical fact ID '{item}' placed in methodology_references"
+                )
+            if item.lower() in placeholder_tokens:
+                raise ValueError(f"Placeholder token {item!r} is strictly forbidden in methodology_references")
+        return v
+
+    @model_validator(mode="after")
+    def validate_decision_dependent_slots(self) -> "BairJsonObject":
+        # CONFIRMED is unconditionally rejected
+        if self.decision == "CONFIRMED" or getattr(self.decision, "value", None) == "CONFIRMED":
+            raise ValueError("CONFIRMED decision is strictly forbidden in reasoning engine")
+
+        inv = (self.invariant or "").strip()
+        target = (self.affected_target or "").strip()
+        gap = (self.evidence_gap or "").strip() if self.evidence_gap else ""
+        plan = (self.falsification_plan or "").strip() if self.falsification_plan else ""
+
+        if not inv:
+            raise ValueError("Mandatory invariant slot missing or empty")
+        if not target:
+            raise ValueError("Mandatory affected_target slot missing or empty")
+
+        if self.decision == HypothesisDecision.HYPOTHESIS:
+            if not gap:
+                raise ValueError("Mandatory evidence_gap slot missing or empty for HYPOTHESIS")
+            if not self.empirical_facts:
+                raise ValueError("Mandatory empirical_facts slot missing or empty for HYPOTHESIS")
+            if not plan:
+                raise ValueError("Mandatory falsification_plan slot missing or empty for HYPOTHESIS")
+            lower = plan.lower()
+            has_supporting = any(term in lower for term in ["support", "confirm", "positive", "observed", "expected"])
+            has_disproving = any(term in lower for term in ["disprov", "falsif", "reject", "refut", "negative", "403", "404", "400", "block"])
+            if not has_supporting:
+                raise ValueError("Falsification plan missing supporting observation specification")
+            if not has_disproving:
+                raise ValueError("Falsification plan missing disproving/falsifying observation specification")
+
+        elif self.decision == HypothesisDecision.INSUFFICIENT_EVIDENCE:
+            if not gap:
+                raise ValueError("Mandatory evidence_gap slot missing or empty for INSUFFICIENT_EVIDENCE")
+            if not plan:
+                raise ValueError("Mandatory falsification_plan slot missing or empty for INSUFFICIENT_EVIDENCE")
+
+        elif self.decision == HypothesisDecision.NO_RELEVANT_FUNCTIONALITY:
+            pass
+
+        return self
+
+    @classmethod
+    def get_inference_schema(cls) -> Dict[str, Any]:
+        """Return canonical JSON schema suitable for Ollama native format={...} constrained decoding."""
+        return {
+            "type": "object",
+            "properties": {
+                "invariant": {
+                    "type": "string",
+                    "description": "Security invariant statement evaluated against target",
+                },
+                "evidence_gap": {
+                    "type": ["string", "null"],
+                    "description": "Missing observation or gap in evidence",
+                },
+                "affected_target": {
+                    "type": "string",
+                    "description": "Target endpoint, asset ID, or parameter",
+                },
+                "decision": {
+                    "type": "string",
+                    "enum": [
+                        "NO_RELEVANT_FUNCTIONALITY",
+                        "INSUFFICIENT_EVIDENCE",
+                        "HYPOTHESIS",
+                    ],
+                    "description": "One of NO_RELEVANT_FUNCTIONALITY, INSUFFICIENT_EVIDENCE, HYPOTHESIS (never CONFIRMED)",
+                },
+                "empirical_facts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": FACT_NAMESPACE_PATTERN,
+                    },
+                    "description": "Canonical observation fact IDs (^FACT-[A-Z0-9_-]+$)",
+                },
+                "methodology_references": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": CHK_NAMESPACE_PATTERN,
+                    },
+                    "description": "Referenced VAPT methodology guidance identifiers (^CHK-[A-Z0-9_-]+$)",
+                },
+                "falsification_plan": {
+                    "type": ["string", "null"],
+                    "description": "Concrete verification experiment with supporting and disproving observations",
+                },
+            },
+            "required": [
+                "invariant",
+                "evidence_gap",
+                "affected_target",
+                "decision",
+                "empirical_facts",
+                "methodology_references",
+                "falsification_plan",
+            ],
+        }
+
+
 def adapt_i2_to_s0(
     raw_output: Union[I2RawHypothesisOutput, Dict[str, Any]],
 ) -> HypothesisModelOutput:
@@ -586,6 +777,22 @@ class I6ExecutionResult(BaseModel):
     grounding_result: Optional[Dict[str, Any]] = None
     fail_closed: bool = False
     fail_closed_reason: Optional[str] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class M5ExecutionResult(BaseModel):
+    """Result of an authoritative M5 composable contract generation attempt."""
+    raw_response: str = ""
+    protocol: OutputProtocolIdentifier
+    parsed_intermediate: Optional[Any] = None
+    canonical_hypothesis: Optional[HypothesisModelOutput] = None
+    classification: FailureClassificationResult
+    latency_ms: float = 0.0
+    eval_count: Optional[int] = None
+    prompt_eval_count: Optional[int] = None
+    grounding_result: Optional[Dict[str, Any]] = None
+    contract_valid: bool = True
+    compilation_error: Optional[str] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 

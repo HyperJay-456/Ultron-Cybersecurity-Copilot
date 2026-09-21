@@ -35,6 +35,7 @@ from src.engine.models import (
     HypothesisDecision,
     HypothesisModelOutput,
     I4ExecutionResult,
+    OutputProtocolIdentifier,
     PrimaryFailureCategory,
 )
 from src.engine.runner import (
@@ -586,6 +587,7 @@ def test_context_builder_enable_i4_bair():
         provenance_hash="0" * 64,
     )
 
+    # M5 default protocol is JSON_BAIR
     ctx = ReasoningContextBuilder.build_context(
         handoff_packet=handoff,
         model_identifier="qwen2.5-coder:7b",
@@ -593,10 +595,23 @@ def test_context_builder_enable_i4_bair():
         enable_i4_bair=True,
     )
 
-    assert "<bair>" in ctx.system_prompt
-    assert "</bair>" in ctx.system_prompt
-    assert "BOUNDED ANALYTICAL INFERENCE REPRESENTATION" in ctx.system_prompt
+    assert "OUTPUT FORMAT (BOUNDED ANALYTICAL INFERENCE REPRESENTATION - JSON_BAIR)" in ctx.system_prompt
+    assert "falsification_plan" in ctx.system_prompt
     assert ctx.provenance_metadata.get("i4_bair_enabled") is True
+    assert ctx.provenance_metadata.get("output_protocol") == OutputProtocolIdentifier.JSON_BAIR.value
+
+    # Legacy BAIR_XML protocol when explicitly selected
+    ctx_xml = ReasoningContextBuilder.build_context(
+        handoff_packet=handoff,
+        model_identifier="qwen2.5-coder:7b",
+        cascade_mode=TRACK_D,
+        enable_i4_bair=True,
+        output_protocol=OutputProtocolIdentifier.BAIR_XML,
+    )
+    assert "<bair>" in ctx_xml.system_prompt
+    assert "</bair>" in ctx_xml.system_prompt
+    assert "BOUNDED ANALYTICAL INFERENCE REPRESENTATION - BAIR" in ctx_xml.system_prompt
+    assert ctx_xml.provenance_metadata.get("output_protocol") == OutputProtocolIdentifier.BAIR_XML.value
 
 
 # ---------------------------------------------------------------------------

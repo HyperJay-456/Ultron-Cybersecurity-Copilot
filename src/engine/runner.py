@@ -20,6 +20,9 @@ from src.engine.models import (
     I4ExecutionResult,
     I5ExecutionResult,
     I6ExecutionResult,
+    M5ExecutionResult,
+    ContractCompilationError,
+    OutputProtocolIdentifier,
     PrimaryFailureCategory,
     ViolationAssessment,
     ViolationRelation,
@@ -27,6 +30,12 @@ from src.engine.models import (
     check_raw_namespace_breach,
     classify_primary_failure,
     perform_diagnostic_repair,
+)
+from src.engine.protocol import (
+    OutputProtocolContract,
+    ReasoningExecutionContract,
+    get_protocol_contract,
+    validate_reasoning_contract,
 )
 from src.engine.decision_policy import (
     DecisionPolicyResult,
@@ -1913,4 +1922,209 @@ AVAILABLE TARGET EVIDENCE:
             grounding_result=grounding_result,
             fail_closed=not is_valid_run,
             fail_closed_reason=classification.error_message if not is_valid_run else None,
+        )
+
+    def execute_m5_generation(
+        self,
+        contract: ReasoningExecutionContract,
+        empirical_evidence_present: bool = True,
+        grounding_validator: Optional[Any] = None,
+        channel_a: Optional[Any] = None,
+        target_asset: Optional[Dict[str, Any]] = None,
+        category_id: Optional[str] = None,
+        vapt_pack: Optional[Any] = None,
+    ) -> M5ExecutionResult:
+        """
+        Executes the authoritative Milestone M5 Reasoned Generation Pipeline:
+        Pre-flight Contract Invariant Validation (validate_reasoning_contract)
+          ↓
+        Runtime Schema Enforcement (schema=BairJsonObject schema if I1, else None)
+          ↓
+        Strict Protocol-Bound Parsing (parse_bair_json / parse_bair)
+          ↓
+        Decision-Dependent Validation (validate_bair_json / validate_bair)
+          ↓
+        Deterministic Canonical S0 Adaptation (map_bair_json_to_s0 / map_bair_to_s0)
+          ↓
+        Intervention I5 Deterministic Decision Policy (deterministic_decide, if active)
+          ↓
+        Authoritative Grounding Validation (KnowledgeGroundingValidator, if provided)
+        """
+        # 1. Pre-Flight Contract Validation (Gating Check)
+        try:
+            validate_reasoning_contract(contract)
+        except ContractCompilationError as exc:
+            classification = FailureClassificationResult(
+                primary_category=PrimaryFailureCategory.SCHEMA_VALIDITY_FAILURE,
+                is_valid=False,
+                error_message=f"Pre-flight contract compilation failed: {exc}",
+                downstream_cascade=[],
+                diagnostic_details={"exception_type": "ContractCompilationError"},
+            )
+            return M5ExecutionResult(
+                raw_response="",
+                protocol=contract.protocol,
+                parsed_intermediate=None,
+                canonical_hypothesis=None,
+                classification=classification,
+                contract_valid=False,
+                compilation_error=str(exc),
+            )
+
+        # 2. Runtime Execution with Schema Agreement
+        prompt = f"{contract.system_prompt}\n{contract.user_prompt}"
+        schema = contract.runtime_schema
+
+        t0 = time.perf_counter()
+        raw_response = ""
+        eval_count: Optional[int] = None
+        prompt_eval_count: Optional[int] = None
+        done_reason: Optional[str] = None
+        transport_error: Optional[Exception] = None
+
+        if self.llm_caller:
+            try:
+                raw_response = self.llm_caller(prompt, schema)
+            except Exception as exc:
+                transport_error = exc
+        else:
+            try:
+                resp_data = self.ollama_runner.generate_raw(
+                    prompt=prompt,
+                    schema=schema,
+                    num_ctx=PRIMARY_NUM_CTX,
+                    num_predict=PRIMARY_NUM_PREDICT,
+                )
+                raw_response = resp_data.get("response", "")
+                eval_count = resp_data.get("eval_count")
+                prompt_eval_count = resp_data.get("prompt_eval_count")
+                done_reason = resp_data.get("done_reason")
+            except Exception as exc:
+                transport_error = exc
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        if transport_error is not None:
+            classification = classify_primary_failure(
+                transport_error=transport_error,
+                num_predict=PRIMARY_NUM_PREDICT,
+            )
+            return M5ExecutionResult(
+                raw_response=raw_response,
+                protocol=contract.protocol,
+                parsed_intermediate=None,
+                canonical_hypothesis=None,
+                classification=classification,
+                latency_ms=latency_ms,
+            )
+
+        # 3. Protocol-bound Parsing, Validation, and Adaptation
+        parsed_intermediate: Optional[Any] = None
+        validated_intermediate: Optional[Any] = None
+        canonical_hypothesis: Optional[HypothesisModelOutput] = None
+        parse_error: Optional[Exception] = None
+        schema_error: Optional[Exception] = None
+
+        try:
+            parsed_intermediate = contract.parser(raw_response)
+        except Exception as exc:
+            parse_error = exc
+
+        if parsed_intermediate is not None and parse_error is None:
+            try:
+                try:
+                    validated_intermediate = contract.validator(
+                        parsed_intermediate,
+                        empirical_evidence_present=empirical_evidence_present,
+                    )
+                except TypeError:
+                    validated_intermediate = contract.validator(parsed_intermediate)
+            except Exception as exc:
+                schema_error = exc
+
+        if validated_intermediate is not None and schema_error is None:
+            try:
+                try:
+                    canonical_hypothesis = contract.adapter(
+                        validated_intermediate,
+                        target_asset=target_asset,
+                        category_id=category_id,
+                    )
+                except TypeError:
+                    canonical_hypothesis = contract.adapter(validated_intermediate)
+            except Exception as exc:
+                schema_error = exc
+
+        # 4. Intervention I5 Decision Policy (if active and hypothesis parsed)
+        if canonical_hypothesis is not None and contract.enable_i5:
+            ev_state = EvidenceState(
+                channel_a=channel_a,
+                target_asset=target_asset,
+                category_id=category_id,
+                empirical_evidence_present=empirical_evidence_present,
+            )
+            policy_res = deterministic_decide(
+                candidate=canonical_hypothesis,
+                evidence_state=ev_state,
+            )
+            if policy_res.final_decision is not None:
+                canonical_hypothesis = canonical_hypothesis.model_copy(
+                    update={"decision": policy_res.final_decision}
+                )
+
+        # 5. Authoritative Grounding Validation
+        grounding_result: Optional[Dict[str, Any]] = None
+        grounding_error: Optional[str] = None
+        if canonical_hypothesis is not None and grounding_validator is not None:
+            try:
+                try:
+                    g_res = grounding_validator.validate_grounding(
+                        hypothesis=canonical_hypothesis,
+                        channel_a=channel_a,
+                        pack=vapt_pack,
+                    )
+                except TypeError:
+                    g_res = grounding_validator.validate_hypothesis(canonical_hypothesis)
+
+                if hasattr(g_res, "model_dump"):
+                    grounding_result = g_res.model_dump()
+                elif isinstance(g_res, dict):
+                    grounding_result = g_res
+
+                is_valid_g = getattr(g_res, "valid", True) if hasattr(g_res, "valid") else (
+                    g_res.get("valid", True) if isinstance(g_res, dict) else True
+                )
+                if not is_valid_g:
+                    reason = getattr(g_res, "reason", None) or getattr(g_res, "error_code", None)
+                    if not reason and isinstance(g_res, dict):
+                        reason = g_res.get("reason") or g_res.get("error_code")
+                    grounding_error = reason or "Grounding validation failed closed"
+                    canonical_hypothesis = None
+            except Exception as exc:
+                grounding_error = f"Grounding validation error: {exc}"
+                canonical_hypothesis = None
+
+        # 6. Failure Classification adhering to M4 precedence
+        classification = classify_primary_failure(
+            raw_response=raw_response,
+            eval_count=eval_count,
+            done_reason=done_reason,
+            num_predict=PRIMARY_NUM_PREDICT,
+            parsed_json=parsed_intermediate if isinstance(parsed_intermediate, dict) else None,
+            parse_error=parse_error,
+            schema_error=schema_error,
+            grounding_error=grounding_error,
+        )
+
+        return M5ExecutionResult(
+            raw_response=raw_response,
+            protocol=contract.protocol,
+            parsed_intermediate=parsed_intermediate if classification.is_valid else None,
+            canonical_hypothesis=canonical_hypothesis if classification.is_valid else None,
+            classification=classification,
+            latency_ms=latency_ms,
+            eval_count=eval_count,
+            prompt_eval_count=prompt_eval_count,
+            grounding_result=grounding_result,
+            contract_valid=True,
         )

@@ -10,11 +10,13 @@ Strict Separation of Concerns:
 - mapper: deterministic field mapping only (zero semantic rewriting, zero citation substitution)
 """
 
+import json
 import re
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.engine.models import (
+    BairJsonObject,
     HypothesisDecision,
     HypothesisModelOutput,
 )
@@ -356,6 +358,115 @@ def map_bair_to_s0(validated: Dict[str, Any]) -> HypothesisModelOutput:
     )
 
 
+def parse_bair_json(raw_text: str) -> Dict[str, Any]:
+    """
+    Parse BAIR JSON representation from raw model output.
+    Enforces syntactic structure only:
+    - Strips markdown fences if present
+    - Decodes via json.loads
+    - Root must be a dictionary
+    - Rejects unknown keys outside the canonical 7 slots
+    """
+    if not raw_text or not isinstance(raw_text, str) or not raw_text.strip():
+        raise BairParseError("Empty or non-string BAIR JSON input")
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+
+    try:
+        data = json.loads(cleaned)
+    except Exception as exc:
+        raise BairParseError(f"JSON parse error in BAIR response: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise BairParseError("Decoded JSON root is not a dictionary")
+
+    allowed_keys = {
+        "invariant",
+        "evidence_gap",
+        "affected_target",
+        "decision",
+        "empirical_facts",
+        "methodology_references",
+        "falsification_plan",
+    }
+    for k in data.keys():
+        if k not in allowed_keys:
+            raise BairSchemaError(f"Unknown slot in BAIR JSON representation: {k}")
+
+    return data
+
+
+def validate_bair_json(
+    data: Union[Dict[str, Any], BairJsonObject],
+    empirical_evidence_present: bool = True,
+) -> BairJsonObject:
+    """
+    Apply decision-dependent structural validation rules to parsed BAIR JSON object.
+    Preserves exact behavior matrix:
+    - HYPOTHESIS: invariant, evidence_gap, affected_target, decision, empirical_facts, falsification_plan (supporting+disproving) required.
+    - INSUFFICIENT_EVIDENCE: invariant, evidence_gap, affected_target, decision, falsification_plan required.
+      empirical_facts is REQUIRED if empirical_evidence_present==True, OPTIONAL if False.
+    - NO_RELEVANT_FUNCTIONALITY: invariant, affected_target, decision required.
+    - CONFIRMED: Strictly rejected.
+    """
+    if isinstance(data, dict):
+        try:
+            bair_obj = BairJsonObject.model_validate(data)
+        except Exception as exc:
+            raise BairSchemaError(f"BAIR JSON schema validation error: {exc}") from exc
+    elif isinstance(data, BairJsonObject):
+        bair_obj = data
+    else:
+        raise BairSchemaError(f"Expected BairJsonObject or dict, got {type(data).__name__}")
+
+    # Empirical evidence state rule for INSUFFICIENT_EVIDENCE:
+    if bair_obj.decision == HypothesisDecision.INSUFFICIENT_EVIDENCE:
+        if empirical_evidence_present and not bair_obj.empirical_facts:
+            raise BairSchemaError(
+                "Decision INSUFFICIENT_EVIDENCE with empirical_evidence_present=True requires non-empty empirical_facts slot"
+            )
+
+    return bair_obj
+
+
+def map_bair_json_to_s0(
+    bair: BairJsonObject,
+    target_asset: Optional[Dict[str, Any]] = None,
+    category_id: Optional[str] = None,
+) -> HypothesisModelOutput:
+    """
+    Deterministic mapping from validated BairJsonObject to canonical S0 HypothesisModelOutput.
+    Zero semantic inference, zero citation substitution, fail closed on invalid/ambiguous mapping.
+    """
+    if not isinstance(bair, BairJsonObject):
+        raise TypeError(f"Expected BairJsonObject, got {type(bair).__name__}")
+
+    experiment_proposal = bair.falsification_plan or "None required"
+    reasoning_summary = f"BAIR evaluation: {bair.invariant}. Evidence gap: {bair.evidence_gap or 'None'}."
+
+    asset_id = (target_asset or {}).get("asset_id") or bair.affected_target
+
+    return HypothesisModelOutput(
+        invariant=bair.invariant,
+        evidence_gap=bair.evidence_gap,
+        affected_target=bair.affected_target,
+        decision=bair.decision,
+        supporting_evidence_ids=list(bair.empirical_facts),
+        methodology_references=list(bair.methodology_references),
+        cited_methodology_chunk_ids=list(bair.methodology_references),
+        reasoning_summary=reasoning_summary,
+        experiment_proposal=experiment_proposal,
+        category=category_id,
+        asset_id=asset_id,
+    )
+
+
 class BairExtractor:
     """Deterministic AST/slot extractor and validator for BAIR representations."""
 
@@ -366,11 +477,29 @@ class BairExtractor:
         empirical_evidence_present: bool,
     ) -> Tuple[Dict[str, Any], HypothesisModelOutput]:
         """
-        Execute full BAIR extraction pipeline:
+        Execute full BAIR XML extraction pipeline:
         parse_bair -> validate_bair -> map_bair_to_s0.
         Fails closed on any structural or schema failure.
         """
         raw_slots = parse_bair(raw_text)
         validated = validate_bair(raw_slots, empirical_evidence_present=empirical_evidence_present)
         canonical = map_bair_to_s0(validated)
+        return validated, canonical
+
+    @classmethod
+    def extract_bair_json(
+        cls,
+        raw_text: str,
+        empirical_evidence_present: bool = True,
+        target_asset: Optional[Dict[str, Any]] = None,
+        category_id: Optional[str] = None,
+    ) -> Tuple[BairJsonObject, HypothesisModelOutput]:
+        """
+        Execute full BAIR JSON extraction pipeline:
+        parse_bair_json -> validate_bair_json -> map_bair_json_to_s0.
+        Fails closed on any structural or schema failure.
+        """
+        raw_dict = parse_bair_json(raw_text)
+        validated = validate_bair_json(raw_dict, empirical_evidence_present=empirical_evidence_present)
+        canonical = map_bair_json_to_s0(validated, target_asset=target_asset, category_id=category_id)
         return validated, canonical

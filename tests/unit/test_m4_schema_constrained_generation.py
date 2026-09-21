@@ -17,6 +17,7 @@ Tests all 12 core requirements:
 """
 
 import json
+import os
 from typing import Any, Dict, List
 import httpx
 import pytest
@@ -426,6 +427,10 @@ def test_12_confirmation_authority_remaining_outside_reasoning_engine():
 # Requirement 13: Lightweight Live Ollama Sanity Check
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    os.environ.get("SKIP_LIVE_OLLAMA") == "1",
+    reason="Live Ollama execution skipped by environment flag",
+)
 def test_13_live_ollama_runtime_capability_sanity_check():
     """Lightweight live sanity check verifying pinned native Ollama structured decoding on S0."""
     runner = ReasoningRunner()
