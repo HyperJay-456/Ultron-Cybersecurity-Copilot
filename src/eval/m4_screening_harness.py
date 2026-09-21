@@ -1022,8 +1022,14 @@ class M4ScreeningHarness:
             raise FileExistsError(f"Artifact {out_path} already exists! Refusing to overwrite.")
 
         artifact_payload = {
+            "schema_version": "1.0.0",
             "track_id": track_id.value,
             "activation_matrix": eff_activation.as_dict(),
+            "manifest_sha256": "92f741b9e2c425a9f884df3286b4363a172ee938e43999636dbafef46e233dc1",
+            "source_benchmark_sha256": "b2b85a672124acf21066a257d8c7f5093000368b224ee013c02574c96a0ae707",
+            "scenario_ids": [r.scenario_id for r in scenario_records],
+            "scenario_order": [r.scenario_id for r in scenario_records],
+            "canonical_input_hashes": {r.scenario_id: r.canonical_input_hash for r in scenario_records},
             "model_name": "qwen2.5-coder:7b",
             "model_digest_prefix": EXPECTED_7B_DIGEST_PREFIX,
             "runtime_version": "Ollama v0.34.1",
