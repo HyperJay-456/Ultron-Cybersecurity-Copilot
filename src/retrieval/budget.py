@@ -4,8 +4,17 @@ import json
 import re
 import urllib.error
 import urllib.request
+from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+
+class TokenCountMode(str, Enum):
+    """Explicit token counting modes indicating precision and source."""
+    EXACT_TOKENIZER = "EXACT_TOKENIZER"
+    REMOTE_TOKENIZER_UNAVAILABLE = "REMOTE_TOKENIZER_UNAVAILABLE"
+    CALIBRATED_HEURISTIC = "CALIBRATED_HEURISTIC"
+    CHAR_HEURISTIC = "CHAR_HEURISTIC"
 
 
 @runtime_checkable
@@ -17,6 +26,10 @@ class TokenizerProtocol(Protocol):
 
     @property
     def is_exact(self) -> bool:
+        ...
+
+    @property
+    def mode(self) -> str:
         ...
 
 
@@ -34,6 +47,11 @@ class BaseTokenizer(ABC):
         """Whether this tokenizer provides exact model-matched token counts."""
         pass
 
+    @property
+    def mode(self) -> str:
+        """Return token counting mode label."""
+        return TokenCountMode.EXACT_TOKENIZER.value if self.is_exact else TokenCountMode.CALIBRATED_HEURISTIC.value
+
 
 class CalibratedHeuristicTokenizer(BaseTokenizer):
     """
@@ -50,6 +68,10 @@ class CalibratedHeuristicTokenizer(BaseTokenizer):
     @property
     def is_exact(self) -> bool:
         return False
+
+    @property
+    def mode(self) -> str:
+        return TokenCountMode.CALIBRATED_HEURISTIC.value
 
     def count_tokens(self, text: str) -> int:
         if not text:
@@ -86,6 +108,10 @@ class FastTokenizerAdapter(BaseTokenizer):
     def is_exact(self) -> bool:
         return True
 
+    @property
+    def mode(self) -> str:
+        return TokenCountMode.EXACT_TOKENIZER.value
+
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
@@ -114,10 +140,20 @@ class OllamaRemoteTokenizer(BaseTokenizer):
         self.model_name = model_name
         self.timeout = timeout_seconds
         self.fallback = fallback or CalibratedHeuristicTokenizer()
+        self._exact_mode_active: bool = False
+        self._last_error: Optional[str] = None
 
     @property
     def is_exact(self) -> bool:
-        return True
+        return self._exact_mode_active
+
+    @property
+    def mode(self) -> str:
+        return (
+            TokenCountMode.EXACT_TOKENIZER.value
+            if self._exact_mode_active
+            else TokenCountMode.REMOTE_TOKENIZER_UNAVAILABLE.value
+        )
 
     def count_tokens(self, text: str) -> int:
         if not text:
@@ -131,12 +167,17 @@ class OllamaRemoteTokenizer(BaseTokenizer):
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                tokens = data.get("tokens", [])
+                tokens = data.get("tokens")
                 if isinstance(tokens, list):
+                    self._exact_mode_active = True
+                    self._last_error = None
                     return len(tokens)
-        except Exception:
-            # Fall back to calibrated heuristic when offline
-            pass
+                else:
+                    raise ValueError(f"Malformed tokenizer response: 'tokens' field is {type(tokens)}")
+        except Exception as e:
+            # Fall back to calibrated heuristic when endpoint is unavailable, 404, timed out, or response is malformed
+            self._exact_mode_active = False
+            self._last_error = str(e)
         return self.fallback.count_tokens(text)
 
 
@@ -163,8 +204,10 @@ class TokenBudgetController:
     @property
     def token_count_mode(self) -> str:
         if self.tokenizer is not None:
-            return "EXACT_TOKENIZER" if self.is_exact else "CALIBRATED_HEURISTIC"
-        return "CHAR_HEURISTIC"
+            if hasattr(self.tokenizer, "mode"):
+                return self.tokenizer.mode
+            return TokenCountMode.EXACT_TOKENIZER.value if self.is_exact else TokenCountMode.CALIBRATED_HEURISTIC.value
+        return TokenCountMode.CHAR_HEURISTIC.value
 
     def count_tokens(self, text: str) -> int:
         """Count tokens using active tokenizer or character heuristic."""
