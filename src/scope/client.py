@@ -1,9 +1,9 @@
-"""Scoped HTTP client enforcing Scope Gate validation, rate limiting, and DNS TOCTOU IP-pinning."""
+"""Scoped HTTP client enforcing Scope Gate validation, shared rate limiting, and DNS TOCTOU IP-pinning."""
 
 import ipaddress
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 import httpx
 
@@ -21,10 +21,73 @@ class ScopeViolationError(Exception):
         )
 
 
+class SharedRateLimiter:
+    """
+    Thread-safe, process-wide shared rate limiter.
+    Enforces requests-per-second limits across multiple client instances and concurrent workers.
+    """
+    _registry: Dict[str, "SharedRateLimiter"] = {}
+    _registry_lock = threading.Lock()
+
+    def __init__(self, rate_limit_rps: float, burst_capacity: Optional[float] = None) -> None:
+        self.rate_limit_rps = float(rate_limit_rps)
+        self.capacity = float(burst_capacity) if burst_capacity is not None else 1.0
+        self.tokens = self.capacity
+        self.last_update = time.monotonic()
+        self.lock = threading.Lock()
+
+    @classmethod
+    def get_limiter(
+        cls,
+        key: str,
+        rate_limit_rps: float,
+        burst_capacity: Optional[float] = None,
+    ) -> "SharedRateLimiter":
+        with cls._registry_lock:
+            if key not in cls._registry:
+                cls._registry[key] = cls(rate_limit_rps=rate_limit_rps, burst_capacity=burst_capacity)
+            else:
+                limiter = cls._registry[key]
+                if rate_limit_rps > 0 and limiter.rate_limit_rps != rate_limit_rps:
+                    limiter.rate_limit_rps = rate_limit_rps
+            return cls._registry[key]
+
+    @classmethod
+    def reset_all(cls) -> None:
+        with cls._registry_lock:
+            cls._registry.clear()
+
+    def acquire(self, tokens: float = 1.0) -> float:
+        """
+        Acquires tokens from bucket under lock.
+        Sleeps if insufficient tokens are available to pace requests.
+        Returns time waited in seconds.
+        """
+        if self.rate_limit_rps <= 0:
+            return 0.0
+
+        with self.lock:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.last_update = now
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate_limit_rps)
+
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return 0.0
+
+            needed = tokens - self.tokens
+            sleep_time = needed / self.rate_limit_rps
+            time.sleep(sleep_time)
+            self.last_update = time.monotonic()
+            self.tokens = 0.0
+            return sleep_time
+
+
 class ScopedHttpClient:
     """
     HTTP client that guarantees no network request or redirect executes
-    without authorization from the ScopeGate, with rate limiting and
+    without authorization from the ScopeGate, with shared rate limiting and
     DNS TOCTOU IP-pinning.
     """
 
@@ -38,6 +101,7 @@ class ScopedHttpClient:
         enforce_ip_pinning: bool = True,
         transport: Optional[httpx.BaseTransport] = None,
         client: Optional[httpx.Client] = None,
+        shared_rate_limiter: Optional[SharedRateLimiter] = None,
     ) -> None:
         self.scope_gate = scope_gate
         self.tool_name = tool_name
@@ -45,7 +109,15 @@ class ScopedHttpClient:
         self.timeout = timeout
         self.enforce_ip_pinning = enforce_ip_pinning
         self.transport = transport
+
+        # Validate and harden injected client against redirect bypass
         self._external_client = client
+        if self._external_client is not None:
+            if hasattr(self._external_client, "follow_redirects"):
+                try:
+                    self._external_client.follow_redirects = False
+                except Exception as e:
+                    raise ValueError(f"Cannot control redirect behavior on injected client: {e}")
 
         # Configure rate limit (rps)
         if rate_limit_rps is not None:
@@ -57,20 +129,22 @@ class ScopedHttpClient:
             except (ValueError, TypeError):
                 self.rate_limit_rps = None
 
-        self._last_request_time: float = 0.0
-        self._rate_limit_lock = threading.Lock()
+        # Bind to shared process-wide rate limiter
+        if shared_rate_limiter:
+            self.rate_limiter = shared_rate_limiter
+        elif self.rate_limit_rps and self.rate_limit_rps > 0:
+            program_key = scope_gate.policy.program_name or "default_program"
+            self.rate_limiter = SharedRateLimiter.get_limiter(
+                key=f"program:{program_key}",
+                rate_limit_rps=self.rate_limit_rps,
+            )
+        else:
+            self.rate_limiter = None
 
     def _enforce_rate_limit(self) -> None:
-        """Paces requests to stay within rate_limit_rps."""
-        if not self.rate_limit_rps:
-            return
-        min_interval = 1.0 / self.rate_limit_rps
-        with self._rate_limit_lock:
-            now = time.monotonic()
-            elapsed = now - self._last_request_time
-            if elapsed < min_interval:
-                time.sleep(min_interval - elapsed)
-            self._last_request_time = time.monotonic()
+        """Paces requests across all clients and workers using shared limiter."""
+        if self.rate_limiter:
+            self.rate_limiter.acquire(1.0)
 
     def request(
         self,
@@ -85,10 +159,11 @@ class ScopedHttpClient:
     ) -> Tuple[httpx.Response, ScopeDecisionObject]:
         """
         Execute request after verifying initial URL and every redirect hop.
-        Returns a tuple of (Response, ScopeDecisionObject of the final destination).
+        Guarantees that no redirect occurs without ScopeGate evaluation.
         """
         current_url = url
         redirect_count = 0
+        visited_urls: Set[str] = set()
 
         client_cm = self._external_client or httpx.Client(
             timeout=self.timeout,
@@ -98,9 +173,12 @@ class ScopedHttpClient:
 
         should_close = self._external_client is None
 
+        # Always enforce follow_redirects=False on HTTP transport
+        kwargs["follow_redirects"] = False
+
         try:
             while True:
-                # 1. Gate check for current target
+                # 1. Gate check for current target (initial URL or redirect destination)
                 decision = self.scope_gate.evaluate(
                     current_url,
                     tool_name=self.tool_name,
@@ -109,7 +187,7 @@ class ScopedHttpClient:
                 if decision.decision != ScopeDecision.ALLOW:
                     raise ScopeViolationError(decision)
 
-                # 2. Rate limit pacing
+                # 2. Shared Rate limit pacing
                 self._enforce_rate_limit()
 
                 # 3. DNS TOCTOU Defense: IP-Pinning with TLS SNI and Host preservation
@@ -144,7 +222,7 @@ class ScopedHttpClient:
                 else:
                     dest_url = current_url
 
-                # 4. Execute request for current target
+                # 4. Execute request for current target strictly without automatic redirects
                 response = client_cm.request(
                     method=method,
                     url=dest_url,
@@ -155,7 +233,7 @@ class ScopedHttpClient:
                     **kwargs,
                 )
 
-                # 5. Check for redirect
+                # 5. Check for redirect hop
                 if follow_redirects and response.is_redirect and "location" in response.headers:
                     redirect_count += 1
                     if redirect_count > self.max_redirects:
@@ -164,7 +242,12 @@ class ScopedHttpClient:
                     location = response.headers["location"]
                     next_url = urljoin(current_url, location)
 
-                    # Re-evaluate the redirect destination in the next iteration
+                    # Redirect loop detection
+                    if next_url in visited_urls:
+                        raise httpx.TooManyRedirects(f"Redirect loop detected: {next_url}")
+                    visited_urls.add(current_url)
+
+                    # Next hop will be evaluated by ScopeGate at the start of next loop iteration
                     current_url = next_url
                     if response.status_code in (302, 303):
                         method = "GET"
