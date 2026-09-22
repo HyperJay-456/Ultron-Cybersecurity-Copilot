@@ -199,7 +199,10 @@ class KnowledgePoisoningDefense:
                 chunk.content, chunk_id=chunk.chunk_id
             )
 
-            is_quarantined = any(d.get("action") == "QUARANTINED_FROM_CONTEXT" for d in detections)
+            is_quarantined = any(
+                d.get("severity") == "QUARANTINE" or d.get("action") == "QUARANTINED_FROM_CONTEXT"
+                for d in detections
+            )
 
             # If severe injection detected, quarantine the chunk
             if is_quarantined and quarantine_poisoned:
