@@ -81,37 +81,37 @@ class HypothesisStateMachine:
         new_rev = current_rev + 1
 
         with self.db_manager.get_connection() as conn:
-            if observation_type == "SUPPORTING":
-                # Evidence confirmed by experiment -> Elevate evidence state to STRONG
-                conn.execute(
-                    """
-                    UPDATE hypotheses
-                    SET revision = ?, evidence_state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (new_rev, EvidenceState.STRONG.value, new_evidence_ref, hypothesis_id),
-                )
-            elif observation_type == "CONTRADICTING":
-                # Experiment disproved hypothesis -> Transition to Rejected
-                conn.execute(
-                    """
-                    UPDATE hypotheses
-                    SET revision = ?, state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (new_rev, HypothesisState.REJECTED.value, new_evidence_ref, hypothesis_id),
-                )
-            elif observation_type == "UNRESOLVED":
-                # Inconclusive/error observation -> Retain state, downgrade evidence state to WEAK
-                conn.execute(
-                    """
-                    UPDATE hypotheses
-                    SET revision = ?, evidence_state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (new_rev, EvidenceState.WEAK.value, new_evidence_ref, hypothesis_id),
-                )
-            conn.commit()
+            with conn:
+                if observation_type == "SUPPORTING":
+                    # Evidence confirmed by experiment -> Elevate evidence state to STRONG
+                    conn.execute(
+                        """
+                        UPDATE hypotheses
+                        SET revision = ?, evidence_state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (new_rev, EvidenceState.STRONG.value, new_evidence_ref, hypothesis_id),
+                    )
+                elif observation_type == "CONTRADICTING":
+                    # Experiment disproved hypothesis -> Transition to Rejected
+                    conn.execute(
+                        """
+                        UPDATE hypotheses
+                        SET revision = ?, state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (new_rev, HypothesisState.REJECTED.value, new_evidence_ref, hypothesis_id),
+                    )
+                elif observation_type == "UNRESOLVED":
+                    # Inconclusive/error observation -> Retain state, downgrade evidence state to WEAK
+                    conn.execute(
+                        """
+                        UPDATE hypotheses
+                        SET revision = ?, evidence_state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (new_rev, EvidenceState.WEAK.value, new_evidence_ref, hypothesis_id),
+                    )
 
         return self.db_manager.get_hypothesis(hypothesis_id)
 
@@ -122,23 +122,25 @@ class HypothesisStateMachine:
         evidence_ref: str,
         session_id: str,
         notes: Optional[str] = None,
-    ) -> None:
+    ) -> str:
         """
         Atomically records human verification and moves hypothesis to Confirmed.
-        Satisfies database triggers enforcing evidence and verification records.
+        Satisfies database triggers enforcing evidence and verification records in a single transaction.
         """
-        verif_id = f"VERIF-{hashlib.sha256(f'{hypothesis_id}:{actor}:{session_id}'.encode('utf-8')).hexdigest()[:10].upper()}"
-        self.db_manager.record_verification({
-            "verification_id": verif_id,
-            "hypothesis_id": hypothesis_id,
-            "actor": actor,
-            "decision": "confirmed",
-            "evidence_ref": evidence_ref,
-            "dashboard_session_id": session_id,
-            "notes": notes,
-        })
-        self.db_manager.update_hypothesis_state(hypothesis_id, HypothesisState.CONFIRMED.value, evidence_ref=evidence_ref)
+        return self.db_manager.confirm_hypothesis_atomic(
+            hypothesis_id=hypothesis_id,
+            actor=actor,
+            evidence_ref=evidence_ref,
+            dashboard_session_id=session_id,
+            notes=notes,
+        )
 
     def report_hypothesis(self, hypothesis_id: int) -> None:
         """Transition Confirmed hypothesis to Reported."""
+        hyp = self.db_manager.get_hypothesis(hypothesis_id)
+        if not hyp:
+            raise ValueError(f"Hypothesis {hypothesis_id} not found")
+        if hyp["state"] != HypothesisState.CONFIRMED.value:
+            raise ValueError(f"Cannot report hypothesis in state '{hyp['state']}'. Must be 'Confirmed'.")
         self.db_manager.update_hypothesis_state(hypothesis_id, HypothesisState.REPORTED.value)
+

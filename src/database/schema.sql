@@ -162,7 +162,53 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_enforce_confirmed_before_report
 BEFORE UPDATE OF state ON hypotheses
 FOR EACH ROW
-WHEN NEW.state = 'Reported' AND OLD.state != 'Confirmed'
+WHEN NEW.state = 'Reported' AND OLD.state NOT IN ('Confirmed', 'Reported')
 BEGIN
     SELECT RAISE(ABORT, 'Cannot move hypothesis to Reported without first being in Confirmed state.');
 END;
+
+-- Trigger 4: Cannot move to 'Confirmed' unless previously 'Under Review'
+CREATE TRIGGER IF NOT EXISTS trg_enforce_under_review_before_confirm
+BEFORE UPDATE OF state ON hypotheses
+FOR EACH ROW
+WHEN NEW.state = 'Confirmed' AND OLD.state NOT IN ('Under Review', 'Confirmed')
+BEGIN
+    SELECT RAISE(ABORT, 'Cannot move hypothesis to Confirmed without first being in Under Review state.');
+END;
+
+-- Trigger 5: Cannot move to 'Under Review' unless previously in 'New'
+CREATE TRIGGER IF NOT EXISTS trg_enforce_new_before_under_review
+BEFORE UPDATE OF state ON hypotheses
+FOR EACH ROW
+WHEN NEW.state = 'Under Review' AND OLD.state NOT IN ('New', 'Under Review')
+BEGIN
+    SELECT RAISE(ABORT, 'Cannot move hypothesis to Under Review without first being in New state.');
+END;
+
+-- Trigger 6: Cannot transition away from terminal Reported state
+CREATE TRIGGER IF NOT EXISTS trg_enforce_terminal_reported
+BEFORE UPDATE OF state ON hypotheses
+FOR EACH ROW
+WHEN OLD.state = 'Reported' AND NEW.state != 'Reported'
+BEGIN
+    SELECT RAISE(ABORT, 'Cannot transition away from terminal Reported state.');
+END;
+
+-- Trigger 7: Cannot transition away from terminal Rejected state
+CREATE TRIGGER IF NOT EXISTS trg_enforce_terminal_rejected
+BEFORE UPDATE OF state ON hypotheses
+FOR EACH ROW
+WHEN OLD.state = 'Rejected' AND NEW.state != 'Rejected'
+BEGIN
+    SELECT RAISE(ABORT, 'Cannot transition away from terminal Rejected state.');
+END;
+
+-- Trigger 8: Cannot reject hypothesis that has already been Confirmed
+CREATE TRIGGER IF NOT EXISTS trg_enforce_confirmed_not_rejected
+BEFORE UPDATE OF state ON hypotheses
+FOR EACH ROW
+WHEN NEW.state = 'Rejected' AND OLD.state = 'Confirmed'
+BEGIN
+    SELECT RAISE(ABORT, 'Cannot reject hypothesis that has already been Confirmed.');
+END;
+

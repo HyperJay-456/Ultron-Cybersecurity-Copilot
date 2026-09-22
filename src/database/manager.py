@@ -1,5 +1,6 @@
 """SQLite database manager for unified evidence.db."""
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -361,39 +362,101 @@ class DatabaseManager:
             return data
 
     def update_hypothesis_state(self, hypothesis_id: int, new_state: str, evidence_ref: Optional[str] = None) -> None:
-        """Update hypothesis state. Hard triggers enforce evidence and verification records."""
+        """Update hypothesis state. Hard triggers enforce evidence, transitions, and verification records."""
+        valid_states = {"New", "Under Review", "Confirmed", "Rejected", "Reported"}
+        if new_state not in valid_states:
+            raise ValueError(f"Invalid hypothesis state: '{new_state}'. Allowed states: {sorted(valid_states)}")
+
         with self.get_connection() as conn:
-            if evidence_ref:
+            with conn:
+                if evidence_ref:
+                    conn.execute(
+                        "UPDATE hypotheses SET state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (new_state, evidence_ref, hypothesis_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE hypotheses SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (new_state, hypothesis_id),
+                    )
+
+    def confirm_hypothesis_atomic(
+        self,
+        hypothesis_id: int,
+        actor: str,
+        evidence_ref: str,
+        dashboard_session_id: str,
+        notes: Optional[str] = None,
+        verification_id: Optional[str] = None,
+    ) -> str:
+        """
+        Atomically records human verification and transitions hypothesis to Confirmed
+        within a single database transaction on the same connection.
+        If either operation or trigger fails, rolls back completely.
+        """
+        if not actor or not actor.strip():
+            raise ValueError("Actor identity must not be empty for human verification.")
+        if not evidence_ref or len(evidence_ref.strip()) < 5:
+            raise ValueError("evidence_ref must be non-empty and at least 5 characters.")
+        if not dashboard_session_id or not dashboard_session_id.strip():
+            raise ValueError("dashboard_session_id must not be empty.")
+
+        verif_id = (
+            verification_id
+            or f"VERIF-{hashlib.sha256(f'{hypothesis_id}:{actor}:{dashboard_session_id}'.encode('utf-8')).hexdigest()[:10].upper()}"
+        )
+
+        with self.get_connection() as conn:
+            with conn:
+                # 1. Insert verification record
                 conn.execute(
-                    "UPDATE hypotheses SET state = ?, evidence_ref = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (new_state, evidence_ref, hypothesis_id),
+                    """
+                    INSERT INTO verifications (
+                        verification_id, hypothesis_id, actor, decision, evidence_ref,
+                        dashboard_session_id, notes
+                    ) VALUES (?, ?, ?, 'confirmed', ?, ?, ?)
+                    """,
+                    (
+                        verif_id,
+                        hypothesis_id,
+                        actor,
+                        evidence_ref,
+                        dashboard_session_id,
+                        notes,
+                    ),
                 )
-            else:
+
+                # 2. Update hypothesis state to Confirmed (database triggers will validate Under Review state and evidence_ref)
                 conn.execute(
-                    "UPDATE hypotheses SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (new_state, hypothesis_id),
+                    """
+                    UPDATE hypotheses
+                    SET state = 'Confirmed', evidence_ref = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (evidence_ref, hypothesis_id),
                 )
-            conn.commit()
+
+        return verif_id
 
     # Verification Operations
     def record_verification(self, verification: Dict[str, Any]) -> None:
         """Record human verification decision in verifications table."""
         with self.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO verifications (
-                    verification_id, hypothesis_id, actor, decision, evidence_ref,
-                    dashboard_session_id, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    verification["verification_id"],
-                    verification["hypothesis_id"],
-                    verification["actor"],
-                    verification["decision"],
-                    verification["evidence_ref"],
-                    verification["dashboard_session_id"],
-                    verification.get("notes"),
-                ),
-            )
-            conn.commit()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO verifications (
+                        verification_id, hypothesis_id, actor, decision, evidence_ref,
+                        dashboard_session_id, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        verification["verification_id"],
+                        verification["hypothesis_id"],
+                        verification["actor"],
+                        verification["decision"],
+                        verification["evidence_ref"],
+                        verification["dashboard_session_id"],
+                        verification.get("notes"),
+                    ),
+                )
