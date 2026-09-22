@@ -150,38 +150,36 @@ class TokenBudgetController:
         self,
         tokenizer: Optional[TokenizerProtocol] = None,
         chars_per_token: float = 3.5,
-        safety_margin: float = 1.1,
     ) -> None:
         self.chars_per_token = chars_per_token
-        self.tokenizer: TokenizerProtocol = tokenizer or CalibratedHeuristicTokenizer(
-            base_chars_per_token=chars_per_token, safety_margin=safety_margin
-        )
+        self.tokenizer: Optional[TokenizerProtocol] = tokenizer
         self._cache: Dict[str, int] = {}
         self._cache_max_size = 512
 
     @property
     def is_exact(self) -> bool:
-        return getattr(self.tokenizer, "is_exact", False)
+        return getattr(self.tokenizer, "is_exact", False) if self.tokenizer else False
 
     @property
     def token_count_mode(self) -> str:
-        return "EXACT_TOKENIZER" if self.is_exact else "CALIBRATED_HEURISTIC"
+        if self.tokenizer is not None:
+            return "EXACT_TOKENIZER" if self.is_exact else "CALIBRATED_HEURISTIC"
+        return "CHAR_HEURISTIC"
 
     def count_tokens(self, text: str) -> int:
-        """Count tokens using active tokenizer with local caching."""
+        """Count tokens using active tokenizer or character heuristic."""
         if not text:
             return 0
-        if len(text) < 4096 and text in self._cache:
-            return self._cache[text]
-
-        count = self.tokenizer.count_tokens(text)
-
-        if len(text) < 4096:
-            if len(self._cache) >= self._cache_max_size:
-                self._cache.clear()
-            self._cache[text] = count
-
-        return count
+        if self.tokenizer is not None:
+            if len(text) < 4096 and text in self._cache:
+                return self._cache[text]
+            count = self.tokenizer.count_tokens(text)
+            if len(text) < 4096:
+                if len(self._cache) >= self._cache_max_size:
+                    self._cache.clear()
+                self._cache[text] = count
+            return count
+        return max(1, int(len(text) / self.chars_per_token))
 
     def estimate_tokens(self, text: str) -> int:
         """Backwards compatible token estimation method."""

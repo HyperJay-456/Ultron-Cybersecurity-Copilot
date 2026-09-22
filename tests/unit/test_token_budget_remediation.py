@@ -95,10 +95,15 @@ def test_budget_controller_modes_and_caching():
     # Cache hit
     assert controller_exact.count_tokens("one two three four") == 4
 
-    # 2. Heuristic mode
-    controller_heuristic = TokenBudgetController()
-    assert controller_heuristic.is_exact is False
-    assert controller_heuristic.token_count_mode == "CALIBRATED_HEURISTIC"
+    # 2. Calibrated Heuristic mode
+    controller_calibrated = TokenBudgetController(tokenizer=CalibratedHeuristicTokenizer())
+    assert controller_calibrated.is_exact is False
+    assert controller_calibrated.token_count_mode == "CALIBRATED_HEURISTIC"
+
+    # 3. Default Char Heuristic mode (backward compatibility)
+    controller_char = TokenBudgetController()
+    assert controller_char.is_exact is False
+    assert controller_char.token_count_mode == "CHAR_HEURISTIC"
 
 
 def test_budget_controller_cropping_with_exact_tokenizer():

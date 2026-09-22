@@ -150,7 +150,7 @@ class KnowledgePoisoningDefense:
                     "sanitized_snippet": sanitized_fragment,
                     "start_offset": m.start(),
                     "end_offset": m.end(),
-                    "action": "QUARANTINED_FROM_CONTEXT",
+                    "action": "PRESERVED_NON_DESTRUCTIVE",
                 }
                 detections.append(event)
                 # Log strictly sanitized single-line snippet

@@ -48,10 +48,12 @@ def test_scan_for_injection_markers_non_destructive():
     assert any("ignore previous instruction" in m for m in matched_texts)
     assert any("curl https://" in m for m in matched_texts)
 
-    # Verify severe directives are flagged for quarantine while informational markers are preserved
-    actions = {d["action"] for d in detections}
-    assert "QUARANTINED_FROM_CONTEXT" in actions
-    assert "PRESERVED_NON_DESTRUCTIVE" in actions
+    # Verify action is non-destructive
+    for d in detections:
+        assert d["action"] == "PRESERVED_NON_DESTRUCTIVE"
+    severities = {d["severity"] for d in detections}
+    assert "QUARANTINE" in severities
+    assert "INFORMATIONAL" in severities
 
 
 def test_delimiter_breakout_neutralization():
