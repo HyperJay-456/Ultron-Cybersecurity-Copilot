@@ -9,7 +9,18 @@ Supports 6 distinct application families:
 6. iot_fleet_mgmt
 """
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+
+
+@dataclass(frozen=True)
+class SyntheticPrincipal:
+    """
+    Deterministic identity binding for synthetic evaluation.
+    Allows simulator and application to bind callers securely without leaking raw credentials.
+    """
+    identity_id: str
+    is_authenticated: bool = True
 
 
 class SyntheticApp:
@@ -81,6 +92,7 @@ class SyntheticApp:
         path: str,
         headers: Optional[Dict[str, str]] = None,
         data: Optional[Dict[str, Any]] = None,
+        authenticated_principal: Optional[SyntheticPrincipal] = None,
     ) -> Tuple[int, Dict[str, Any]]:
         """
         Deterministic request handler implementing authentication, authorization,
@@ -92,10 +104,19 @@ class SyntheticApp:
         headers = headers or {}
         auth_header = headers.get("Authorization", "")
         caller = None
-        for u_id, u_data in self.users.items():
-            if u_data["token"] in auth_header:
-                caller = u_data
-                break
+
+        # 1. Preferred: Typed internal authenticated principal (zero secret leakage)
+        if authenticated_principal is not None:
+            if authenticated_principal.is_authenticated and authenticated_principal.identity_id:
+                # Authoritative resolution strictly against registered users database.
+                # Role and tenant are derived from application state, preventing privilege escalation.
+                caller = self.users.get(authenticated_principal.identity_id)
+        # 2. Backwards compatibility: Header token fallback
+        elif auth_header:
+            for u_id, u_data in self.users.items():
+                if u_data["token"] in auth_header:
+                    caller = u_data
+                    break
 
         # ==========================================
         # PUBLIC / NEGATIVE CONTROL ENDPOINTS (All 200 OK)
