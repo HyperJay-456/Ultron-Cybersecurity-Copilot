@@ -107,7 +107,7 @@ class OllamaRunner(BaseLLMRunner):
         base_url: Optional[str] = None,
         model_name: str = "qwen2.5-coder:7b",
         num_ctx: int = PRIMARY_NUM_CTX,
-        timeout_seconds: int = 120,
+        timeout_seconds: float = 30.0,
         temperature: float = PRIMARY_TEMPERATURE,
         num_predict: int = PRIMARY_NUM_PREDICT,
         seed: int = PRIMARY_SEED,
@@ -150,9 +150,11 @@ class OllamaRunner(BaseLLMRunner):
         num_predict: Optional[int] = None,
         num_ctx: Optional[int] = None,
         keep_alive: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Execute raw Ollama inference via /api/generate with native format schema decoding.
+        Enforces strict HTTP timeout and wall-clock ceiling with socket cancellation on abort.
         Returns complete Ollama JSON response including telemetry (eval_count, done_reason, durations).
         """
         url = f"{self.base_url}/api/generate"
@@ -160,6 +162,7 @@ class OllamaRunner(BaseLLMRunner):
         pred = num_predict if num_predict is not None else self.num_predict
         ctx = num_ctx if num_ctx is not None else self.num_ctx
         alive = keep_alive or self.keep_alive
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
 
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -176,13 +179,49 @@ class OllamaRunner(BaseLLMRunner):
         if schema is not None:
             payload["format"] = schema
 
-        with httpx.Client(timeout=self.timeout_seconds) as client:
+        http_timeout = httpx.Timeout(
+            timeout=effective_timeout,
+            connect=min(5.0, effective_timeout),
+            read=effective_timeout,
+            write=min(5.0, effective_timeout),
+        )
+
+        t0 = time.perf_counter()
+        deadline = t0 + effective_timeout
+
+        transport = httpx.HTTPTransport(retries=0)
+        client = httpx.Client(timeout=http_timeout, transport=transport)
+        try:
+            if time.perf_counter() >= deadline:
+                raise TimeoutError(f"Hard runtime ceiling exceeded before request dispatch ({effective_timeout}s ceiling)")
+
             res = client.post(url, json=payload)
+
+            elapsed = time.perf_counter() - t0
+            # Teardown tolerance: hard ceiling + 500ms
+            if elapsed > effective_timeout + 0.5:
+                raise TimeoutError(f"Hard runtime ceiling exceeded: elapsed {elapsed:.3f}s > {effective_timeout}s ceiling (teardown tolerance 500ms)")
+
             if res.status_code != 200:
                 raise RuntimeError(
                     f"Ollama inference failed with HTTP {res.status_code}: {res.text}"
                 )
             return res.json()
+        except Exception as exc:
+            # Force close socket to signal Ollama Go runtime to abort runner slot
+            try:
+                client.close()
+            except Exception:
+                pass
+
+            if isinstance(exc, (httpx.TimeoutException, TimeoutError)) or "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower():
+                raise TimeoutError(f"Hard runtime ceiling exceeded ({effective_timeout}s): {exc}") from exc
+            raise
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def generate_structured(
         self,
@@ -1940,6 +1979,8 @@ AVAILABLE TARGET EVIDENCE:
         category_id: Optional[str] = None,
         vapt_pack: Optional[Any] = None,
         num_predict: Optional[int] = None,
+        prompt_build_latency_ms: Optional[float] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> M5ExecutionResult:
         """
         Executes the authoritative Milestone M5 Reasoned Generation Pipeline:
@@ -1957,10 +1998,15 @@ AVAILABLE TARGET EVIDENCE:
           ↓
         Authoritative Grounding Validation (KnowledgeGroundingValidator, if provided)
         """
+        t_overall_start = time.perf_counter()
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.ollama_runner.timeout_seconds
+        wall_clock_deadline = t_overall_start + effective_timeout
+
         # 1. Pre-Flight Contract Validation (Gating Check)
         try:
             validate_reasoning_contract(contract)
         except ContractCompilationError as exc:
+            total_lat = (time.perf_counter() - t_overall_start) * 1000.0
             classification = FailureClassificationResult(
                 primary_category=PrimaryFailureCategory.SCHEMA_VALIDITY_FAILURE,
                 is_valid=False,
@@ -1976,47 +2022,86 @@ AVAILABLE TARGET EVIDENCE:
                 classification=classification,
                 contract_valid=False,
                 compilation_error=str(exc),
+                latency_ms=total_lat,
+                timed_out=False,
+                prompt_build_latency_ms=prompt_build_latency_ms,
+                inference_latency_ms="unavailable",
+                response_parse_latency_ms=None,
+                validation_latency_ms=None,
+                total_latency_ms=total_lat,
             )
 
         effective_num_predict = num_predict if num_predict is not None else PRIMARY_NUM_PREDICT
 
-        # 2. Runtime Execution with Schema Agreement
+        # 2. Runtime Execution with Schema Agreement and Hard Timeout Ceiling
         prompt = f"{contract.system_prompt}\n{contract.user_prompt}"
         schema = contract.runtime_schema
 
-        t0 = time.perf_counter()
         raw_response = ""
         eval_count: Optional[int] = None
         prompt_eval_count: Optional[int] = None
         done_reason: Optional[str] = None
+        eval_duration_ns: Optional[int] = None
         transport_error: Optional[Exception] = None
+        timed_out: bool = False
 
-        if self.llm_caller:
-            try:
-                raw_response = self.llm_caller(prompt, schema)
-            except Exception as exc:
-                transport_error = exc
+        t_infer_start = time.perf_counter()
+        effective_prompt_build_lat = (
+            prompt_build_latency_ms
+            if prompt_build_latency_ms is not None
+            else round((t_infer_start - t_overall_start) * 1000.0, 2)
+        )
+        if time.perf_counter() >= wall_clock_deadline:
+            timed_out = True
+            transport_error = TimeoutError(f"Hard runtime ceiling exceeded before request dispatch ({effective_timeout}s wall clock)")
         else:
-            try:
-                resp_data = self.ollama_runner.generate_raw(
-                    prompt=prompt,
-                    schema=schema,
-                    num_ctx=PRIMARY_NUM_CTX,
-                    num_predict=effective_num_predict,
-                )
-                raw_response = resp_data.get("response", "")
-                eval_count = resp_data.get("eval_count")
-                prompt_eval_count = resp_data.get("prompt_eval_count")
-                done_reason = resp_data.get("done_reason")
-            except Exception as exc:
-                transport_error = exc
+            if self.llm_caller:
+                try:
+                    raw_response = self.llm_caller(prompt, schema)
+                except Exception as exc:
+                    transport_error = exc
+                    if isinstance(exc, (TimeoutError, httpx.TimeoutException)) or "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower():
+                        timed_out = True
+            else:
+                try:
+                    resp_data = self.ollama_runner.generate_raw(
+                        prompt=prompt,
+                        schema=schema,
+                        num_ctx=PRIMARY_NUM_CTX,
+                        num_predict=effective_num_predict,
+                        timeout_seconds=effective_timeout,
+                    )
+                    raw_response = resp_data.get("response", "")
+                    eval_count = resp_data.get("eval_count")
+                    prompt_eval_count = resp_data.get("prompt_eval_count")
+                    done_reason = resp_data.get("done_reason")
+                    eval_duration_ns = resp_data.get("eval_duration")
+                except Exception as exc:
+                    transport_error = exc
+                    if isinstance(exc, (TimeoutError, httpx.TimeoutException)) or "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower():
+                        timed_out = True
 
-        latency_ms = (time.perf_counter() - t0) * 1000.0
+        t_infer_end = time.perf_counter()
 
-        if transport_error is not None:
+        # Teardown tolerance: hard ceiling + 500ms
+        if not timed_out and t_infer_end > wall_clock_deadline + 0.5:
+            timed_out = True
+            transport_error = TimeoutError(
+                f"Hard runtime ceiling exceeded: elapsed {(t_infer_end - t_overall_start):.3f}s > {effective_timeout}s ceiling (teardown tolerance 500ms)"
+            )
+
+        # Telemetry: Inference duration from Ollama (ns -> ms) or 'unavailable'
+        inference_latency_ms: Union[float, str] = "unavailable"
+        if eval_duration_ns is not None and eval_duration_ns > 0:
+            inference_latency_ms = round(eval_duration_ns / 1_000_000.0, 2)
+
+        total_latency_ms = round((time.perf_counter() - t_overall_start) * 1000.0, 2)
+
+        if transport_error is not None or timed_out:
             classification = classify_primary_failure(
                 transport_error=transport_error,
                 num_predict=effective_num_predict,
+                is_timeout=timed_out,
             )
             return M5ExecutionResult(
                 raw_response=raw_response,
@@ -2024,7 +2109,13 @@ AVAILABLE TARGET EVIDENCE:
                 parsed_intermediate=None,
                 canonical_hypothesis=None,
                 classification=classification,
-                latency_ms=latency_ms,
+                latency_ms=total_latency_ms,
+                timed_out=timed_out,
+                prompt_build_latency_ms=effective_prompt_build_lat,
+                inference_latency_ms="unavailable" if timed_out else inference_latency_ms,
+                response_parse_latency_ms=None,
+                validation_latency_ms=None,
+                total_latency_ms=total_latency_ms,
             )
 
         # 3. Protocol-bound Parsing, Validation, and Adaptation
@@ -2034,11 +2125,15 @@ AVAILABLE TARGET EVIDENCE:
         parse_error: Optional[Exception] = None
         schema_error: Optional[Exception] = None
 
+        t_parse_start = time.perf_counter()
         try:
             parsed_intermediate = contract.parser(raw_response)
         except Exception as exc:
             parse_error = exc
+        t_parse_end = time.perf_counter()
+        response_parse_latency_ms = round((t_parse_end - t_parse_start) * 1000.0, 2)
 
+        t_val_start = time.perf_counter()
         if parsed_intermediate is not None and parse_error is None:
             try:
                 try:
@@ -2122,6 +2217,9 @@ AVAILABLE TARGET EVIDENCE:
                 grounding_error = f"Grounding validation error: {exc}"
                 canonical_hypothesis = None
 
+        t_val_end = time.perf_counter()
+        validation_latency_ms = round((t_val_end - t_val_start) * 1000.0, 2)
+
         # 6. Failure Classification adhering to M4 precedence
         classification = classify_primary_failure(
             raw_response=raw_response,
@@ -2135,16 +2233,24 @@ AVAILABLE TARGET EVIDENCE:
             polarity_error=polarity_error,
         )
 
+        total_latency_ms = round((time.perf_counter() - t_overall_start) * 1000.0, 2)
+
         return M5ExecutionResult(
             raw_response=raw_response,
             protocol=contract.protocol,
             parsed_intermediate=parsed_intermediate if classification.is_valid else None,
             canonical_hypothesis=canonical_hypothesis if classification.is_valid else None,
             classification=classification,
-            latency_ms=latency_ms,
+            latency_ms=total_latency_ms,
             eval_count=eval_count,
             prompt_eval_count=prompt_eval_count,
             grounding_result=grounding_result,
             policy_result=policy_res.model_dump() if policy_res and hasattr(policy_res, "model_dump") else None,
             contract_valid=True,
+            timed_out=False,
+            prompt_build_latency_ms=effective_prompt_build_lat,
+            inference_latency_ms=inference_latency_ms,
+            response_parse_latency_ms=response_parse_latency_ms,
+            validation_latency_ms=validation_latency_ms,
+            total_latency_ms=total_latency_ms,
         )

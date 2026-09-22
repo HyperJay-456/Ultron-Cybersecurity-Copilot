@@ -83,11 +83,12 @@ VALID_OUTCOME_PREDICATES: Set[str] = (
 
 class PrimaryFailureCategory(str, Enum):
     """
-    Authoritative M4 Primary Failure Taxonomy (Mutually Exclusive).
+    Authoritative M4/M5 Primary Failure Taxonomy (Mutually Exclusive).
     Precedence:
-    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
+    RUNTIME_TIMEOUT > RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
     """
     VALID = "VALID"
+    RUNTIME_TIMEOUT = "RUNTIME_TIMEOUT"
     RUNTIME_TRANSPORT_FAILURE = "RUNTIME_TRANSPORT_FAILURE"
     MAX_TOKEN_TRUNCATION = "MAX_TOKEN_TRUNCATION"
     PARSER_FAILURE = "PARSER_FAILURE"
@@ -932,6 +933,15 @@ class M5ExecutionResult(BaseModel):
     policy_result: Optional[Any] = None
     contract_valid: bool = True
     compilation_error: Optional[str] = None
+
+    # Structured Phase 10 Runtime Control & Telemetry
+    timed_out: bool = False
+    prompt_build_latency_ms: Optional[float] = None
+    inference_latency_ms: Union[float, str] = "unavailable"
+    response_parse_latency_ms: Optional[float] = None
+    validation_latency_ms: Optional[float] = None
+    total_latency_ms: float = 0.0
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -946,23 +956,50 @@ def classify_primary_failure(
     schema_error: Optional[Exception] = None,
     grounding_error: Optional[str] = None,
     polarity_error: Optional[str] = None,
+    is_timeout: bool = False,
 ) -> FailureClassificationResult:
     """
     Deterministically classify an evaluation attempt into exactly one mutually exclusive PRIMARY category.
 
     Precedence:
-    RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
+    RUNTIME_TIMEOUT > RUNTIME_TRANSPORT_FAILURE > MAX_TOKEN_TRUNCATION > PARSER_FAILURE > SCHEMA_VALIDITY_FAILURE > SEMANTIC_GROUNDING_FAILURE > SEMANTIC_EXPERIMENT_POLARITY_FAILURE > VALID
     """
     cascade: List[str] = []
 
-    # 1. RUNTIME_TRANSPORT_FAILURE (Precedence 1)
+    # 1. RUNTIME_TIMEOUT (Precedence 1)
+    if is_timeout:
+        return FailureClassificationResult(
+            primary_category=PrimaryFailureCategory.RUNTIME_TIMEOUT,
+            is_valid=False,
+            error_message=str(transport_error) if transport_error else "Hard runtime ceiling exceeded (30,000 ms)",
+            downstream_cascade=[],
+            diagnostic_details={"is_timeout": True, "exception_type": type(transport_error).__name__ if transport_error else "TimeoutError"},
+        )
+
     if transport_error is not None:
+        exc_type = type(transport_error).__name__
+        exc_msg = str(transport_error).lower()
+        is_timeout_exc = (
+            isinstance(transport_error, TimeoutError)
+            or "timeout" in exc_type.lower()
+            or "timed out" in exc_msg
+            or getattr(transport_error, "is_timeout", False)
+        )
+        if is_timeout_exc:
+            return FailureClassificationResult(
+                primary_category=PrimaryFailureCategory.RUNTIME_TIMEOUT,
+                is_valid=False,
+                error_message=f"Hard runtime ceiling exceeded: {transport_error}",
+                downstream_cascade=[],
+                diagnostic_details={"exception_type": exc_type, "is_timeout": True},
+            )
+
         return FailureClassificationResult(
             primary_category=PrimaryFailureCategory.RUNTIME_TRANSPORT_FAILURE,
             is_valid=False,
             error_message=str(transport_error),
             downstream_cascade=[],
-            diagnostic_details={"exception_type": type(transport_error).__name__},
+            diagnostic_details={"exception_type": exc_type, "is_timeout": False},
         )
 
     # Check whether generation reached num_predict or was stopped by length

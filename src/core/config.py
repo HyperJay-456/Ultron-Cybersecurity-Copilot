@@ -45,8 +45,8 @@ class OllamaConfig(BaseModel):
     default_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     num_ctx_3b: int = Field(default=2048, ge=512, le=4096)
     num_ctx_7b: int = Field(default=4096, ge=512, le=8192)
-    request_timeout_seconds: int = Field(default=120, gt=0)
-    max_retries: int = Field(default=2, ge=0)
+    request_timeout_seconds: int = Field(default=30, gt=0)
+    max_retries: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def sync_models(self) -> "OllamaConfig":
