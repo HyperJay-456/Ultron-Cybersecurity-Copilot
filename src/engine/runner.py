@@ -52,7 +52,7 @@ from src.engine.bair_extractor import (
     parse_bair,
     validate_bair,
 )
-from src.retrieval.budget import TokenBudgetController
+from src.retrieval.budget import OllamaRemoteTokenizer, TokenBudgetController
 from src.engine.handoff_serializer import ProtectedHandoffDescriptor
 
 PRIMARY_NUM_CTX = 2048
@@ -243,7 +243,13 @@ class ReasoningRunner:
         self.model_name = model_name or self.config.model_7b
         self.num_ctx = num_ctx or (self.config.num_ctx_3b if "3b" in self.model_name else self.config.num_ctx_7b)
         self.llm_caller = llm_caller
-        self.budget_controller = TokenBudgetController()
+        self.budget_controller = TokenBudgetController(
+            tokenizer=OllamaRemoteTokenizer(
+                base_url=self.config.base_url,
+                model_name=self.model_name,
+                timeout_seconds=self.config.request_timeout_seconds,
+            )
+        )
         self.ollama_runner = ollama_runner or OllamaRunner(
             base_url=self.config.base_url,
             model_name=self.model_name,
