@@ -252,7 +252,7 @@ class DeterministicExecutionEngine:
                 expected_target_authority=target_auth,
                 expected_environment_context=environment_context,
             )
-            if not valid_owner and own_err != "TOKEN_REFERENCE_NOT_FOUND":
+            if not valid_owner:
                 self._log_audit(
                     event_type="EXECUTION_BLOCKED_AUTH_STATE",
                     subject_id=exp_id,
@@ -440,7 +440,12 @@ class DeterministicExecutionEngine:
                 expected_target_authority=target_auth,
                 expected_environment_context=environment_context,
             )
-            if not valid_owner and own_err != "TOKEN_REFERENCE_NOT_FOUND":
+            if not valid_owner:
+                self._log_audit(
+                    event_type="EXECUTION_BLOCKED_AUTH_STATE",
+                    subject_id=exp_id,
+                    details={"error": own_err, "token_ref": token_ref, "phase": "final_toctou"},
+                )
                 return ExecutionResult(
                     experiment_id=exp_id,
                     status=ExecutionStatus.BLOCKED_AUTH_STATE,
@@ -452,12 +457,40 @@ class DeterministicExecutionEngine:
         # Re-resolve authorization tokens into raw headers immediately before transmission
         for token_ref in experiment.required_token_references:
             raw_val = self.vault.reverse_placeholder(token_ref)
-            if raw_val:
-                # If Authorization header already present with placeholder, replace it
-                if "Authorization" in headers and token_ref in headers["Authorization"]:
-                    headers["Authorization"] = headers["Authorization"].replace(token_ref, raw_val)
-                elif "Authorization" not in headers:
-                    headers["Authorization"] = f"Bearer {raw_val}"
+            if not raw_val:
+                self._log_audit(
+                    event_type="EXECUTION_BLOCKED_AUTH_STATE",
+                    subject_id=exp_id,
+                    details={"error": "TOKEN_REFERENCE_NOT_REVERSIBLE", "token_ref": token_ref},
+                )
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_AUTH_STATE,
+                    error_message=f"Required credential reference '{token_ref}' could not be resolved from vault",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
+            # If Authorization header already present with placeholder, replace it
+            if "Authorization" in headers and token_ref in headers["Authorization"]:
+                headers["Authorization"] = headers["Authorization"].replace(token_ref, raw_val)
+            elif "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {raw_val}"
+
+        # Hard guard: Ensure no unresolved placeholder or redaction marker remains in Authorization header
+        auth_hdr = headers.get("Authorization", "")
+        if "******" in auth_hdr or "[REDACTED" in auth_hdr:
+            self._log_audit(
+                event_type="EXECUTION_BLOCKED_AUTH_STATE",
+                subject_id=exp_id,
+                details={"error": "UNRESOLVED_REDACTION_MARKER_IN_HEADER"},
+            )
+            return ExecutionResult(
+                experiment_id=exp_id,
+                status=ExecutionStatus.BLOCKED_AUTH_STATE,
+                error_message="Authorization header contains unresolved redacted placeholder",
+                descriptor_digest=desc_digest,
+                latency_seconds=time.perf_counter() - t0,
+            )
 
         # Step 11 & 12: Controlled HTTP Execution (ScopedHttpClient or deterministic mock)
         resp_status: Optional[int] = None
