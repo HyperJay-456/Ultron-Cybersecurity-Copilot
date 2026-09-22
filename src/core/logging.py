@@ -55,6 +55,15 @@ class AuditLogger:
     - Record insertions / replays
     - Record reorderings
     - Record replacements
+
+    Security Trust Boundary & Threat Model:
+    The hash chain provides tamper evidence against modification, insertion, deletion,
+    or reordering of records while preserving the trusted chain anchor (genesis hash).
+    It does not protect against an attacker with root or full filesystem write access
+    who can replace both the entire log file and its genesis anchor. Protection against
+    unbounded filesystem-level administrator compromise requires external trust anchors
+    (e.g., write-once/append-only storage, periodic signed detached checkpoints, or
+    remote syslog/SIEM forwarding).
     """
 
     def __init__(self, audit_file_path: Path) -> None:

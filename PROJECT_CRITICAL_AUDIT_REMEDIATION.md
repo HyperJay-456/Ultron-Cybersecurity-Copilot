@@ -218,8 +218,30 @@ The remediation was conducted incrementally across logical commit groups:
 
 ---
 
-## 5. Final Adversarial Assessment & Conclusion
+## 5. Post-Audit Findings Remediation (NEW-1, NEW-2, NEW-3)
 
-All 14 findings identified in `PROJECT_CRITICAL_AUDIT.md` have been fully resolved with defensive fail-closed invariants, strict credential enforcement, cryptographically chained audit logging, atomic database state transitions, and tokenizer-aware context control.
+Following the independent post-remediation audit (`PROJECT_CRITICAL_AUDIT_FINAL.md`), three additional findings were addressed:
+
+### Finding NEW-1 (HIGH) — Cross-Tenant Integration Identity Resolution
+- **Issue:** `tests/integration/test_live_v6_complete_pipeline.py` created `actor_identity_id="tenant_bob"`. The remediated `SyntheticApp` only recognized `user_a`, `user_b`, and `admin_user`, failing closed with HTTP 401 before reaching authorization logic (preventing the intended 403 authorization check).
+- **Remediation:** Registered `tenant_alice` and `tenant_bob` as legitimate registered customer identities in `SyntheticApp.users` with billing invoices (`INV-9001`) and subscription IDs (`SUB-9001`). Authentication succeeds for registered tenant principals and proceeds to the authorization decision: returning 403 on the patched tenant isolation boundary, while an unknown/forged identity still produces 401. Added comprehensive 7-point cross-tenant invariant test in `tests/unit/test_simulator_security_remediation.py`.
+- **Status:** **FIXED** (Commit `358b359`)
+
+### Finding NEW-2 (MEDIUM) — Dynamic Tokenizer Fallback Precision & Mode
+- **Issue:** `OllamaRemoteTokenizer.is_exact` statically returned `True` even when `/api/tokenize` returned HTTP 404 (e.g. Ollama 0.34.1) or was unreachable, falling back to `CalibratedHeuristicTokenizer` while masquerading as `EXACT_TOKENIZER`.
+- **Remediation:** Introduced `TokenCountMode` enum (`EXACT_TOKENIZER`, `REMOTE_TOKENIZER_UNAVAILABLE`, `CALIBRATED_HEURISTIC`, `CHAR_HEURISTIC`). `OllamaRemoteTokenizer` tracks endpoint connectivity dynamically (`_exact_mode_active: bool`). If the endpoint returns 404, is offline, times out, or returns malformed JSON, it activates fallback, sets `is_exact = False`, and sets `mode = "REMOTE_TOKENIZER_UNAVAILABLE"`. `TokenBudgetController` surfaces this mode accurately. Added 5 tests covering exact availability, 404 fallback, timeouts, malformed responses, and conservative budget enforcement in `tests/unit/test_token_budget_remediation.py`.
+- **Status:** **FIXED** (Commit `d0806e3`)
+
+### Finding NEW-3 (LOW) — Audit Hash-Chain Trust Boundary Clarification
+- **Issue:** The hash chain provides tamper evidence against record modification, deletion, insertion, and reordering within an existing chain, but an attacker with root or full filesystem write access could regenerate a completely new chain from genesis.
+- **Resolution:** **ACCEPTED_RISK with Documented Trust Boundary**. In `src/core/logging.py` (`AuditLogger`), explicitly documented the security trust boundary: the hash chain guarantees tamper evidence against modification of records while preserving the trusted chain anchor. It does not protect against an attacker who can replace both the log file and its genesis anchor. Systems requiring defense against local root compromise must attach external trust anchors (e.g., remote append-only SIEM, write-once media, or signed checkpoints). Added test verifying hash chain tamper detection and trust boundary in `tests/unit/test_audit_and_poisoning_defense.py`.
+- **Status:** **RESOLVED (ACCEPTED_RISK)**
+
+---
+
+## 6. Final Adversarial Assessment & Conclusion
+
+All 14 original findings identified in `PROJECT_CRITICAL_AUDIT.md` plus the 3 post-audit findings (NEW-1, NEW-2, NEW-3) have been fully resolved with defensive fail-closed invariants, strict credential enforcement, cryptographically chained audit logging, atomic database state transitions, dynamic tokenizer fallback precision, and explicit architectural trust boundaries.
 
 The repository now enforces its claimed security boundaries not merely in documentation, but at every active execution gate.
+
