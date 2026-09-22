@@ -44,16 +44,20 @@ class SyntheticApp:
             "user_a": {"id": "user_a", "tenant": "org_a", "role": "customer", "token": "token_a"},
             "user_b": {"id": "user_b", "tenant": "org_b", "role": "customer", "token": "token_b"},
             "admin_user": {"id": "admin_user", "tenant": "system", "role": "admin", "token": "token_admin"},
+            "tenant_alice": {"id": "tenant_alice", "tenant": "org_alice", "role": "customer", "token": "token_alice"},
+            "tenant_bob": {"id": "tenant_bob", "tenant": "org_bob", "role": "customer", "token": "token_bob"},
         }
 
         # 1. SaaS Billing state
         self.invoices: Dict[str, Dict[str, Any]] = {
             "INV-100": {"id": "INV-100", "owner": "user_a", "tenant": "org_a", "amount": 250.00, "status": "ISSUED"},
             "INV-200": {"id": "INV-200", "owner": "user_b", "tenant": "org_b", "amount": 99.00, "status": "ISSUED"},
+            "INV-9001": {"id": "INV-9001", "owner": "tenant_alice", "tenant": "org_alice", "amount": 500.00, "status": "ISSUED"},
         }
         self.subscriptions: Dict[str, Dict[str, Any]] = {
             "SUB-100": {"id": "SUB-100", "owner": "user_a", "tenant": "org_a", "plan": "enterprise", "status": "ACTIVE"},
             "SUB-200": {"id": "SUB-200", "owner": "user_b", "tenant": "org_b", "plan": "basic", "status": "ACTIVE"},
+            "SUB-9001": {"id": "SUB-9001", "owner": "tenant_alice", "tenant": "org_alice", "plan": "enterprise", "status": "ACTIVE"},
         }
 
         # 2. E-commerce Orders state

@@ -171,3 +171,74 @@ def test_unknown_identity_fails_closed():
     )
     assert status == 401
     assert "Authentication required" in body["error"]
+
+
+def test_cross_tenant_isolation_and_authentication_invariants():
+    """
+    Verify exact security semantics for cross-tenant simulation:
+    1. Unknown identity -> 401
+    2. Known authenticated identity -> reaches authorization
+    3. Authenticated but unauthorized tenant -> 403
+    4. Authorized tenant -> 200
+    5. Cross-tenant replay -> 200 on vulnerable, 403 on patched
+    6. Forged identity -> 401
+    7. Privilege escalation attempt -> 403 on patched
+    """
+    vuln_app = SyntheticApp("saas_billing", vulnerable_variant=True)
+    patched_app = SyntheticApp("saas_billing", vulnerable_variant=False)
+
+    p_alice = SyntheticPrincipal(identity_id="tenant_alice", is_authenticated=True)
+    p_bob = SyntheticPrincipal(identity_id="tenant_bob", is_authenticated=True)
+    p_forged = SyntheticPrincipal(identity_id="forged_attacker", is_authenticated=True)
+
+    # 1. Unknown identity -> 401
+    st_unk, b_unk = patched_app.handle_request("GET", "/api/v1/invoices/INV-9001")
+    assert st_unk == 401
+    assert "Authentication required" in b_unk["error"]
+
+    # 2 & 4. Authorized tenant -> expected success 200
+    st_auth, b_auth = patched_app.handle_request(
+        "GET",
+        "/api/v1/invoices/INV-9001",
+        authenticated_principal=p_alice,
+    )
+    assert st_auth == 200
+    assert b_auth["invoice"]["owner"] == "tenant_alice"
+
+    # 3 & 5. Authenticated but unauthorized tenant (cross-tenant replay)
+    # On vulnerable variant -> 200 (BOLA occurs)
+    st_v, b_v = vuln_app.handle_request(
+        "GET",
+        "/api/v1/invoices/INV-9001",
+        authenticated_principal=p_bob,
+    )
+    assert st_v == 200
+    assert b_v["invoice"]["id"] == "INV-9001"
+
+    # On patched variant -> 403 (Authorization enforced)
+    st_p, b_p = patched_app.handle_request(
+        "GET",
+        "/api/v1/invoices/INV-9001",
+        authenticated_principal=p_bob,
+    )
+    assert st_p == 403
+    assert "Access forbidden" in b_p["error"]
+
+    # 6. Forged identity -> 401
+    st_f, b_f = patched_app.handle_request(
+        "GET",
+        "/api/v1/invoices/INV-9001",
+        authenticated_principal=p_forged,
+    )
+    assert st_f == 401
+    assert "Authentication required" in b_f["error"]
+
+    # 7. Privilege escalation attempt -> rejected 403
+    st_esc, b_esc = patched_app.handle_request(
+        "POST",
+        "/api/v1/users/tenant_bob/roles",
+        authenticated_principal=p_bob,
+    )
+    assert st_esc == 403
+    assert "Admin role required" in b_esc["error"]
+
