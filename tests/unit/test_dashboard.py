@@ -145,8 +145,16 @@ def test_dashboard_bind_rejects_external_interface_without_flag():
         validate_dashboard_bind("192.168.1.50", allow_external=False)
 
 
-def test_dashboard_bind_allows_external_with_explicit_flag(caplog):
-    """Verify validate_dashboard_bind permits external bind when allow_external=True and logs warning."""
+def test_dashboard_bind_allows_external_with_explicit_flag_and_auth(caplog):
+    """Verify validate_dashboard_bind permits external bind when allow_external=True and auth_configured=True."""
     from src.dashboard.app import validate_dashboard_bind
-    bound = validate_dashboard_bind("0.0.0.0", allow_external=True)
+    bound = validate_dashboard_bind("0.0.0.0", allow_external=True, auth_configured=True)
     assert bound == "0.0.0.0"
+
+
+def test_dashboard_bind_rejects_external_without_auth_configuration():
+    """Verify validate_dashboard_bind fails closed when allow_external=True but auth_configured=False."""
+    from src.dashboard.app import validate_dashboard_bind
+    with pytest.raises(ValueError, match="External binding must fail closed unless authentication is configured"):
+        validate_dashboard_bind("0.0.0.0", allow_external=True, auth_configured=False)
+
