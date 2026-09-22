@@ -134,12 +134,12 @@ class SafetyConfig(BaseModel):
     """Safety and sensitive data vault settings."""
     require_acknowledgment_for_state_changing: bool = Field(default=True)
     require_isolated_data_for_destructive: bool = Field(default=True)
-    secret_vault_path: Path = Field(default=Path("data/vault.enc"))
+    secret_vault_path: Optional[Path] = Field(default=None)
 
     @field_validator("secret_vault_path", mode="before")
     @classmethod
-    def parse_path(cls, v: Any) -> Path:
-        return Path(v)
+    def parse_path(cls, v: Any) -> Optional[Path]:
+        return Path(v) if v is not None else None
 
 
 class AppConfig(BaseModel):

@@ -6,7 +6,7 @@ from src.core.logging import AuditLogger
 from src.engine.runner import ReasoningRunner
 from src.eval.ablation import AblationFramework
 from src.evidence.adapters.generic_http import GenericHttpAdapter
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
 from src.retrieval.vector_store import LocalVectorStore
 
 
@@ -130,10 +130,11 @@ def test_typed_placeholders_preserve_correlation_without_exposing_secrets():
     assert token_tenant_a not in redacted_3
     assert token_tenant_b not in redacted_2
 
-    # Verify reversal is exact and restricted to the vault
-    assert vault.reverse_placeholder("[REDACTED_JWT_1]") == token_tenant_a
-    assert vault.reverse_placeholder("[REDACTED_JWT_2]") == token_tenant_b
-    assert vault.reverse_text(redacted_1) == text_1
+    # Verify reversal is exact and restricted to the vault with authorized context
+    test_ctx = VaultAccessContext(actor="test_runner", purpose=VaultReversalPurpose.AUTOMATED_TEST)
+    assert vault.reverse_placeholder("[REDACTED_JWT_1]", context=test_ctx) == token_tenant_a
+    assert vault.reverse_placeholder("[REDACTED_JWT_2]", context=test_ctx) == token_tenant_b
+    assert vault.reverse_text(redacted_1, context=test_ctx) == text_1
 
 
 def test_evaluation_outputs_do_not_leak_secrets():

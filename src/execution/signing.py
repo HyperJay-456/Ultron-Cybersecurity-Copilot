@@ -16,7 +16,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
 from src.execution.models import SigningProfile
 from src.execution.state import SigningKeyRecord
 from src.execution.state_manager import DeterministicStateManager
@@ -164,7 +164,15 @@ class HmacRequestSigner(RequestSigner):
             raise ReplayedSigningNonceError(f"Nonce {nonce_str} has already been consumed")
 
         # Resolve raw key from vault
-        raw_key = vault.reverse_placeholder(key_record.secret_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=profile.identity_id or "request_signer",
+                purpose=VaultReversalPurpose.REQUEST_SIGNING,
+                justification=f"Signing profile {profile.profile_id}",
+            )
+            raw_key = vault.reverse_placeholder(key_record.secret_ref, context=vault_ctx)
+        except Exception as e:
+            raise RequestSigningError(f"Vault authorization failed for signing key {key_record.secret_ref}: {e}")
         if not raw_key:
             raise RequestSigningError(f"Signing key placeholder {key_record.secret_ref} not found in vault")
 
@@ -218,7 +226,15 @@ class HmacRequestSigner(RequestSigner):
         except ValueError:
             return False
 
-        raw_key = vault.reverse_placeholder(key_record.secret_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=profile.identity_id or "request_signer",
+                purpose=VaultReversalPurpose.REQUEST_SIGNING,
+                justification=f"Verifying signature for profile {profile.profile_id}",
+            )
+            raw_key = vault.reverse_placeholder(key_record.secret_ref, context=vault_ctx)
+        except Exception:
+            return False
         if not raw_key:
             return False
 

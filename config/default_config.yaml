@@ -64,4 +64,5 @@ scope:
 safety:
   require_acknowledgment_for_state_changing: true
   require_isolated_data_for_destructive: true
-  secret_vault_path: "data/vault.enc"
+  # Note: Vault persistence on disk is intentionally disabled/ephemeral per docs/VAULT_PERSISTENCE_DESIGN.md
+  secret_vault_path: null

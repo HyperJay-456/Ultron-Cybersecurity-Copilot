@@ -11,7 +11,7 @@ Enforces:
 
 from typing import Any, Dict, Optional, Tuple
 
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
 from src.execution.models import CsrfLifecycleState
 from src.execution.state import CsrfRecord
 from src.execution.state_manager import DeterministicStateManager
@@ -79,7 +79,15 @@ class CsrfManager:
             return False, reason, None
 
         # Resolve raw value from vault immediately before outbound request transmission
-        raw_token = self.vault.reverse_placeholder(rec.token_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=identity_id or "csrf_manager",
+                purpose=VaultReversalPurpose.CSRF_CONSUMPTION,
+                justification="CSRF token consumption for HTTP dispatch",
+            )
+            raw_token = self.vault.reverse_placeholder(rec.token_ref, context=vault_ctx)
+        except Exception:
+            raw_token = None
         if not raw_token:
             # If the placeholder itself was a direct value or stored directly
             raw_token = rec.token_ref

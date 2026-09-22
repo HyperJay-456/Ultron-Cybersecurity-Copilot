@@ -5,9 +5,11 @@ import pytest
 
 from src.database.manager import DatabaseManager
 from src.evidence.compressor import SemanticCompressor
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.vector_store import LocalVectorStore
+
+TEST_CTX = VaultAccessContext(actor="test_runner", purpose=VaultReversalPurpose.AUTOMATED_TEST)
 
 
 def test_typed_redaction_aws_secret_key():
@@ -18,7 +20,7 @@ def test_typed_redaction_aws_secret_key():
 
     assert "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" not in redacted
     assert "[REDACTED_AWS_SECRET_1]" in redacted
-    assert vault.reverse_text(redacted) == text
+    assert vault.reverse_text(redacted, context=TEST_CTX) == text
 
 
 def test_typed_redaction_session_and_refresh_tokens():
@@ -97,8 +99,8 @@ def test_correlation_identical_secrets_map_to_identical_placeholders():
     p1 = vault._raw_to_placeholder[secret_value]
     assert p1 in redacted1
     assert p1 in redacted2
-    assert vault.reverse_text(redacted1) == text1
-    assert vault.reverse_text(redacted2) == text2
+    assert vault.reverse_text(redacted1, context=TEST_CTX) == text1
+    assert vault.reverse_text(redacted2, context=TEST_CTX) == text2
 
 
 def test_adversarial_pipeline_zero_raw_secret_leakage(tmp_path: Path):

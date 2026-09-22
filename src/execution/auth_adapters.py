@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 import httpx
 
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
 from src.execution.models import CredentialLifecycleState, CredentialType, SessionLifecycleState
 from src.execution.state import CredentialRecord, SessionRecord
 from src.scope.client import ScopedHttpClient, ScopeViolationError
@@ -88,7 +88,15 @@ class JwtRefreshAdapter(AuthAdapter):
             raise UnsupportedAuthFlowError(f"No refresh_token_ref available for credential {credential.token_ref}")
 
         # Resolve raw refresh token from vault immediately before outbound request
-        raw_refresh_token = vault.reverse_placeholder(credential.refresh_token_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=credential.identity_id or "auth_adapter",
+                purpose=VaultReversalPurpose.CREDENTIAL_ROTATION,
+                justification="JWT refresh adapter execution",
+            )
+            raw_refresh_token = vault.reverse_placeholder(credential.refresh_token_ref, context=vault_ctx)
+        except Exception as e:
+            raise AuthAdapterError(f"Vault authorization failed: {e}")
         if not raw_refresh_token:
             raise AuthAdapterError(f"Refresh token placeholder {credential.refresh_token_ref} not found in vault")
 
@@ -162,7 +170,15 @@ class OAuthRefreshAdapter(AuthAdapter):
         if not credential.refresh_token_ref:
             raise UnsupportedAuthFlowError(f"No refresh_token_ref for {credential.token_ref}")
 
-        raw_refresh_token = vault.reverse_placeholder(credential.refresh_token_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=credential.identity_id or "auth_adapter",
+                purpose=VaultReversalPurpose.CREDENTIAL_ROTATION,
+                justification="OAuth refresh token execution",
+            )
+            raw_refresh_token = vault.reverse_placeholder(credential.refresh_token_ref, context=vault_ctx)
+        except Exception as e:
+            raise AuthAdapterError(f"Vault authorization failed: {e}")
         if not raw_refresh_token:
             raise AuthAdapterError("OAuth refresh token placeholder missing from vault")
 
@@ -173,7 +189,15 @@ class OAuthRefreshAdapter(AuthAdapter):
         }
         client_secret_ref = config.get("client_secret_ref")
         if client_secret_ref:
-            raw_secret = vault.reverse_placeholder(client_secret_ref)
+            try:
+                secret_ctx = VaultAccessContext(
+                    actor=credential.identity_id or "auth_adapter",
+                    purpose=VaultReversalPurpose.CREDENTIAL_ROTATION,
+                    justification="OAuth client secret lookup",
+                )
+                raw_secret = vault.reverse_placeholder(client_secret_ref, context=secret_ctx)
+            except Exception:
+                raw_secret = None
             if raw_secret:
                 body_data["client_secret"] = raw_secret
 
@@ -235,7 +259,15 @@ class CookieSessionAdapter(AuthAdapter):
         if not login_url or not username or not password_ref:
             raise UnsupportedAuthFlowError("CookieSessionAdapter requires login_url, username, and password_ref")
 
-        raw_password = vault.reverse_placeholder(password_ref)
+        try:
+            vault_ctx = VaultAccessContext(
+                actor=username or "auth_adapter",
+                purpose=VaultReversalPurpose.CREDENTIAL_ROTATION,
+                justification="Cookie session re-authentication",
+            )
+            raw_password = vault.reverse_placeholder(password_ref, context=vault_ctx)
+        except Exception as e:
+            raise AuthAdapterError(f"Vault authorization failed: {e}")
         if not raw_password:
             raise AuthAdapterError(f"Password placeholder {password_ref} not found in vault")
 
@@ -292,7 +324,15 @@ class ReauthenticationAdapter(AuthAdapter):
             # Resolve any password/secret references in payload
             for k, v in list(payload.items()):
                 if isinstance(v, str) and v.startswith("[REDACTED_"):
-                    raw = vault.reverse_placeholder(v)
+                    try:
+                        vault_ctx = VaultAccessContext(
+                            actor=credential.identity_id or "auth_adapter",
+                            purpose=VaultReversalPurpose.CREDENTIAL_ROTATION,
+                            justification="Reauthentication payload substitution",
+                        )
+                        raw = vault.reverse_placeholder(v, context=vault_ctx)
+                    except Exception:
+                        raw = None
                     if raw:
                         payload[k] = raw
 

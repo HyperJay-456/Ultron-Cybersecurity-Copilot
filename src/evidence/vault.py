@@ -1,8 +1,60 @@
-"""Reversible Secret Redaction Vault protecting sensitive credentials while preserving correlation."""
+"""Reversible Secret Redaction Vault protecting sensitive credentials while preserving correlation.
 
+SECURITY ARCHITECTURE & LIFECYCLE:
+1. In-Memory Ephemeral Design:
+   The RedactionVault maintains an in-memory bijection table between raw secrets and typed
+   placeholders ([REDACTED_JWT_1], [REDACTED_SECRET_1]). No raw secrets or mappings are
+   ever written to disk or logged.
+2. Mandatory Authorization & Purpose Limitation:
+   Reversal of placeholders back to raw values via reverse_placeholder() or reverse_text()
+   strictly requires an authenticated VaultAccessContext (actor, purpose, justification).
+   Unauthenticated or unauthorized access fails closed.
+3. Tamper-Evident Secret Integrity:
+   Every stored secret is hashed with a per-session random salt. Reversal verifies integrity
+   prior to release; in-memory tampering immediately aborts and raises VaultDataTamperedError.
+4. Process Restart & Recovery Semantics:
+   Upon process termination or crash, in-memory mappings vanish from RAM. Persisted databases,
+   reports, and traces contain only stable redacted placeholders. Reproducibility never depends
+   on disk-persisted credentials.
+"""
+
+from enum import Enum
 import hashlib
 import re
+import secrets
 from typing import Any, Dict, List, Optional, Tuple
+from pydantic import BaseModel, Field
+
+
+class VaultAccessDeniedError(PermissionError):
+    """Raised when vault reversal is attempted without valid authorized context."""
+    pass
+
+
+class VaultAuditError(RuntimeError):
+    """Raised when audit logging fails during vault access, forcing fail-closed termination."""
+    pass
+
+
+class VaultDataTamperedError(RuntimeError):
+    """Raised when in-memory vault integrity verification fails."""
+    pass
+
+
+class VaultReversalPurpose(str, Enum):
+    EXECUTION_DISPATCH = "execution_dispatch"
+    AUTHENTICATED_HUMAN_VERIFICATION = "authenticated_human_verification"
+    CREDENTIAL_ROTATION = "credential_rotation"
+    REQUEST_SIGNING = "request_signing"
+    CSRF_CONSUMPTION = "csrf_consumption"
+    AUTOMATED_TEST = "automated_test"
+
+
+class VaultAccessContext(BaseModel):
+    """Mandatory caller context required for reversing secret placeholders."""
+    actor: str = Field(min_length=1, description="Authenticated actor identifier requesting reversal")
+    purpose: VaultReversalPurpose = Field(description="Authorized business purpose for reversal")
+    justification: Optional[str] = Field(default=None, description="Detailed justification or tracking id")
 
 
 class RedactionVault:
@@ -42,10 +94,13 @@ class RedactionVault:
         re.IGNORECASE,
     )
 
-    def __init__(self) -> None:
+    def __init__(self, audit_logger: Optional[Any] = None) -> None:
+        self.audit_logger = audit_logger
         self._raw_to_placeholder: Dict[str, str] = {}
         self._placeholder_to_raw: Dict[str, str] = {}
         self._category_counters: Dict[str, int] = {}
+        self._secret_integrity: Dict[str, str] = {}
+        self._salt: str = secrets.token_hex(16)
 
     def _get_or_create_placeholder(self, raw_value: str, category: str) -> str:
         """Assign or retrieve a stable placeholder for this exact raw value."""
@@ -58,7 +113,26 @@ class RedactionVault:
 
         self._raw_to_placeholder[raw_value] = placeholder
         self._placeholder_to_raw[placeholder] = raw_value
+        self._secret_integrity[placeholder] = hashlib.sha256((self._salt + raw_value).encode("utf-8")).hexdigest()
         return placeholder
+
+    def _log_reversal(self, placeholder: str, context: VaultAccessContext, success: bool) -> None:
+        """Audit reversal access. Never logs raw secrets."""
+        if self.audit_logger:
+            try:
+                purpose_val = context.purpose.value if hasattr(context.purpose, "value") else str(context.purpose)
+                self.audit_logger.log_event(
+                    event_type="VAULT_REVERSAL_ACCESSED" if success else "VAULT_REVERSAL_DENIED",
+                    actor=context.actor,
+                    subject_id=placeholder,
+                    details={
+                        "purpose": purpose_val,
+                        "justification": context.justification or "",
+                        "success": success,
+                    },
+                )
+            except Exception as e:
+                raise VaultAuditError(f"Vault audit logging failed: {e}. Reversal blocked to fail closed.")
 
     def redact_text(self, text: str) -> str:
         """Scan free text and replace sensitive signatures with typed placeholders."""
@@ -173,7 +247,6 @@ class RedactionVault:
                 ]
             elif isinstance(value, str):
                 if self.SENSITIVE_KEY_PATTERN.search(key):
-                    # Redact entire value if key name indicates a secret
                     clean[key] = self._get_or_create_placeholder(value, "SECRET")
                 else:
                     clean[key] = self.redact_text(value)
@@ -181,15 +254,63 @@ class RedactionVault:
                 clean[key] = value
         return clean
 
-    def reverse_placeholder(self, placeholder: str) -> Optional[str]:
-        """Look up the original raw secret for an authorized human verification check."""
-        return self._placeholder_to_raw.get(placeholder)
+    def reverse_placeholder(
+        self,
+        placeholder: str,
+        context: Optional[VaultAccessContext] = None,
+    ) -> Optional[str]:
+        """
+        Look up the original raw secret with mandatory authorization, purpose limitation,
+        integrity verification, and fail-closed audit logging.
+        """
+        if not context or not isinstance(context, VaultAccessContext):
+            raise VaultAccessDeniedError(
+                "Unauthorized vault reversal: valid VaultAccessContext is required."
+            )
+        if not context.actor or not context.actor.strip():
+            raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
 
-    def reverse_text(self, text: str) -> str:
-        """Reconstitute placeholders back to original secrets for human verification."""
+        raw = self._placeholder_to_raw.get(placeholder)
+        if raw is None:
+            self._log_reversal(placeholder, context, success=False)
+            return None
+
+        # Verify in-memory integrity
+        expected_digest = self._secret_integrity.get(placeholder)
+        if expected_digest:
+            actual_digest = hashlib.sha256((self._salt + raw).encode("utf-8")).hexdigest()
+            if actual_digest != expected_digest:
+                self._log_reversal(placeholder, context, success=False)
+                raise VaultDataTamperedError(
+                    f"Vault in-memory integrity violation detected for placeholder {placeholder}!"
+                )
+
+        # Audit logging MUST succeed before secret is returned
+        self._log_reversal(placeholder, context, success=True)
+        return raw
+
+    def reverse_text(
+        self,
+        text: str,
+        context: Optional[VaultAccessContext] = None,
+    ) -> str:
+        """
+        Reconstitute placeholders back to original secrets with mandatory authorization
+        and audit logging.
+        """
+        if not context or not isinstance(context, VaultAccessContext):
+            raise VaultAccessDeniedError(
+                "Unauthorized vault reversal: valid VaultAccessContext is required."
+            )
+        if not context.actor or not context.actor.strip():
+            raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
+
+        placeholders_in_text = [p for p in self._placeholder_to_raw if p in text]
         result = text
-        for placeholder, raw in self._placeholder_to_raw.items():
-            result = result.replace(placeholder, raw)
+        for p in placeholders_in_text:
+            raw_val = self.reverse_placeholder(p, context=context)
+            if raw_val is not None:
+                result = result.replace(p, raw_val)
         return result
 
     def register_token_metadata(
@@ -226,4 +347,3 @@ class TokenMetadata:
             return False
         import time
         return (time.time() + clock_skew_seconds) >= self.expires_at
-

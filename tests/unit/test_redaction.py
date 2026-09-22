@@ -1,13 +1,20 @@
 """Unit tests for the reversible secret redaction vault."""
 
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import RedactionVault, VaultAccessContext, VaultReversalPurpose
+
+
+TEST_CTX = VaultAccessContext(actor="test_runner", purpose=VaultReversalPurpose.AUTOMATED_TEST)
 
 
 def test_redact_jwt():
-    """Verify JWTs are replaced with stable typed placeholders."""
+    """Verify standard JWT tokens are redacted with typed placeholders."""
     vault = RedactionVault()
-    raw_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-    text = f"Bearer {raw_jwt}"
+    raw_jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    text = f"User authenticated with Bearer {raw_jwt} successfully."
 
     redacted = vault.redact_text(text)
     assert raw_jwt not in redacted
@@ -18,7 +25,7 @@ def test_redact_jwt():
     assert "[REDACTED_JWT_1]" in second_redacted
 
     # Verify reversal for human inspection
-    reversed_text = vault.reverse_text(redacted)
+    reversed_text = vault.reverse_text(redacted, context=TEST_CTX)
     assert reversed_text == text
 
 
@@ -31,7 +38,7 @@ def test_redact_aws_key():
     redacted = vault.redact_text(text)
     assert raw_key not in redacted
     assert "[REDACTED_AWS_KEY_1]" in redacted
-    assert vault.reverse_text(redacted) == text
+    assert vault.reverse_text(redacted, context=TEST_CTX) == text
 
 
 def test_redact_dict_sensitive_keys():
@@ -55,5 +62,5 @@ def test_redact_dict_sensitive_keys():
     assert clean["profile"]["bio"] == "Developer at Target Corp"
 
     # Verify reversal
-    assert vault.reverse_placeholder("[REDACTED_SECRET_1]") == "SuperSecretPassword123!"
-    assert vault.reverse_placeholder("[REDACTED_SECRET_2]") == "secret_key_9999"
+    assert vault.reverse_placeholder("[REDACTED_SECRET_1]", context=TEST_CTX) == "SuperSecretPassword123!"
+    assert vault.reverse_placeholder("[REDACTED_SECRET_2]", context=TEST_CTX) == "secret_key_9999"

@@ -29,7 +29,14 @@ import json
 import httpx
 
 from src.core.logging import AuditLogger
-from src.evidence.vault import RedactionVault
+from src.evidence.vault import (
+    RedactionVault,
+    VaultAccessContext,
+    VaultReversalPurpose,
+    VaultAccessDeniedError,
+    VaultAuditError,
+    VaultDataTamperedError,
+)
 from src.execution.approval import ApprovalGate
 from src.execution.csrf import CsrfManager
 from src.execution.models import (
@@ -456,7 +463,27 @@ class DeterministicExecutionEngine:
 
         # Re-resolve authorization tokens into raw headers immediately before transmission
         for token_ref in experiment.required_token_references:
-            raw_val = self.vault.reverse_placeholder(token_ref)
+            try:
+                vault_ctx = VaultAccessContext(
+                    actor=actor_id,
+                    purpose=VaultReversalPurpose.EXECUTION_DISPATCH,
+                    justification=f"Dispatched experiment {exp_id}",
+                )
+                raw_val = self.vault.reverse_placeholder(token_ref, context=vault_ctx)
+            except (VaultAccessDeniedError, VaultAuditError, VaultDataTamperedError) as e:
+                self._log_audit(
+                    event_type="EXECUTION_BLOCKED_AUTH_STATE",
+                    subject_id=exp_id,
+                    details={"error": f"VAULT_REVERSAL_FAILED: {e}", "token_ref": token_ref},
+                )
+                return ExecutionResult(
+                    experiment_id=exp_id,
+                    status=ExecutionStatus.BLOCKED_AUTH_STATE,
+                    error_message=f"Vault reversal failed for token '{token_ref}': {e}",
+                    descriptor_digest=desc_digest,
+                    latency_seconds=time.perf_counter() - t0,
+                )
+
             if not raw_val:
                 self._log_audit(
                     event_type="EXECUTION_BLOCKED_AUTH_STATE",
