@@ -1933,6 +1933,7 @@ AVAILABLE TARGET EVIDENCE:
         target_asset: Optional[Dict[str, Any]] = None,
         category_id: Optional[str] = None,
         vapt_pack: Optional[Any] = None,
+        num_predict: Optional[int] = None,
     ) -> M5ExecutionResult:
         """
         Executes the authoritative Milestone M5 Reasoned Generation Pipeline:
@@ -1971,6 +1972,8 @@ AVAILABLE TARGET EVIDENCE:
                 compilation_error=str(exc),
             )
 
+        effective_num_predict = num_predict if num_predict is not None else PRIMARY_NUM_PREDICT
+
         # 2. Runtime Execution with Schema Agreement
         prompt = f"{contract.system_prompt}\n{contract.user_prompt}"
         schema = contract.runtime_schema
@@ -1993,7 +1996,7 @@ AVAILABLE TARGET EVIDENCE:
                     prompt=prompt,
                     schema=schema,
                     num_ctx=PRIMARY_NUM_CTX,
-                    num_predict=PRIMARY_NUM_PREDICT,
+                    num_predict=effective_num_predict,
                 )
                 raw_response = resp_data.get("response", "")
                 eval_count = resp_data.get("eval_count")
@@ -2007,7 +2010,7 @@ AVAILABLE TARGET EVIDENCE:
         if transport_error is not None:
             classification = classify_primary_failure(
                 transport_error=transport_error,
-                num_predict=PRIMARY_NUM_PREDICT,
+                num_predict=effective_num_predict,
             )
             return M5ExecutionResult(
                 raw_response=raw_response,
@@ -2118,7 +2121,7 @@ AVAILABLE TARGET EVIDENCE:
             raw_response=raw_response,
             eval_count=eval_count,
             done_reason=done_reason,
-            num_predict=PRIMARY_NUM_PREDICT,
+            num_predict=effective_num_predict,
             parsed_json=parsed_intermediate if isinstance(parsed_intermediate, dict) else None,
             parse_error=parse_error,
             schema_error=schema_error,
