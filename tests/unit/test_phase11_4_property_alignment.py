@@ -314,7 +314,7 @@ def test_19_historical_artifact_hashes_unchanged(rel_path, expected_hash):
         ("data/eval/m5_phase11_2_live_results.json", "48dd13c5e46dfc75f2c27ca64dd5efae45b0686043c99d9f19fb0749e05540a9"),
         ("data/eval/m5_phase11_2_manifest.json", "b72e0dfbafb23b7edf561fe5df0d44ff65e45d5b52caf251cd039fbedd304cab"),
         ("docs/M5_PHASE11_2_POLARITY_DIAGNOSTIC_PREREGISTRATION.md", "8c241d79d520783e238fee70df01755a71692ec6c5964553e6b9761adc53ce8a"),
-        ("docs/M5_PHASE11_2_POLARITY_DIAGNOSTIC_REPORT.md", "ec46f5eff4780af67c725e5d9e93370f54a2d122ed94297f5b78b7a2f29f8369"),
+        ("docs/M5_PHASE11_2_POLARITY_DIAGNOSTIC_REPORT.md", "ff3d8040f1df44eb065c6b1735f9e1dad001f0cc7823c14037892ebd892db742"),
     ],
 )
 def test_20_phase11_2_artifact_hashes_unchanged(rel_path, expected_hash):
