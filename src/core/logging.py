@@ -3,13 +3,106 @@
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
+import sys
 import threading
+import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 GENESIS_PREVIOUS_HASH = "0" * 64
+
+
+class CrossProcessAuditLock:
+    """
+    OS-level cross-process advisory lock compatible with Windows and POSIX.
+    Uses filelock if available, with robust msvcrt (Windows) / fcntl (POSIX) fallback.
+    """
+    def __init__(self, lock_file_path: Path, timeout: float = 30.0) -> None:
+        self.lock_file_path = Path(lock_file_path)
+        self.timeout = timeout
+        self._filelock_instance = None
+        self._fd = None
+
+    def __enter__(self):
+        # 1. Try filelock package if installed
+        try:
+            from filelock import FileLock
+            self._filelock_instance = FileLock(str(self.lock_file_path), timeout=self.timeout)
+            self._filelock_instance.acquire()
+            return self
+        except ImportError:
+            pass
+
+        # 2. Native OS fallback
+        deadline = time.monotonic() + self.timeout
+        self.lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                try:
+                    self._fd = os.open(str(self.lock_file_path), os.O_RDWR | os.O_CREAT)
+                    msvcrt.locking(self._fd, msvcrt.LK_NBLCK, 1)
+                    return self
+                except (OSError, IOError):
+                    if self._fd is not None:
+                        try:
+                            os.close(self._fd)
+                        except Exception:
+                            pass
+                        self._fd = None
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Could not acquire cross-process lock on {self.lock_file_path} within {self.timeout}s")
+                    time.sleep(0.01)
+        else:
+            import fcntl
+            while True:
+                try:
+                    self._fd = os.open(str(self.lock_file_path), os.O_RDWR | os.O_CREAT)
+                    fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return self
+                except (OSError, IOError):
+                    if self._fd is not None:
+                        try:
+                            os.close(self._fd)
+                        except Exception:
+                            pass
+                        self._fd = None
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Could not acquire cross-process lock on {self.lock_file_path} within {self.timeout}s")
+                    time.sleep(0.01)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._filelock_instance is not None:
+            try:
+                self._filelock_instance.release()
+            except Exception:
+                pass
+            self._filelock_instance = None
+            return False
+
+        if self._fd is not None:
+            if sys.platform == "win32":
+                import msvcrt
+                try:
+                    msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            try:
+                os.close(self._fd)
+            except Exception:
+                pass
+            self._fd = None
+        return False
 
 
 def get_logger(name: str, level: str = "INFO") -> logging.Logger:
@@ -66,21 +159,39 @@ class AuditLogger:
     remote syslog/SIEM forwarding).
     """
 
-    def __init__(self, audit_file_path: Path) -> None:
+    def __init__(self, audit_file_path: Path, lock_timeout: float = 30.0) -> None:
         self.audit_file_path = Path(audit_file_path)
+        self.lock_file_path = self.audit_file_path.with_suffix(self.audit_file_path.suffix + ".lock")
         self.audit_file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self.lock_timeout = lock_timeout
 
-        # Initialize chain state under lock
+        # Initialize chain state under both in-process lock and OS file lock
         with self._lock:
-            self._current_sequence = 0
-            self._last_record_hash = GENESIS_PREVIOUS_HASH
-            self._initialize_chain_state()
+            with CrossProcessAuditLock(self.lock_file_path, timeout=self.lock_timeout):
+                self._current_sequence, self._last_record_hash = self._read_tail_state()
 
-    def _initialize_chain_state(self) -> None:
-        """Scan existing records to resume sequence and hash chain."""
-        if not self.audit_file_path.exists():
-            return
+    def _read_tail_state(self) -> Tuple[int, str]:
+        """Scan authoritative tail record from disk to resume sequence and hash chain."""
+        if not self.audit_file_path.exists() or self.audit_file_path.stat().st_size == 0:
+            return 0, GENESIS_PREVIOUS_HASH
+
+        try:
+            with open(self.audit_file_path, "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                chunk_size = min(size, 8192)
+                f.seek(-chunk_size, 2)
+                raw_chunk = f.read()
+                lines = raw_chunk.split(b"\n")
+                for line in reversed(lines):
+                    line = line.strip()
+                    if line:
+                        rec = json.loads(line.decode("utf-8"))
+                        if "sequence_number" in rec and "record_hash" in rec:
+                            return rec["sequence_number"], rec["record_hash"]
+        except Exception:
+            pass
 
         last_seq = 0
         last_hash = GENESIS_PREVIOUS_HASH
@@ -100,8 +211,7 @@ class AuditLogger:
         except Exception:
             pass
 
-        self._current_sequence = last_seq
-        self._last_record_hash = last_hash
+        return last_seq, last_hash
 
     @staticmethod
     def compute_canonical_hash(data: Dict[str, Any]) -> str:
@@ -121,46 +231,55 @@ class AuditLogger:
     ) -> Dict[str, Any]:
         """
         Record a chained, tamper-evident audit record to the JSONL log file.
+        Enforces cross-process file locking, authoritative tail state derivation,
+        atomic appending, and physical disk flush.
         """
         now = datetime.now(timezone.utc).isoformat()
         payload = details or {}
         payload_hash = self.compute_canonical_hash(payload)
 
         with self._lock:
-            sequence_number = self._current_sequence + 1
-            previous_record_hash = self._last_record_hash
+            with CrossProcessAuditLock(self.lock_file_path, timeout=self.lock_timeout):
+                # 1. Authoritative tail read under OS lock
+                last_seq, last_hash = self._read_tail_state()
+                sequence_number = last_seq + 1
+                previous_record_hash = last_hash
 
-            # Body containing all security-relevant fields to be hashed
-            record_body: Dict[str, Any] = {
-                "sequence_number": sequence_number,
-                "previous_record_hash": previous_record_hash,
-                "timestamp": now,
-                "event_type": event_type,
-                "actor": actor,
-                "subject_id": subject_id,
-                "previous_state": previous_state,
-                "new_state": new_state,
-                "evidence_ref": evidence_ref,
-                "payload_hash": payload_hash,
-            }
+                # 2. Body containing all security-relevant fields to be hashed
+                record_body: Dict[str, Any] = {
+                    "sequence_number": sequence_number,
+                    "previous_record_hash": previous_record_hash,
+                    "timestamp": now,
+                    "event_type": event_type,
+                    "actor": actor,
+                    "subject_id": subject_id,
+                    "previous_state": previous_state,
+                    "new_state": new_state,
+                    "evidence_ref": evidence_ref,
+                    "payload_hash": payload_hash,
+                }
 
-            # Canonical record hash covering all security-relevant metadata
-            record_hash = self.compute_canonical_hash(record_body)
+                # 3. Canonical record hash covering all security-relevant metadata
+                record_hash = self.compute_canonical_hash(record_body)
 
-            # Complete record written to disk
-            record: Dict[str, Any] = {
-                **record_body,
-                "record_hash": record_hash,
-                "details": payload,
-            }
+                # 4. Complete record written to disk
+                record: Dict[str, Any] = {
+                    **record_body,
+                    "record_hash": record_hash,
+                    "details": payload,
+                }
 
-            line = json.dumps(record, sort_keys=True, default=str) + "\n"
-            with open(self.audit_file_path, "a", encoding="utf-8") as f:
-                f.write(line)
-                f.flush()
+                line = json.dumps(record, sort_keys=True, default=str) + "\n"
+                with open(self.audit_file_path, "a", encoding="utf-8") as f:
+                    f.write(line)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except (AttributeError, OSError):
+                        pass
 
-            self._current_sequence = sequence_number
-            self._last_record_hash = record_hash
+                self._current_sequence = sequence_number
+                self._last_record_hash = record_hash
 
         return record
 
@@ -171,14 +290,15 @@ class AuditLogger:
             return records
 
         with self._lock:
-            with open(self.audit_file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            records.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
+            with CrossProcessAuditLock(self.lock_file_path, timeout=self.lock_timeout):
+                with open(self.audit_file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                records.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
         if limit:
             return records[-limit:]
         return records
@@ -205,74 +325,76 @@ def verify_audit_log(audit_file_path: Path) -> AuditLogVerificationResult:
     errors: List[str] = []
     total_records = 0
 
-    with open(audit_file_path, "r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            total_records += 1
+    lock_file = audit_file_path.with_suffix(audit_file_path.suffix + ".lock")
+    with CrossProcessAuditLock(lock_file):
+        with open(audit_file_path, "r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                total_records += 1
 
-            try:
-                rec = json.loads(line)
-            except Exception as e:
-                tampered_records.append(line_num)
-                tampering_types.append("MALFORMED_JSON")
-                errors.append(f"Line {line_num}: Malformed JSON: {e}")
-                continue
+                try:
+                    rec = json.loads(line)
+                except Exception as e:
+                    tampered_records.append(line_num)
+                    tampering_types.append("MALFORMED_JSON")
+                    errors.append(f"Line {line_num}: Malformed JSON: {e}")
+                    continue
 
-            seq = rec.get("sequence_number")
-            prev_hash = rec.get("previous_record_hash")
-            rec_hash = rec.get("record_hash")
-            payload_hash = rec.get("payload_hash")
-            details = rec.get("details", {})
+                seq = rec.get("sequence_number")
+                prev_hash = rec.get("previous_record_hash")
+                rec_hash = rec.get("record_hash")
+                payload_hash = rec.get("payload_hash")
+                details = rec.get("details", {})
 
-            # 1. Check sequence monotonicity
-            if seq != expected_seq:
-                tampered_records.append(line_num)
-                if seq is not None and seq > expected_seq:
-                    tampering_types.append("DELETION")
-                    errors.append(f"Line {line_num}: Sequence gap detected (expected {expected_seq}, got {seq}): record deleted")
-                else:
-                    tampering_types.append("REORDERING_OR_INSERTION")
-                    errors.append(f"Line {line_num}: Sequence mismatch (expected {expected_seq}, got {seq})")
+                # 1. Check sequence monotonicity
+                if seq != expected_seq:
+                    tampered_records.append(line_num)
+                    if seq is not None and seq > expected_seq:
+                        tampering_types.append("DELETION")
+                        errors.append(f"Line {line_num}: Sequence gap detected (expected {expected_seq}, got {seq}): record deleted")
+                    else:
+                        tampering_types.append("REORDERING_OR_INSERTION")
+                        errors.append(f"Line {line_num}: Sequence mismatch (expected {expected_seq}, got {seq})")
 
-            # 2. Check hash chain continuity
-            if prev_hash != expected_prev_hash:
-                tampered_records.append(line_num)
-                tampering_types.append("CHAIN_BROKEN_OR_REPLACED")
-                errors.append(
-                    f"Line {line_num}: Hash chain broken (expected prev {expected_prev_hash[:12]}..., got {str(prev_hash)[:12]}...)"
-                )
+                # 2. Check hash chain continuity
+                if prev_hash != expected_prev_hash:
+                    tampered_records.append(line_num)
+                    tampering_types.append("CHAIN_BROKEN_OR_REPLACED")
+                    errors.append(
+                        f"Line {line_num}: Hash chain broken (expected prev {expected_prev_hash[:12]}..., got {str(prev_hash)[:12]}...)"
+                    )
 
-            # 3. Check payload hash integrity
-            computed_payload_hash = AuditLogger.compute_canonical_hash(details)
-            if payload_hash != computed_payload_hash:
-                tampered_records.append(line_num)
-                tampering_types.append("MODIFICATION")
-                errors.append(f"Line {line_num}: Details payload hash mismatch")
+                # 3. Check payload hash integrity
+                computed_payload_hash = AuditLogger.compute_canonical_hash(details)
+                if payload_hash != computed_payload_hash:
+                    tampered_records.append(line_num)
+                    tampering_types.append("MODIFICATION")
+                    errors.append(f"Line {line_num}: Details payload hash mismatch")
 
-            # 4. Recompute canonical record hash
-            record_body: Dict[str, Any] = {
-                "sequence_number": seq,
-                "previous_record_hash": prev_hash,
-                "timestamp": rec.get("timestamp"),
-                "event_type": rec.get("event_type"),
-                "actor": rec.get("actor"),
-                "subject_id": rec.get("subject_id"),
-                "previous_state": rec.get("previous_state"),
-                "new_state": rec.get("new_state"),
-                "evidence_ref": rec.get("evidence_ref"),
-                "payload_hash": payload_hash,
-            }
-            computed_record_hash = AuditLogger.compute_canonical_hash(record_body)
-            if rec_hash != computed_record_hash:
-                tampered_records.append(line_num)
-                tampering_types.append("MODIFICATION")
-                errors.append(f"Line {line_num}: Canonical record hash mismatch (tampered content)")
+                # 4. Recompute canonical record hash
+                record_body: Dict[str, Any] = {
+                    "sequence_number": seq,
+                    "previous_record_hash": prev_hash,
+                    "timestamp": rec.get("timestamp"),
+                    "event_type": rec.get("event_type"),
+                    "actor": rec.get("actor"),
+                    "subject_id": rec.get("subject_id"),
+                    "previous_state": rec.get("previous_state"),
+                    "new_state": rec.get("new_state"),
+                    "evidence_ref": rec.get("evidence_ref"),
+                    "payload_hash": payload_hash,
+                }
+                computed_record_hash = AuditLogger.compute_canonical_hash(record_body)
+                if rec_hash != computed_record_hash:
+                    tampered_records.append(line_num)
+                    tampering_types.append("MODIFICATION")
+                    errors.append(f"Line {line_num}: Canonical record hash mismatch (tampered content)")
 
-            # Advance expected chain state
-            expected_seq = (seq + 1) if seq is not None else (expected_seq + 1)
-            expected_prev_hash = rec_hash if rec_hash else "INVALID_PREV"
+                # Advance expected chain state
+                expected_seq = (seq + 1) if seq is not None else (expected_seq + 1)
+                expected_prev_hash = rec_hash if rec_hash else "INVALID_PREV"
 
     valid = len(tampered_records) == 0
     return AuditLogVerificationResult(

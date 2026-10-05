@@ -245,3 +245,47 @@ def test_hypothesis_triggers_and_verification_workflow(db: DatabaseManager):
     db.update_hypothesis_state(hyp_id, "Reported")
     reported_hyp = db.get_hypothesis(hyp_id)
     assert reported_hyp["state"] == "Reported"
+
+
+def test_fts5_update_and_delete_synchronization(db: DatabaseManager):
+    """
+    Verify FTS5 external content table synchronization on INSERT, UPDATE, and DELETE.
+    Enforces trg_evidence_ai, trg_evidence_au, and trg_evidence_ad integrity.
+    """
+    # 1. Insert evidence with statement 'apple'
+    db.insert_evidence_item({
+        "fact_id": "FACT-FRUIT-01",
+        "certainty": "OBSERVED",
+        "statement": "Observed apple pie vulnerability in billing",
+        "source_tool": "scanner",
+    })
+
+    # 2. Confirm FTS finds 'apple'
+    hits_apple = db.query_fts("apple")
+    assert len(hits_apple) == 1
+    assert hits_apple[0]["fact_id"] == "FACT-FRUIT-01"
+
+    # 3. Update statement to 'banana'
+    with db.get_connection() as conn:
+        conn.execute(
+            "UPDATE evidence_items SET statement = ? WHERE fact_id = ?",
+            ("Observed banana split vulnerability in billing", "FACT-FRUIT-01"),
+        )
+        conn.commit()
+
+    # 4. Confirm FTS finds 'banana'
+    hits_banana = db.query_fts("banana")
+    assert len(hits_banana) == 1
+    assert hits_banana[0]["fact_id"] == "FACT-FRUIT-01"
+
+    # 5. Confirm old 'apple' entry no longer matches
+    hits_apple_after = db.query_fts("apple")
+    assert len(hits_apple_after) == 0
+
+    # 6. Verify delete still works
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM evidence_items WHERE fact_id = ?", ("FACT-FRUIT-01",))
+        conn.commit()
+
+    hits_banana_after_delete = db.query_fts("banana")
+    assert len(hits_banana_after_delete) == 0

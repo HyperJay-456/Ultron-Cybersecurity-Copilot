@@ -79,6 +79,13 @@ class DatabaseManager:
                     INSERT INTO evidence_fts(evidence_fts, rowid, fact_id, statement, source_tool)
                     VALUES('delete', old.rowid, old.fact_id, old.statement, old.source_tool);
                 END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_evidence_au AFTER UPDATE ON evidence_items BEGIN
+                    INSERT INTO evidence_fts(evidence_fts, rowid, fact_id, statement, source_tool)
+                    VALUES('delete', old.rowid, old.fact_id, old.statement, old.source_tool);
+                    INSERT INTO evidence_fts(rowid, fact_id, statement, source_tool)
+                    VALUES(new.rowid, new.fact_id, new.statement, new.source_tool);
+                END;
             """)
             conn.commit()
 

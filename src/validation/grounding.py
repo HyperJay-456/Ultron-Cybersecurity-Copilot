@@ -79,12 +79,35 @@ class GroundingValidator:
         # 3. ID VALIDATION: Check cited evidence facts existence
         all_cited_facts = output.supporting_evidence_ids + output.contradicting_evidence_ids
         for fact_id in all_cited_facts:
+            if not isinstance(fact_id, str) or not fact_id.strip():
+                return ValidationResult(
+                    valid=False,
+                    status=ValidationStatus.DISCARD,
+                    reason=f"hallucinated_evidence: cited fact '{fact_id}' is malformed or empty",
+                    final_decision=HypothesisDecision.INSUFFICIENT_EVIDENCE,
+                )
+
             norm_fact_id = fact_id.replace("EVIDENCE [", "").replace("[", "").replace("]", "").strip()
+            if not norm_fact_id:
+                return ValidationResult(
+                    valid=False,
+                    status=ValidationStatus.DISCARD,
+                    reason=f"hallucinated_evidence: cited fact '{fact_id}' is malformed or empty",
+                    final_decision=HypothesisDecision.INSUFFICIENT_EVIDENCE,
+                )
+
+            # 1. Exact canonical lookup by normalized or raw fact ID
             ev = self.db_manager.get_evidence_item(norm_fact_id) or self.db_manager.get_evidence_item(fact_id)
+
+            # 2. Canonical prefix normalization if caller omitted 'FACT-'
             if not ev and not norm_fact_id.startswith("FACT-"):
                 ev = self.db_manager.get_evidence_item(f"FACT-{norm_fact_id}")
+
+            # 3. Explicit canonical alias normalization for simulation/execution facts
             if not ev and norm_fact_id in ("EXECUTION-RESULT-001", "EMP-001", "EXP-001", "SIM-001"):
                 ev = self.db_manager.get_evidence_item("FACT-SIM-EXEC-01")
+
+            # 4. Explicit known structural variations (exact equality only, NEVER substring containment)
             if not ev:
                 with self.db_manager.get_connection() as conn:
                     cursor = conn.execute("SELECT * FROM evidence_items")
@@ -92,12 +115,14 @@ class GroundingValidator:
                         fid = row["fact_id"]
                         if (
                             norm_fact_id == fid.replace("FACT-", "")
-                            or norm_fact_id in fid
                             or fid.replace("ORDERS", "ORD") == f"FACT-{norm_fact_id}"
                             or fid.replace("-01", "-1") == f"FACT-{norm_fact_id}"
+                            or fid.replace("ORDERS", "ORD") == norm_fact_id
+                            or fid.replace("-01", "-1") == norm_fact_id
                         ):
                             ev = dict(row)
                             break
+
             if not ev:
                 return ValidationResult(
                     valid=False,

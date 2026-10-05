@@ -22,6 +22,7 @@ from enum import Enum
 import hashlib
 import re
 import secrets
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
@@ -101,20 +102,22 @@ class RedactionVault:
         self._category_counters: Dict[str, int] = {}
         self._secret_integrity: Dict[str, str] = {}
         self._salt: str = secrets.token_hex(16)
+        self._lock = threading.RLock()
 
     def _get_or_create_placeholder(self, raw_value: str, category: str) -> str:
         """Assign or retrieve a stable placeholder for this exact raw value."""
-        if raw_value in self._raw_to_placeholder:
-            return self._raw_to_placeholder[raw_value]
+        with self._lock:
+            if raw_value in self._raw_to_placeholder:
+                return self._raw_to_placeholder[raw_value]
 
-        count = self._category_counters.get(category, 0) + 1
-        self._category_counters[category] = count
-        placeholder = f"[REDACTED_{category}_{count}]"
+            count = self._category_counters.get(category, 0) + 1
+            self._category_counters[category] = count
+            placeholder = f"[REDACTED_{category}_{count}]"
 
-        self._raw_to_placeholder[raw_value] = placeholder
-        self._placeholder_to_raw[placeholder] = raw_value
-        self._secret_integrity[placeholder] = hashlib.sha256((self._salt + raw_value).encode("utf-8")).hexdigest()
-        return placeholder
+            self._raw_to_placeholder[raw_value] = placeholder
+            self._placeholder_to_raw[placeholder] = raw_value
+            self._secret_integrity[placeholder] = hashlib.sha256((self._salt + raw_value).encode("utf-8")).hexdigest()
+            return placeholder
 
     def _log_reversal(self, placeholder: str, context: VaultAccessContext, success: bool) -> None:
         """Audit reversal access. Never logs raw secrets."""
@@ -263,31 +266,32 @@ class RedactionVault:
         Look up the original raw secret with mandatory authorization, purpose limitation,
         integrity verification, and fail-closed audit logging.
         """
-        if not context or not isinstance(context, VaultAccessContext):
-            raise VaultAccessDeniedError(
-                "Unauthorized vault reversal: valid VaultAccessContext is required."
-            )
-        if not context.actor or not context.actor.strip():
-            raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
-
-        raw = self._placeholder_to_raw.get(placeholder)
-        if raw is None:
-            self._log_reversal(placeholder, context, success=False)
-            return None
-
-        # Verify in-memory integrity
-        expected_digest = self._secret_integrity.get(placeholder)
-        if expected_digest:
-            actual_digest = hashlib.sha256((self._salt + raw).encode("utf-8")).hexdigest()
-            if actual_digest != expected_digest:
-                self._log_reversal(placeholder, context, success=False)
-                raise VaultDataTamperedError(
-                    f"Vault in-memory integrity violation detected for placeholder {placeholder}!"
+        with self._lock:
+            if not context or not isinstance(context, VaultAccessContext):
+                raise VaultAccessDeniedError(
+                    "Unauthorized vault reversal: valid VaultAccessContext is required."
                 )
+            if not context.actor or not context.actor.strip():
+                raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
 
-        # Audit logging MUST succeed before secret is returned
-        self._log_reversal(placeholder, context, success=True)
-        return raw
+            raw = self._placeholder_to_raw.get(placeholder)
+            if raw is None:
+                self._log_reversal(placeholder, context, success=False)
+                return None
+
+            # Verify in-memory integrity
+            expected_digest = self._secret_integrity.get(placeholder)
+            if expected_digest:
+                actual_digest = hashlib.sha256((self._salt + raw).encode("utf-8")).hexdigest()
+                if actual_digest != expected_digest:
+                    self._log_reversal(placeholder, context, success=False)
+                    raise VaultDataTamperedError(
+                        f"Vault in-memory integrity violation detected for placeholder {placeholder}!"
+                    )
+
+            # Audit logging MUST succeed before secret is returned
+            self._log_reversal(placeholder, context, success=True)
+            return raw
 
     def reverse_text(
         self,
@@ -298,20 +302,21 @@ class RedactionVault:
         Reconstitute placeholders back to original secrets with mandatory authorization
         and audit logging.
         """
-        if not context or not isinstance(context, VaultAccessContext):
-            raise VaultAccessDeniedError(
-                "Unauthorized vault reversal: valid VaultAccessContext is required."
-            )
-        if not context.actor or not context.actor.strip():
-            raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
+        with self._lock:
+            if not context or not isinstance(context, VaultAccessContext):
+                raise VaultAccessDeniedError(
+                    "Unauthorized vault reversal: valid VaultAccessContext is required."
+                )
+            if not context.actor or not context.actor.strip():
+                raise VaultAccessDeniedError("Unauthorized vault reversal: actor must not be empty.")
 
-        placeholders_in_text = [p for p in self._placeholder_to_raw if p in text]
-        result = text
-        for p in placeholders_in_text:
-            raw_val = self.reverse_placeholder(p, context=context)
-            if raw_val is not None:
-                result = result.replace(p, raw_val)
-        return result
+            placeholders_in_text = [p for p in self._placeholder_to_raw if p in text]
+            result = text
+            for p in placeholders_in_text:
+                raw_val = self.reverse_placeholder(p, context=context)
+                if raw_val is not None:
+                    result = result.replace(p, raw_val)
+            return result
 
     def register_token_metadata(
         self,
@@ -320,17 +325,19 @@ class RedactionVault:
         expires_at: Optional[float] = None,
     ) -> "TokenMetadata":
         """Register token metadata for pre-execution TTL validation."""
-        if not hasattr(self, "_token_metadata"):
-            self._token_metadata = {}
-        meta = TokenMetadata(token_ref=token_ref, identity_id=identity_id, expires_at=expires_at)
-        self._token_metadata[token_ref] = meta
-        return meta
+        with self._lock:
+            if not hasattr(self, "_token_metadata"):
+                self._token_metadata = {}
+            meta = TokenMetadata(token_ref=token_ref, identity_id=identity_id, expires_at=expires_at)
+            self._token_metadata[token_ref] = meta
+            return meta
 
     def get_token_metadata(self, token_ref: str) -> Optional["TokenMetadata"]:
         """Retrieve registered metadata for a token reference."""
-        if not hasattr(self, "_token_metadata"):
-            self._token_metadata = {}
-        return self._token_metadata.get(token_ref)
+        with self._lock:
+            if not hasattr(self, "_token_metadata"):
+                self._token_metadata = {}
+            return self._token_metadata.get(token_ref)
 
 
 class TokenMetadata:
