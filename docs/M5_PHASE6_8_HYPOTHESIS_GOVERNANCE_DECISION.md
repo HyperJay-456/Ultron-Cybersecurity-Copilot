@@ -11,10 +11,10 @@
 
 Milestones M5 Phase 6.3 through Phase 6.7 systematically uncovered and audited a core methodological conflict at the intersection of automated reasoning, prompt design, and benchmark evaluation:
 
-1. **Reasoning Architecture Intent**: In both [`docs/M4_REASONING_ENGINE_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_REASONING_ENGINE_PLAN.md) and [`src/engine/protocol.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/protocol.py), the reasoning engine is explicitly instructed to emit `decision = HYPOTHESIS` whenever:
+1. **Reasoning Architecture Intent**: In both [`docs/M4_REASONING_ENGINE_PLAN.md`](docs/M4_REASONING_ENGINE_PLAN.md) and [`src/engine/protocol.py`](src/engine/protocol.py), the reasoning engine is explicitly instructed to emit `decision = HYPOTHESIS` whenever:
    - *"Evidence indicates, implies, or strongly suggests a potential invariant violation,"* **OR**
    - *"Relevant functionality has an unverified invariant requiring experiment verification."*
-2. **Benchmark Evaluation Contradiction**: In [`src/eval/scenarios.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scenarios.py) and [`src/eval/scorer.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py), the benchmark expects `expected_decision = HYPOTHESIS` for vulnerable scenarios and `expected_decision = INSUFFICIENT_EVIDENCE` for patched scenarios. Any emission of `HYPOTHESIS` on a patched scenario is mechanically scored as a **False Positive (FP)**.
+2. **Benchmark Evaluation Contradiction**: In [`src/eval/scenarios.py`](src/eval/scenarios.py) and [`src/eval/scorer.py`](src/eval/scorer.py), the benchmark expects `expected_decision = HYPOTHESIS` for vulnerable scenarios and `expected_decision = INSUFFICIENT_EVIDENCE` for patched scenarios. Any emission of `HYPOTHESIS` on a patched scenario is mechanically scored as a **False Positive (FP)**.
 3. **The Counterfactual Impasse**: In canonical scenario pairs (e.g. BOLA `SCEN-SAAS_BILLING-INV-DETAILS-VULN-01` vs `SCEN-SAAS_BILLING-INV-DETAILS-PATCH-01`), the observable evidence provided to the model consists solely of OpenAPI documentation describing an unverified route parameter (`GET /api/v1/invoices/{id}`) with zero runtime execution logs. The inputs are byte-identical. Under this condition:
    - When VAPT knowledge retrieval is active (Track D), the model is prompted to propose an authorization test (substituting `{id}` to observe `200 OK` vs `403 Forbidden`).
    - For the vulnerable scenario, this valid test proposal is scored as a **True Positive (TP)**.

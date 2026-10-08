@@ -26,7 +26,7 @@ cascade_mode: str = "TRACK_B_CASCADE"
 
 ## 2. Phase 7 Implementation Inspection
 
-Inspection of the committed Phase 7 implementation ([`src/engine/context_builder.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py), lines 22–38) confirms:
+Inspection of the committed Phase 7 implementation ([`src/engine/context_builder.py`](src/engine/context_builder.py), lines 22–38) confirms:
 
 ```python
 # Canonical Track Identifiers per Section 15.1 and Pre-Execution Addendum

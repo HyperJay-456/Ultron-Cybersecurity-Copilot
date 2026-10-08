@@ -78,7 +78,7 @@ To avoid VRAM thrashing and CUDA out-of-memory errors on 4GB hardware, the V6 pi
 
 ## 5. Configuration & Environment Variables
 
-Configuration parameters are managed in [config/default_config.yaml](file:///c:/Projects/Bug%20Bounty%20AI/config/default_config.yaml) and can be overridden via environment variables:
+Configuration parameters are managed in [config/default_config.yaml](config/default_config.yaml) and can be overridden via environment variables:
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |

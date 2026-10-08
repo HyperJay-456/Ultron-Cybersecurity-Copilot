@@ -12,9 +12,9 @@
 ## 1. Historical Artifact Preservation
 
 In accordance with scientific audit protocols, historical records are preserved without retroactive overwriting:
-* **EXP-0001:** Preserved in [EXPERIMENT_LOG.md](file:///c:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md) as the pre-evaluation harness sanity dry run.
-* **EXP-0002:** Preserved in [EXPERIMENT_LOG.md](file:///c:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md) and [EXPERIMENTAL_VALIDATION_REPORT.md](file:///c:/Projects/Bug%20Bounty%20AI/docs/EXPERIMENTAL_VALIDATION_REPORT.md) as the preliminary 7-scenario evaluation.
-* **EXP-0003:** Preserved in [EXPERIMENT_LOG.md](file:///c:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md), [EXP-0003_PROTOCOL.md](file:///c:/Projects/Bug%20Bounty%20AI/docs/EXP-0003_PROTOCOL.md), and [EXP-0003_RESULTS.md](file:///c:/Projects/Bug%20Bounty%20AI/docs/EXP-0003_RESULTS.md) as the 84-scenario benchmark.
+* **EXP-0001:** Preserved in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) as the pre-evaluation harness sanity dry run.
+* **EXP-0002:** Preserved in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) and [EXPERIMENTAL_VALIDATION_REPORT.md](docs/EXPERIMENTAL_VALIDATION_REPORT.md) as the preliminary 7-scenario evaluation.
+* **EXP-0003:** Preserved in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md), [EXP-0003_PROTOCOL.md](docs/EXP-0003_PROTOCOL.md), and [EXP-0003_RESULTS.md](docs/EXP-0003_RESULTS.md) as the 84-scenario benchmark.
 * **EXP-0004 (This Document):** Documents the metric integrity audit, resolves mathematical denominator collisions, and recomputes all benchmark statistics from raw scenario outputs.
 
 ---
@@ -39,7 +39,7 @@ Under the protocol's target-level definition, the true Target-Level Useful Yield
 * Full Benchmark LOW: $\frac{33}{36} = \mathbf{0.9167}$ (91.7% discovered; 3 multi-step dependencies abstained due to 1-experiment budget).
 
 ### 2.3 Resolution & Separation of Concepts
-In EXP-0004, the metrics have been formally decoupled in [src/eval/scorer.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py):
+In EXP-0004, the metrics have been formally decoupled in [src/eval/scorer.py](src/eval/scorer.py):
 1. **Target-Level Metric (`useful_hypothesis_yield`):** $\frac{\text{Useful\_TP}}{\text{Total\_Vulnerable}}$ — Measures target vulnerability discovery under budget.
 2. **Hypothesis-Level Metric (`hypothesis_utility_rate`):** $\frac{\text{Useful\_Hypotheses}}{\text{Total\_Hypotheses\_Emitted}}$ — Measures actionable utility of researcher notifications.
 3. **Hypothesis Precision (`precision`):** $\frac{\text{TP}}{\text{TP} + \text{FP}}$ — Measures resistance to false positive alerts.
@@ -48,7 +48,7 @@ In EXP-0004, the metrics have been formally decoupled in [src/eval/scorer.py](fi
 
 ## 3. Unit Tests for Metric Independence
 
-To prevent regression and guarantee mathematical independence, unit tests were implemented in [tests/unit/test_metric_integrity.py](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_metric_integrity.py):
+To prevent regression and guarantee mathematical independence, unit tests were implemented in [tests/unit/test_metric_integrity.py](tests/unit/test_metric_integrity.py):
 
 * **Case 1 (10 Vuln, 10 Patched; TP=10, FN=0, FP=5, TN=5):**
   * $\text{Precision} = \frac{10}{15} = 0.6667$
@@ -65,7 +65,7 @@ To prevent regression and guarantee mathematical independence, unit tests were i
 
 ## 4. Programmatic McNemar & Contingency Table Audit
 
-Rather than assuming aggregate outputs, `compute_paired_contingency_table()` was implemented in [src/eval/scorer.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py) to derive the paired 2x2 contingency matrix directly from per-scenario execution records:
+Rather than assuming aggregate outputs, `compute_paired_contingency_table()` was implemented in [src/eval/scorer.py](src/eval/scorer.py) to derive the paired 2x2 contingency matrix directly from per-scenario execution records:
 
 ### 4.1 Paired Variable Definition
 * **Binary Variable Evaluated:** *"Did this vulnerable scenario produce an actionable, simulator-supported hypothesis within budget?"*
@@ -104,12 +104,12 @@ In EXP-0003, Track E reported Recall of 0.9167 (33/36) under LOW budget and 1.00
 
 ## 6. Oracle Boundary Audit & Runtime Assertion
 
-In [src/eval/ablation.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/ablation.py), an audit was conducted on Track E's decision block:
+In [src/eval/ablation.py](src/eval/ablation.py), an audit was conducted on Track E's decision block:
 1. **Purged Ground Truth References:** Previous draft lines referencing `and scen.ground_truth_vulnerable` were removed. Track E's decision is now driven 100% by `exec_result.observation_type`:
    * `SUPPORTING` (HTTP 200) $\to$ `HYPOTHESIS` (`useful = True`)
    * `CONTRADICTING` (HTTP 403/400) $\to$ `INSUFFICIENT_EVIDENCE` (`useful = False`)
    * `UNRESOLVED` (HTTP 500) $\to$ `INSUFFICIENT_EVIDENCE` (`useful = False`)
-2. **Runtime Assertion Added:** Before executing experiments in Track E, [ablation.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/ablation.py) now inspects the serialized `exp` payload and raises `RuntimeError` if any forbidden tokens (`ground_truth_vulnerable`, `is_vulnerable`, `is_patched`, `oracle_label`, `expected_class`) are present.
+2. **Runtime Assertion Added:** Before executing experiments in Track E, [ablation.py](src/eval/ablation.py) now inspects the serialized `exp` payload and raises `RuntimeError` if any forbidden tokens (`ground_truth_vulnerable`, `is_vulnerable`, `is_patched`, `oracle_label`, `expected_class`) are present.
 
 ---
 

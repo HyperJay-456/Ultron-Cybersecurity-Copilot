@@ -262,13 +262,13 @@ Useful    No      0      0
 
 ## 9. Deliverables & Benchmark Readiness
 
-1. [src/eval/scenarios.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scenarios.py): Fully audited benchmark scenarios free from label leakage.
-2. [src/eval/retrieval_trace.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/retrieval_trace.py): Complete RAG tracing subsystem.
-3. [src/eval/ablation.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/ablation.py): Redesigned 5-track genuine LLM ablation framework with runtime observation registration.
-4. [src/eval/run_pilot_ablation.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/run_pilot_ablation.py): Reconciled $N=12$ pilot execution and auditing harness.
-5. [src/eval/run_full_ablation.py](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/run_full_ablation.py): Checkpointed full 84-scenario benchmark runner.
-6. [data/pilot_ablation_results.json](file:///c:/Projects/Bug%20Bounty%20AI/data/pilot_ablation_results.json): Full audited pilot results artifact.
-7. [data/exp0006_full_ablation_results.json](file:///c:/Projects/Bug%20Bounty%20AI/data/exp0006_full_ablation_results.json): Full 84-scenario benchmark results and McNemar contingency tables.
+1. [src/eval/scenarios.py](src/eval/scenarios.py): Fully audited benchmark scenarios free from label leakage.
+2. [src/eval/retrieval_trace.py](src/eval/retrieval_trace.py): Complete RAG tracing subsystem.
+3. [src/eval/ablation.py](src/eval/ablation.py): Redesigned 5-track genuine LLM ablation framework with runtime observation registration.
+4. [src/eval/run_pilot_ablation.py](src/eval/run_pilot_ablation.py): Reconciled $N=12$ pilot execution and auditing harness.
+5. [src/eval/run_full_ablation.py](src/eval/run_full_ablation.py): Checkpointed full 84-scenario benchmark runner.
+6. [data/pilot_ablation_results.json](data/pilot_ablation_results.json): Full audited pilot results artifact.
+7. [data/exp0006_full_ablation_results.json](data/exp0006_full_ablation_results.json): Full 84-scenario benchmark results and McNemar contingency tables.
 
 ---
 
@@ -337,8 +337,8 @@ Based on the full 84-scenario live benchmark:
 ---
 
 **FINAL DELIVERABLES & ARTIFACTS RECORDED**:
-- Reconciled benchmark scenarios: [`src/eval/scenarios.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scenarios.py)
-- Full 84-scenario raw data & contingency tables: [`data/exp0006_full_ablation_results.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/exp0006_full_ablation_results.json)
-- Audited pilot results: [`data/pilot_ablation_results.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/pilot_ablation_results.json)
-- Experiment reproduction log: [`EXPERIMENT_LOG.md`](file:///c:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md)
-- Walkthrough documentation: [`walkthrough.md`](file:///c:/Projects/Bug%20Bounty%20AI/walkthrough.md)
+- Reconciled benchmark scenarios: [`src/eval/scenarios.py`](src/eval/scenarios.py)
+- Full 84-scenario raw data & contingency tables: [`data/exp0006_full_ablation_results.json`](data/exp0006_full_ablation_results.json)
+- Audited pilot results: [`data/pilot_ablation_results.json`](data/pilot_ablation_results.json)
+- Experiment reproduction log: [`EXPERIMENT_LOG.md`](EXPERIMENT_LOG.md)
+- Walkthrough documentation: [`walkthrough.md`](walkthrough.md)

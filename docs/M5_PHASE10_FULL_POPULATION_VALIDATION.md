@@ -6,11 +6,11 @@
 **Date**: September 26, 2026  
 **Git Branch**: `master`  
 **Experimental Freeze Commit**: `d3c531e71855098dddf568f54aef8dfb5e49c089`  
-**Canonical Raw Dataset Path**: [`data/eval/m5_phase10_full_population_validation.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_full_population_validation.json)  
+**Canonical Raw Dataset Path**: [`data/eval/m5_phase10_full_population_validation.json`](data/eval/m5_phase10_full_population_validation.json)  
 **Canonical Raw Dataset SHA-256**: `6821d207729de97ac99657a09e38c25895a73285fe9c485d299dc27f37d2bdba`  
-**Reconstructed CRLF-Equivalent Artifact**: [`data/eval/m5_phase10_full_population_validation_raw_crlf.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_full_population_validation_raw_crlf.json)  
+**Reconstructed CRLF-Equivalent Artifact**: [`data/eval/m5_phase10_full_population_validation_raw_crlf.json`](data/eval/m5_phase10_full_population_validation_raw_crlf.json)  
 **Reconstructed CRLF SHA-256**: `c7e4fb33061db2dd5539c6d8795c1210ea275ef419b9cc5bd2746713405a2e41`  
-**Runtime Checkpoint Path**: [`data/eval/m5_phase10_checkpoint.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_checkpoint.json)  
+**Runtime Checkpoint Path**: [`data/eval/m5_phase10_checkpoint.json`](data/eval/m5_phase10_checkpoint.json)  
 **Runtime Checkpoint SHA-256**: `40f9f725fca5fdf05a76836182960b7f0d4c303a182d6e8af068a1b57e8f4537`  
 
 > [!IMPORTANT]
@@ -334,9 +334,9 @@ The Phase 10 report explicitly separates two distinct estimands:
 
 ### 7.3 Raw Data Provenance & Line-Ending Normalization Audit
 
-- **Original Capture Provenance**: During benchmark execution, records were sequentially flushed into [`data/eval/m5_phase10_checkpoint.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_checkpoint.json) on Windows with CRLF newlines (SHA-256: `40f9f725fca5fdf05a76836182960b7f0d4c303a182d6e8af068a1b57e8f4537`).
-- **Reconstructed CRLF-Equivalent Artifact**: The file [`data/eval/m5_phase10_full_population_validation_raw_crlf.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_full_population_validation_raw_crlf.json) was reconstructed post-collection by converting the canonical LF representation to CRLF (SHA-256: `c7e4fb33061db2dd5539c6d8795c1210ea275ef419b9cc5bd2746713405a2e41`). It is classified as a reconstructed CRLF-equivalent representation rather than independently proven original disk capture bytes.
-- **Canonical Analysis Representation**: The analysis dataset [`data/eval/m5_phase10_full_population_validation.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_full_population_validation.json) represents the canonical LF-normalized artifact, matching POSIX conventions and the in-memory sidecar hash (SHA-256: `6821d207729de97ac99657a09e38c25895a73285fe9c485d299dc27f37d2bdba`).
+- **Original Capture Provenance**: During benchmark execution, records were sequentially flushed into [`data/eval/m5_phase10_checkpoint.json`](data/eval/m5_phase10_checkpoint.json) on Windows with CRLF newlines (SHA-256: `40f9f725fca5fdf05a76836182960b7f0d4c303a182d6e8af068a1b57e8f4537`).
+- **Reconstructed CRLF-Equivalent Artifact**: The file [`data/eval/m5_phase10_full_population_validation_raw_crlf.json`](data/eval/m5_phase10_full_population_validation_raw_crlf.json) was reconstructed post-collection by converting the canonical LF representation to CRLF (SHA-256: `c7e4fb33061db2dd5539c6d8795c1210ea275ef419b9cc5bd2746713405a2e41`). It is classified as a reconstructed CRLF-equivalent representation rather than independently proven original disk capture bytes.
+- **Canonical Analysis Representation**: The analysis dataset [`data/eval/m5_phase10_full_population_validation.json`](data/eval/m5_phase10_full_population_validation.json) represents the canonical LF-normalized artifact, matching POSIX conventions and the in-memory sidecar hash (SHA-256: `6821d207729de97ac99657a09e38c25895a73285fe9c485d299dc27f37d2bdba`).
 - **Semantic Content Invariance**: Programmatic verification confirmed:
   $$\text{json.loads}(\text{checkpoint}) == \text{json.loads}(\text{CRLF-equivalent}) == \text{json.loads}(\text{canonical LF})$$
   Decoded JSON objects across all 336 call records are 100% semantically identical.
@@ -379,7 +379,7 @@ The Phase 10 report explicitly separates two distinct estimands:
 ### 7.7 Condition-Level Reconciliation Audit
 
 - **Authoritative Source Dataset**:
-  The authoritative dataset is [`data/eval/m5_phase10_full_population_validation.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_full_population_validation.json) (SHA-256: `6821d207729de97ac99657a09e38c25895a73285fe9c485d299dc27f37d2bdba`), which is semantically identical to the runtime checkpoint [`data/eval/m5_phase10_checkpoint.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase10_checkpoint.json) (SHA-256: `40f9f725fca5fdf05a76836182960b7f0d4c303a182d6e8af068a1b57e8f4537`). Both contain exactly 336 call records.
+  The authoritative dataset is [`data/eval/m5_phase10_full_population_validation.json`](data/eval/m5_phase10_full_population_validation.json) (SHA-256: `6821d207729de97ac99657a09e38c25895a73285fe9c485d299dc27f37d2bdba`), which is semantically identical to the runtime checkpoint [`data/eval/m5_phase10_checkpoint.json`](data/eval/m5_phase10_checkpoint.json) (SHA-256: `40f9f725fca5fdf05a76836182960b7f0d4c303a182d6e8af068a1b57e8f4537`). Both contain exactly 336 call records.
 - **Independent Recomputation Method**:
   A fresh, read-only reconciliation script (`scratch/reconcile_phase10.py`) evaluated all 336 records directly from disk, grouping strictly by `record["condition_id"]`. For each condition, failure categories were partitioned by `record["primary_failure_category"]` without using any prior intermediate summary tables.
 - **Exact Per-Condition Totals & Failure-Category Allocations**:

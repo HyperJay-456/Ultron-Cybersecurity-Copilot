@@ -5,9 +5,9 @@
 **Author:** Autonomous Research & Implementation Agent  
 **Date:** September 28, 2026  
 **Git Baseline State:** `cbc31ea7c52fb3ab3af2dc57aafb2c7cc1d3acc8` (`m5-phase10-final-audited`)  
-**Derived Failure Corpus JSONL:** [`data/eval/m5_phase11_1_failure_corpus.jsonl`](file:///C:/Projects/Bug Bounty AI/data/eval/m5_phase11_1_failure_corpus.jsonl)  
+**Derived Failure Corpus JSONL:** [`data/eval/m5_phase11_1_failure_corpus.jsonl`](data/eval/m5_phase11_1_failure_corpus.jsonl)  
 **Failure Corpus SHA-256:** `f425fbd515bbd022df565b6351fe45dacdc3c0faecbde8405e332bb29fd8ce8b`  
-**Failure Corpus Manifest:** [`data/eval/m5_phase11_1_failure_corpus_manifest.json`](file:///C:/Projects/Bug Bounty AI/data/eval/m5_phase11_1_failure_corpus_manifest.json)  
+**Failure Corpus Manifest:** [`data/eval/m5_phase11_1_failure_corpus_manifest.json`](data/eval/m5_phase11_1_failure_corpus_manifest.json)  
 
 > [!IMPORTANT]
 > **RESEARCH & GOVERNANCE BOUNDARY NOTICE**:
@@ -61,7 +61,7 @@ This study rigorously isolates: (1) action selection incompatibility, (2) breach
 
 ## 4. Corpus Construction Methodology
 
-The failure corpus was extracted using [`src/eval/phase11_failure_analysis/corpus_builder.py`](file:///C:/Projects/Bug Bounty AI/src/eval/phase11_failure_analysis/corpus_builder.py).
+The failure corpus was extracted using [`src/eval/phase11_failure_analysis/corpus_builder.py`](src/eval/phase11_failure_analysis/corpus_builder.py).
 
 - **Record Normalization**: Every record is mapped into a standardized JSON structure with explicit sections: `provenance`, `identity`, `runtime_telemetry`, `context_package`, `model_output`, and `attribution`.
 - **Checksum & Deduplication**: Each record contains a deterministic SHA-256 `source_record_checksum` computed from sorted keys.

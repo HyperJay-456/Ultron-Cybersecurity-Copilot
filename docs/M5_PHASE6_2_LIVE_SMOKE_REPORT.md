@@ -5,7 +5,7 @@
 **Milestone**: Milestone M5 (Reasoning Interface & Protocol Reconciliation)  
 **Phase**: Phase 6.2 — Clean Targeted Live Smoke Rerun  
 **Model**: `qwen2.5-coder:7b` (Ollama v0.34.1, Pinned Digest: `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`)  
-**Artifact**: [`data/eval/m5_live_smoke_v2.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_live_smoke_v2.json)  
+**Artifact**: [`data/eval/m5_live_smoke_v2.json`](data/eval/m5_live_smoke_v2.json)  
 **Artifact SHA-256**: `830c225b22f6767ee13b4ce3b443a14aede3ea767ee25ae7343c1a153c4a0818`  
 
 ---
@@ -52,7 +52,7 @@ Phase 6.2 successfully executed the clean, targeted 24-call live LLM smoke evalu
 
 ## 3. Faithful-Input Verification (Fixes 1–4 Verified)
 
-Prior to live inference, a 14-test deterministic test suite ([`tests/unit/test_m5_smoke_fidelity.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_smoke_fidelity.py)) verified all four audit fixes:
+Prior to live inference, a 14-test deterministic test suite ([`tests/unit/test_m5_smoke_fidelity.py`](tests/unit/test_m5_smoke_fidelity.py)) verified all four audit fixes:
 
 | Fix ID | Fix Description | Implementation Location | Verified Invariant |
 |---|---|---|---|

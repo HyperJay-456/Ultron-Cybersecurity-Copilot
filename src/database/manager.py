@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 from src.core.config import DatabaseConfig
@@ -467,3 +468,442 @@ class DatabaseManager:
                         verification.get("notes"),
                     ),
                 )
+
+    # -------------------------------------------------------------------------
+    # Investigation & Conversation Operations (Phase 12.3)
+    # -------------------------------------------------------------------------
+
+    def insert_investigation(self, inv: Dict[str, Any]) -> None:
+        """Insert or update a persistent research investigation session."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO investigations (
+                    investigation_id, name, target_host, scope_status, status, is_demo, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    name = excluded.name,
+                    target_host = excluded.target_host,
+                    scope_status = excluded.scope_status,
+                    status = excluded.status,
+                    is_demo = excluded.is_demo,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    inv.get("investigation_id") or inv.get("id"),
+                    inv["name"],
+                    inv["target_host"],
+                    inv.get("scope_status", "ALLOWED"),
+                    inv.get("status", "ACTIVE"),
+                    1 if inv.get("is_demo") else 0,
+                    inv.get("created_at", now),
+                    inv.get("updated_at", now),
+                ),
+            )
+            conn.commit()
+
+    def get_investigation(self, investigation_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve investigation metadata by ID."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM investigations WHERE investigation_id = ?",
+                (investigation_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            res["id"] = res["investigation_id"]
+            res["is_demo"] = bool(res.get("is_demo", 0))
+            return res
+
+    def update_investigation(self, investigation_id: str, updates: Dict[str, Any]) -> bool:
+        """Update investigation fields such as name or status."""
+        allowed_fields = {"name", "status", "scope_status", "updated_at"}
+        valid_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+        if not valid_updates:
+            return False
+
+        if "updated_at" not in valid_updates:
+            valid_updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        clauses = [f"{k} = ?" for k in valid_updates.keys()]
+        values = list(valid_updates.values()) + [investigation_id]
+
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE investigations SET {', '.join(clauses)} WHERE investigation_id = ?",
+                values,
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_investigation(self, investigation_id: str) -> bool:
+        """Permanently delete an investigation and cascading conversation history."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM investigations WHERE investigation_id = ?",
+                (investigation_id,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_investigations(self, include_archived: bool = False, search_query: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List persisted investigations with message counts and last activity."""
+        query = """
+            SELECT 
+                i.investigation_id as id,
+                i.investigation_id,
+                i.name,
+                i.target_host,
+                i.scope_status,
+                i.status,
+                i.is_demo,
+                i.created_at,
+                i.updated_at,
+                COUNT(m.id) as message_count,
+                COALESCE(MAX(m.created_at), i.updated_at) as last_activity
+            FROM investigations i
+            LEFT JOIN conversation_messages m ON i.investigation_id = m.investigation_id
+        """
+        where_clauses = []
+        params: List[Any] = []
+        if not include_archived:
+            where_clauses.append("i.status != 'ARCHIVED'")
+        if search_query:
+            where_clauses.append("(i.name LIKE ? OR i.target_host LIKE ?)")
+            params.extend([f"%{search_query}%", f"%{search_query}%"])
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        query += " GROUP BY i.investigation_id ORDER BY last_activity DESC"
+
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            results = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                d["is_demo"] = bool(d.get("is_demo", 0))
+                results.append(d)
+            return results
+
+    def insert_message(self, msg: Dict[str, Any]) -> None:
+        """Persist a conversation message record."""
+        structured_data = msg.get("structured_data")
+        if structured_data is not None and not isinstance(structured_data, str):
+            structured_data = json.dumps(structured_data)
+
+        created_at = msg.get("created_at") or datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO conversation_messages (
+                    id, investigation_id, sequence_number, sender, content,
+                    structured_type, structured_data, delivery_status,
+                    cascade_trace_id, model_name, model_digest, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    delivery_status = excluded.delivery_status,
+                    structured_data = excluded.structured_data
+                """,
+                (
+                    msg["id"],
+                    msg["investigation_id"],
+                    msg["sequence_number"],
+                    msg["sender"],
+                    msg["content"],
+                    msg.get("structured_type", "NONE"),
+                    structured_data,
+                    msg.get("delivery_status", "delivered"),
+                    msg.get("cascade_trace_id"),
+                    msg.get("model_name"),
+                    msg.get("model_digest"),
+                    created_at,
+                ),
+            )
+            # Update parent investigation updated_at
+            conn.execute(
+                "UPDATE investigations SET updated_at = ? WHERE investigation_id = ?",
+                (created_at, msg["investigation_id"]),
+            )
+            conn.commit()
+
+    def get_messages(self, investigation_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Retrieve chronological conversation messages for an investigation."""
+        with self.get_connection() as conn:
+            params: List[Any] = [investigation_id]
+            if limit:
+                query = """
+                    SELECT * FROM (
+                        SELECT * FROM conversation_messages 
+                        WHERE investigation_id = ? 
+                        ORDER BY sequence_number DESC 
+                        LIMIT ?
+                    ) ORDER BY sequence_number ASC
+                """
+                params.append(limit)
+            else:
+                query = """
+                    SELECT * FROM conversation_messages 
+                    WHERE investigation_id = ? 
+                    ORDER BY sequence_number ASC
+                """
+
+            cursor = conn.execute(query, params)
+            messages = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                if d.get("structured_data"):
+                    try:
+                        d["structured_data"] = json.loads(d["structured_data"])
+                    except Exception:
+                        pass
+                messages.append(d)
+            return messages
+
+    def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single message by ID."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM conversation_messages WHERE id = ?", (message_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("structured_data"):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            return d
+
+    def get_message_count(self, investigation_id: str) -> int:
+        """Count total messages for an investigation."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM conversation_messages WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            return row[0] if row else 0
+
+    def get_next_sequence_number(self, investigation_id: str) -> int:
+        """Get the next deterministic sequence number for an investigation."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM conversation_messages WHERE investigation_id = ?",
+                (investigation_id,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else 1
+
+    # -------------------------------------------------------------------------
+    # Cascade Execution Traces Operations (Phase 12.4)
+    # -------------------------------------------------------------------------
+
+    def insert_cascade_trace(self, trace: Dict[str, Any]) -> None:
+        """Persist an authoritative runtime cascade execution trace."""
+        stages = trace.get("stages", [])
+        stages_serialized = [s.model_dump() if hasattr(s, "model_dump") else s for s in stages]
+        created_at = trace.get("timestamp") or trace.get("created_at") or datetime.now(timezone.utc).isoformat()
+
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO cascade_execution_traces (
+                    run_id, investigation_id, user_message_id, assistant_message_id,
+                    task_type, target_endpoint, overall_status, routing_decision,
+                    escalated, handoff_provenance_hash, total_latency_seconds,
+                    stages_json, error_message, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace["run_id"],
+                    trace.get("investigation_id"),
+                    trace.get("user_message_id"),
+                    trace.get("assistant_message_id"),
+                    trace.get("task_type", "SECURITY_RESEARCH"),
+                    trace.get("target_endpoint", ""),
+                    trace.get("overall_status", "CASCADE_VERIFIED"),
+                    trace.get("routing_decision"),
+                    1 if trace.get("escalated") else 0,
+                    trace.get("handoff_provenance_hash"),
+                    float(trace.get("total_latency_seconds", 0.0)),
+                    json.dumps(stages_serialized),
+                    trace.get("error_message"),
+                    created_at,
+                ),
+            )
+            conn.commit()
+
+    def get_cascade_trace(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific cascade execution trace by its run ID."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM cascade_execution_traces WHERE run_id = ?", (run_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["escalated"] = bool(d.get("escalated", 0))
+            if d.get("stages_json"):
+                try:
+                    d["stages"] = json.loads(d["stages_json"])
+                except Exception:
+                    d["stages"] = []
+            else:
+                d["stages"] = []
+            return d
+
+    def list_cascade_traces(self, investigation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retrieve recent cascade execution traces, optionally filtered by investigation ID."""
+        with self.get_connection() as conn:
+            if investigation_id:
+                query = "SELECT * FROM cascade_execution_traces WHERE investigation_id = ? ORDER BY created_at DESC LIMIT ?"
+                cursor = conn.execute(query, (investigation_id, limit))
+            else:
+                query = "SELECT * FROM cascade_execution_traces ORDER BY created_at DESC LIMIT ?"
+                cursor = conn.execute(query, (limit,))
+
+            traces = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                d["escalated"] = bool(d.get("escalated", 0))
+                if d.get("stages_json"):
+                    try:
+                        d["stages"] = json.loads(d["stages_json"])
+                    except Exception:
+                        d["stages"] = []
+                else:
+                    d["stages"] = []
+                traces.append(d)
+            return traces
+
+    # -------------------------------------------------------------------------
+    # Investigation Observations / Evidence (Phase 12.X)
+    # -------------------------------------------------------------------------
+
+    def insert_investigation_observation(self, obs: Dict[str, Any]) -> None:
+        """Insert or replace an investigation-scoped target observation."""
+        req_headers_json = (
+            json.dumps(obs.get("request_headers", {}))
+            if isinstance(obs.get("request_headers"), dict)
+            else obs.get("request_headers")
+        )
+        resp_headers_json = (
+            json.dumps(obs.get("response_headers", {}))
+            if isinstance(obs.get("response_headers"), dict)
+            else obs.get("response_headers")
+        )
+        created_at = obs.get("created_at") or datetime.now(timezone.utc).isoformat()
+
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO investigation_observations (
+                    id, investigation_id, fact_id, asset_id, http_method, host,
+                    raw_path, normalized_path, response_status, request_headers,
+                    request_body, response_headers, response_body, statement,
+                    source_type, source_artifact, researcher_note, transaction_digest,
+                    redacted_secret_count, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    obs["id"],
+                    obs["investigation_id"],
+                    obs["fact_id"],
+                    obs["asset_id"],
+                    obs["http_method"],
+                    obs["host"],
+                    obs["raw_path"],
+                    obs["normalized_path"],
+                    obs["response_status"],
+                    req_headers_json,
+                    obs.get("request_body", ""),
+                    resp_headers_json,
+                    obs.get("response_body", ""),
+                    obs["statement"],
+                    obs.get("source_type", "manual"),
+                    obs.get("source_artifact"),
+                    obs.get("researcher_note"),
+                    obs["transaction_digest"],
+                    obs.get("redacted_secret_count", 0),
+                    created_at,
+                ),
+            )
+            # Update investigation timestamp
+            conn.execute(
+                """
+                UPDATE investigations
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE investigation_id = ?
+                """,
+                (obs["investigation_id"],),
+            )
+            conn.commit()
+
+    def get_investigation_observations(
+        self, investigation_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve target observations for an investigation, ordered chronologically."""
+        with self.get_connection() as conn:
+            query = "SELECT * FROM investigation_observations WHERE investigation_id = ? ORDER BY created_at ASC"
+            params: List[Any] = [investigation_id]
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            cursor = conn.execute(query, tuple(params))
+            results = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                d["method"] = d.get("http_method")
+                d["status_code"] = d.get("response_status")
+                if d.get("request_headers"):
+                    try:
+                        d["request_headers"] = json.loads(d["request_headers"])
+                    except Exception:
+                        pass
+                if d.get("response_headers"):
+                    try:
+                        d["response_headers"] = json.loads(d["response_headers"])
+                    except Exception:
+                        pass
+                results.append(d)
+            return results
+
+    def get_investigation_observation(self, observation_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific target observation by its ID."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM investigation_observations WHERE id = ?", (observation_id,)
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["method"] = d.get("http_method")
+            d["status_code"] = d.get("response_status")
+            if d.get("request_headers"):
+                try:
+                    d["request_headers"] = json.loads(d["request_headers"])
+                except Exception:
+                    pass
+            if d.get("response_headers"):
+                try:
+                    d["response_headers"] = json.loads(d["response_headers"])
+                except Exception:
+                    pass
+            return d
+
+    def has_observation_digest(self, investigation_id: str, transaction_digest: str) -> bool:
+        """Check if an observation with the given transaction digest already exists in this investigation."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM investigation_observations WHERE investigation_id = ? AND transaction_digest = ?",
+                (investigation_id, transaction_digest),
+            ).fetchone()
+            return row is not None
+
+    def get_observation_count(self, investigation_id: str) -> int:
+        """Get the count of observations for an investigation."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM investigation_observations WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            return row["cnt"] if row else 0
+

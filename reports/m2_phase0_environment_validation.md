@@ -40,7 +40,7 @@ Throwaway JSON schema test (`{"status": "ok", "counter": 42}`):
 ---
 
 ## 4. Layer Offload Placement Observations (Step 3)
-Inspected from Ollama runtime server logs (`C:\Users\jayt0\AppData\Local\Ollama\server.log`):
+Inspected from Ollama runtime server logs (`%LOCALAPPDATA%\Ollama\server.log`):
 - `qwen2.5-coder:3b`:
   - **Total Layers:** 37
   - **GPU Offload:** 37/37 layers (100.0% GPU offload)

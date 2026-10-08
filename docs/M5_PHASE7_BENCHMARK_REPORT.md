@@ -5,9 +5,9 @@
 **Execution Runtime**: Ollama v0.34.1  
 **Model**: `qwen2.5-coder:7b` (`Q4_K_M`)  
 **Model Digest**: `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`  
-**Primary Artifact**: [`data/eval/m5_phase7_benchmark_final.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase7_benchmark_final.json)  
+**Primary Artifact**: [`data/eval/m5_phase7_benchmark_final.json`](data/eval/m5_phase7_benchmark_final.json)  
 **Artifact SHA-256**: `1e0ed90c4aa672f135d2d2f2240a14d22fa0037c03efda33634f4bf10ff0b125`  
-**Companion SHA File**: [`data/eval/m5_phase7_benchmark_final.json.sha256`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase7_benchmark_final.json.sha256)  
+**Companion SHA File**: [`data/eval/m5_phase7_benchmark_final.json.sha256`](data/eval/m5_phase7_benchmark_final.json.sha256)  
 **Git Base Commit**: `dda396dfa7df220494d221768dcd4ada074bfc91`  
 
 ---
@@ -19,7 +19,7 @@ Milestone M5 Phase 7 executed the first formally authorized confirmatory benchma
 This benchmark directly tests the central project research question:
 > *“Under a fixed evidence budget, does an explicit Application Model → Security Invariant → Evidence Gap → Hypothesis → Experiment architecture improve security-hypothesis precision, abstention quality, and human investigation efficiency compared to conventional LLM + RAG?”*
 
-Under the frozen Policy 3 governance design ([`docs/M5_PHASE6_8_HYPOTHESIS_GOVERNANCE_DECISION.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M5_PHASE6_8_HYPOTHESIS_GOVERNANCE_DECISION.md)), the primary research estimand is strictly preserved as:
+Under the frozen Policy 3 governance design ([`docs/M5_PHASE6_8_HYPOTHESIS_GOVERNANCE_DECISION.md`](docs/M5_PHASE6_8_HYPOTHESIS_GOVERNANCE_DECISION.md)), the primary research estimand is strictly preserved as:
 $$\text{Useful Hypothesis Yield @ } N \text{ reviewer minutes} = \frac{\text{Useful Vulnerability Hypotheses}}{\text{Total Vulnerable Scenarios}}$$
 
 ### Key Empirical Findings:
@@ -35,7 +35,7 @@ $$\text{Useful Hypothesis Yield @ } N \text{ reviewer minutes} = \frac{\text{Use
 
 3. **Deterministic Interception of Semantic Inversions ($94 / 104$ Candidate Hypotheses)**:
    - In 104 calls, the model attempted to propose a `HYPOTHESIS`.
-   - In **94 of these 104 attempts (90.38%)**, the candidate was deterministically intercepted and failed closed by [`ExperimentPolarityValidator`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/decision_policy.py) as `SEMANTIC_EXPERIMENT_POLARITY_FAILURE`.
+   - In **94 of these 104 attempts (90.38%)**, the candidate was deterministically intercepted and failed closed by [`ExperimentPolarityValidator`](src/engine/decision_policy.py) as `SEMANTIC_EXPERIMENT_POLARITY_FAILURE`.
    - The model frequently paired incompatible actions with categories (e.g. `TAMPER_REQUEST_PARAMETER` for state machine logic) or inverted breach outcomes (e.g. claiming `HTTP_403_FORBIDDEN` confirms BOLA or `HTTP_409_CONFLICT` confirms state transitions).
    - The remaining 10 candidate hypotheses were rejected by root Pydantic schema validation (`SCHEMA_VALIDITY_FAILURE`) due to identical supporting and disproving outcomes.
    - Result: **Zero inverted or non-discriminative pseudo-hypotheses leaked into reviewer triage.**
@@ -172,7 +172,7 @@ $$\mathbf{\text{Useful Hypothesis Yield @ } N \text{ reviewer minutes} = 0.0000}
 
 In 104 calls, the model generated `decision: "HYPOTHESIS"`. Under legacy protocols (M3/M4), these outputs would have passed loose regex or substring filters and been scored as false positives or ungrounded hypotheses.
 
-Under M5, every candidate was subjected to [`ExperimentPolarityValidator`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/decision_policy.py):
+Under M5, every candidate was subjected to [`ExperimentPolarityValidator`](src/engine/decision_policy.py):
 
 | Rejection Mechanism | Count | Root Cause Analysis |
 | :--- | :---: | :--- |

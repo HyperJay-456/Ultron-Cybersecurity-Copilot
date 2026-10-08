@@ -14,7 +14,7 @@ The pass accomplished five key objectives without implementing roadmap features 
 1. **Eliminated Obsolete & Temporary Clutter**: Deleted temporary debug SQLite databases, scratch output files, and 7 redundant empty root placeholder directories.
 2. **Established Cache Disposition**: Inspected the local cache system, proving that `data/cache/tld_cache/` represents active, offline runtime state required by `tldextract` in `ScopeGate`, and preserved it intact.
 3. **Preserved Full EXP-0006 Reproducibility**: Audited and preserved all raw experimental data (N=84 and N=12), scorer code, simulator code, methodology audit documentation, and experiment logs.
-4. **Single Authoritative Architecture Reference**: Rebuilt [ARCHITECTURE.md](file:///C:/Projects/Bug%20Bounty%20AI/ARCHITECTURE.md) to authoritatively document the operational status of every subsystem, wiring details, and the current-vs-future boundary without duplicate documentation.
+4. **Single Authoritative Architecture Reference**: Rebuilt [ARCHITECTURE.md](ARCHITECTURE.md) to authoritatively document the operational status of every subsystem, wiring details, and the current-vs-future boundary without duplicate documentation.
 5. **Reconciled Test Verification**: Dynamically collected and executed the entire test suite (**126 total test items**: 106 unit, 20 integration) with zero failures.
 
 ---
@@ -38,9 +38,9 @@ Per strict engineering and research rigor, milestone and evaluation statuses are
 Before executing file operations, an explicit inspection of caching behavior across the repository was conducted:
 
 1. **Root-Level `cache/`**: Does not exist at the repository root. Only `.pytest_cache/` (test runner cache) is present at root.
-2. **Location of Active Cache**: The active local cache resides in [`data/cache/tld_cache/`](file:///C:/Projects/Bug%20Bounty%20AI/data/cache/tld_cache/).
+2. **Location of Active Cache**: The active local cache resides in [`data/cache/tld_cache/`](data/cache/tld_cache/).
 3. **Operational Role**:
-   - In [`src/scope/gate.py`](file:///C:/Projects/Bug%20Bounty%20AI/src/scope/gate.py) (lines 44–46), `ScopeGate` initializes `tldextract.TLDExtract` with `cache_dir="data/cache/tld_cache"` and `suffix_list_urls=None`.
+   - In [`src/scope/gate.py`](src/scope/gate.py) (lines 44–46), `ScopeGate` initializes `tldextract.TLDExtract` with `cache_dir="data/cache/tld_cache"` and `suffix_list_urls=None`.
    - This local snapshot (`publicsuffix.org-tlds/906337bdfc421126a1477ade77793840.tldextract.json`, 166.2 KB) allows `ScopeGate` to compute registered domains and public suffixes completely offline without making outbound network calls to download suffix definitions during scope evaluation.
 4. **Disposition Decision**:
    - `data/cache/tld_cache/` is **ACTIVE RUNTIME STATE**.
@@ -66,25 +66,25 @@ The following approved temporary and legacy placeholder items were removed:
 | `scripts/` | Directory | 31 B (`.gitkeep`) | Empty legacy root stub with only a `.gitkeep`. |
 
 ### Configuration Updates:
-- [`.gitignore`](file:///C:/Projects/Bug%20Bounty%20AI/.gitignore): Added `scratch/` under Local data & databases to prevent accidental tracking of temporary debugging scripts and scratch databases.
+- [`.gitignore`](.gitignore): Added `scratch/` under Local data & databases to prevent accidental tracking of temporary debugging scripts and scratch databases.
 
 ---
 
 ## 5. Preserved EXP-0006 Reproducibility Artifacts
 
 All experimental artifacts and evaluation code required to reproduce, audit, or inspect EXP-0006 remain fully intact:
-- [`data/exp0006_full_ablation_results.json`](file:///C:/Projects/Bug%20Bounty%20AI/data/exp0006_full_ablation_results.json) (724.9 KB, full 84-scenario 5-track raw results)
-- [`data/pilot_ablation_results.json`](file:///C:/Projects/Bug%20Bounty%20AI/data/pilot_ablation_results.json) (110.1 KB, 12-scenario pilot raw results)
-- [`docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md`](file:///C:/Projects/Bug%20Bounty%20AI/docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md) (Independent statistical audit)
-- [`docs/REAL_LLM_ABLATION_DESIGN.md`](file:///C:/Projects/Bug%20Bounty%20AI/docs/REAL_LLM_ABLATION_DESIGN.md) & [`docs/REAL_LLM_ABLATION_IMPLEMENTATION.md`](file:///C:/Projects/Bug%20Bounty%20AI/docs/REAL_LLM_ABLATION_IMPLEMENTATION.md)
-- [`EXPERIMENT_LOG.md`](file:///C:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md), [`PHASE0_REPORT.md`](file:///C:/Projects/Bug%20Bounty%20AI/PHASE0_REPORT.md), [`PHASE1_REPORT.md`](file:///C:/Projects/Bug%20Bounty%20AI/PHASE1_REPORT.md)
+- [`data/exp0006_full_ablation_results.json`](data/exp0006_full_ablation_results.json) (724.9 KB, full 84-scenario 5-track raw results)
+- [`data/pilot_ablation_results.json`](data/pilot_ablation_results.json) (110.1 KB, 12-scenario pilot raw results)
+- [`docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md`](docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md) (Independent statistical audit)
+- [`docs/REAL_LLM_ABLATION_DESIGN.md`](docs/REAL_LLM_ABLATION_DESIGN.md) & [`docs/REAL_LLM_ABLATION_IMPLEMENTATION.md`](docs/REAL_LLM_ABLATION_IMPLEMENTATION.md)
+- [`EXPERIMENT_LOG.md`](EXPERIMENT_LOG.md), [`PHASE0_REPORT.md`](PHASE0_REPORT.md), [`PHASE1_REPORT.md`](PHASE1_REPORT.md)
 - All evaluation harness code: `src/eval/` (`ablation.py`, `scenarios.py`, `scorer.py`, `simulator.py`, `retrieval_trace.py`, `synthetic_app.py`, `run_full_ablation.py`, `run_pilot_ablation.py`)
 
 ---
 
 ## 6. Architecture & Wiring Status Inventory
 
-Every subsystem across `src/` has been verified for its actual wiring and operational status in [ARCHITECTURE.md](file:///C:/Projects/Bug%20Bounty%20AI/ARCHITECTURE.md):
+Every subsystem across `src/` has been verified for its actual wiring and operational status in [ARCHITECTURE.md](ARCHITECTURE.md):
 
 | Subsystem | Primary Implementation Files | Operational Status | Current Wiring / Notes |
 | :--- | :--- | :--- | :--- |

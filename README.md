@@ -1,4 +1,4 @@
-# Local AI-Assisted Bug Bounty Research Platform (v6 Final)
+# Local AI-Assisted Bug Bounty Research Platform (v10.0 Deep Android & Binary Reverse Engineering)
 
 An evidence-grounded, local-first, human-in-the-loop security research assistant designed to operate strictly on consumer hardware (AMD Ryzen 5 5600H, 24GB RAM, RTX 3050 4GB VRAM).
 
@@ -36,14 +36,16 @@ To prevent CPU/IO and VRAM contention on Ryzen 5 5600H & RTX 3050:
 .venv\Scripts\activate
 
 # Run test suite
-pytest -v
+pytest -q
 ```
 
 ---
 
 ## 4. Documentation
-- [ARCHITECTURE.md](file:///c:/Projects/Bug%20Bounty%20AI/ARCHITECTURE.md): Architectural design and subsystem breakdown.
-- [DECISIONS.md](file:///c:/Projects/Bug%20Bounty%20AI/DECISIONS.md): Architectural decision records (ADRs).
-- [TODO.md](file:///c:/Projects/Bug%20Bounty%20AI/TODO.md): Phase implementation roadmap and active tasks.
-- [TEST_STATUS.md](file:///c:/Projects/Bug%20Bounty%20AI/TEST_STATUS.md): Component test matrix.
-- [EXPERIMENT_LOG.md](file:///c:/Projects/Bug%20Bounty%20AI/EXPERIMENT_LOG.md): Evaluation and ablation experiment tracking.
+- [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md): Reproduction setup guide and benchmark execution.
+- [ARCHITECTURE.md](ARCHITECTURE.md): Architectural design and subsystem breakdown.
+- [DECISIONS.md](DECISIONS.md): Architectural decision records (ADRs).
+- [TODO.md](TODO.md): Phase implementation roadmap and active tasks.
+- [TEST_STATUS.md](TEST_STATUS.md): Component test matrix.
+- [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md): Evaluation and ablation experiment tracking.
+- [docs/M10_FINAL_REPORT.md](docs/M10_FINAL_REPORT.md): Milestone 10 Deep Android & Binary Reverse Engineering Report.

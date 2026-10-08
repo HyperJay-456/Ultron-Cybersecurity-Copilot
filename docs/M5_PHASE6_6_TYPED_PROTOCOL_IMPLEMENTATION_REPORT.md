@@ -28,7 +28,7 @@ Under strict governance rules:
 
 Four core production files were modified:
 
-1. [`src/engine/models.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/models.py):
+1. [`src/engine/models.py`](src/engine/models.py):
    - Defined closed enums: `ExperimentActionPredicate`, `SemanticOutcomePredicate`, `HttpOutcomePredicate`.
    - Defined validation sets: `VALID_ACTION_PREDICATES`, `VALID_OUTCOME_PREDICATES`.
    - Added typed fields to `HypothesisModelOutput`: `experiment_action`, `supporting_outcome`, `disproving_outcome`, `falsification_description`.
@@ -37,16 +37,16 @@ Four core production files were modified:
      - Added root validator `validate_decision_dependent_slots`: enforces mandatory typed fields for `HYPOTHESIS`, rejects identical outcomes (`supporting_outcome == disproving_outcome`), and fails closed if legacy free-text `falsification_plan` is supplied without typed fields.
      - Updated `get_inference_schema()` to generate runtime JSON schema with closed enum constraints for `experiment_action`, `supporting_outcome`, `disproving_outcome`, and string for `falsification_description`.
 
-2. [`src/engine/protocol.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/protocol.py):
+2. [`src/engine/protocol.py`](src/engine/protocol.py):
    - Updated `JSON_BAIR_PROMPT_INSTRUCTION` to explicitly specify the typed fields, closed enums, and mandatory constraints for `HYPOTHESIS`.
    - Maintained strict 6-layer protocol agreement.
 
-3. [`src/engine/bair_extractor.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/bair_extractor.py):
+3. [`src/engine/bair_extractor.py`](src/engine/bair_extractor.py):
    - Added `experiment_action`, `supporting_outcome`, `disproving_outcome`, and `falsification_description` to `allowed_keys` in `parse_bair_json`.
    - Updated `map_bair_json_to_s0` to map typed fields onto `HypothesisModelOutput` and synthesize canonical `experiment_proposal` string:
      `"Action: {act}; Breach: {supp}; Safe: {disp} ({desc})"`
 
-4. [`src/engine/decision_policy.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/decision_policy.py):
+4. [`src/engine/decision_policy.py`](src/engine/decision_policy.py):
    - Implemented `ExperimentPolarityValidator` with closed `TUPLE_COMPATIBILITY_REGISTRY` mapping `category_id -> action -> (VALID_BREACH_OUTCOMES, VALID_INVARIANT_HOLDS_OUTCOMES)`.
    - Updated `is_discriminating_evidence_absent` to support both `API-BFLA-001` and `API-BFLA-002`.
    - Updated `deterministic_decide()` Layer 2:
@@ -172,7 +172,7 @@ Deterministic token budget verification fixture (`test_typed_fields_token_budget
 
 ## 9. Test Suite Verification Results
 
-A comprehensive suite of 19 new deterministic tests was created in [`tests/unit/test_m5_typed_experiment_protocol.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_typed_experiment_protocol.py), implementing all 16 required cases (A through P) plus architectural agreement and token budget fixtures:
+A comprehensive suite of 19 new deterministic tests was created in [`tests/unit/test_m5_typed_experiment_protocol.py`](tests/unit/test_m5_typed_experiment_protocol.py), implementing all 16 required cases (A through P) plus architectural agreement and token budget fixtures:
 
 | Test Identifier | Description | Result |
 | :--- | :--- | :--- |

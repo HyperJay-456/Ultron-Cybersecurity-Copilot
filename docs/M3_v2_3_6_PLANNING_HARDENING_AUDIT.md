@@ -1,6 +1,6 @@
 # Milestone M3 v2.3.6 Planning Hardening & Methodology Audit Report
 
-**Audit Target Artifact:** [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md)  
+**Audit Target Artifact:** [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md)  
 **Revision Transition:** `v2.3.5` $\longrightarrow$ `v2.3.6`  
 **Audit Execution Date:** 2026-09-19  
 **Audit Scope:** STRICT PLANNING-ONLY METHODOLOGY HARDENING & ARTIFACT-LEVEL CONSISTENCY AUDIT  
@@ -220,7 +220,7 @@ In strict adherence to scientific rigor and platform governance, this audit clai
 
 ## 5. Section 36 Freeze Readiness Summary
 
-The Section 36 audit matrix in [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md) has been reconciled and maintains exact categorical balance across all 38 evaluation criteria:
+The Section 36 audit matrix in [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md) has been reconciled and maintains exact categorical balance across all 38 evaluation criteria:
 
 - **`PASS — ARCHITECTURAL` (29 criteria)**: All architectural designs, schema models, split role definitions, serialization grammars, rubric structures, mathematical estimands, offline cryptographic trust roots, raw-score ranking rules, and latency classifications are fully specified and verified mutually consistent.
 - **`PENDING — IMPLEMENTATION` (2 criteria)**: Runtime implementation of `TargetEvidencePayload(B) == TargetEvidencePayload(D)` context budget parity (Phase M3.11) and executable retrieval gold schema, oracle parity test, and Merkle tree generation (Phases M3.4, M3.7, M3.10).

@@ -1,6 +1,6 @@
 # Milestone M3 v2.3.7 Planning Hardening & Methodology Audit Report
 
-**Audit Target File:** [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md)  
+**Audit Target File:** [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md)  
 **Specification Revision:** `v2.3.6` $\longrightarrow$ `v2.3.7`  
 **Audit Protocol Execution Date:** September 19, 2026  
 **Auditor Classification:** Antigravity Planning Hardening Harness (Automated Artifact-Level Verification)  
@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary & Verification Claim Boundary
 
-This document provides the formal audit attestation for the **v2.3.7 methodology hardening pass** of [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md).
+This document provides the formal audit attestation for the **v2.3.7 methodology hardening pass** of [`docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md`](docs/M3_VAPT_KNOWLEDGE_RAG_PLAN.md).
 
 ### 1.1 Strict Four-Tier Verification Boundary Scope
 To eliminate overclaiming, preserve scientific integrity, and maintain strict epistemic hygiene, this audit operates strictly under the four-tier verification taxonomy defined in Section 36.1:

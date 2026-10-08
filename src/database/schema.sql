@@ -212,3 +212,84 @@ BEGIN
     SELECT RAISE(ABORT, 'Cannot reject hypothesis that has already been Confirmed.');
 END;
 
+-- 11. Investigations (Persistent Research Sessions / Conversations - Phase 12.3)
+CREATE TABLE IF NOT EXISTS investigations (
+    investigation_id    TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    target_host         TEXT NOT NULL,
+    scope_status        TEXT CHECK(scope_status IN ('ALLOWED', 'ALLOW', 'DENY', 'OUT_OF_SCOPE', 'UNKNOWN')) DEFAULT 'ALLOWED',
+    status              TEXT CHECK(status IN ('ACTIVE', 'ARCHIVED')) DEFAULT 'ACTIVE',
+    is_demo             INTEGER DEFAULT 0 CHECK(is_demo IN (0, 1)),
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 12. Conversation Messages (Persistent Conversation History & Epistemic Turns - Phase 12.3)
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id                  TEXT PRIMARY KEY,
+    investigation_id    TEXT NOT NULL REFERENCES investigations(investigation_id) ON DELETE CASCADE,
+    sequence_number     INTEGER NOT NULL,
+    sender              TEXT CHECK(sender IN ('user', 'assistant', 'system')) NOT NULL,
+    content             TEXT NOT NULL,
+    structured_type     TEXT CHECK(structured_type IN ('INVARIANT', 'HYPOTHESIS', 'EXPERIMENT', 'APPROVAL', 'EXECUTION', 'OBSERVATION', 'AUDIT', 'NONE')) DEFAULT 'NONE',
+    structured_data     TEXT,
+    delivery_status     TEXT CHECK(delivery_status IN ('sending', 'delivered', 'failed')) DEFAULT 'delivered',
+    cascade_trace_id    TEXT,
+    model_name          TEXT,
+    model_digest        TEXT,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(investigation_id, sequence_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_messages_inv ON conversation_messages(investigation_id, sequence_number);
+CREATE INDEX IF NOT EXISTS idx_investigations_status ON investigations(status);
+
+-- 13. Cascade Execution Traces (Runtime Observability - Phase 12.4)
+CREATE TABLE IF NOT EXISTS cascade_execution_traces (
+    run_id                  TEXT PRIMARY KEY,
+    investigation_id        TEXT REFERENCES investigations(investigation_id) ON DELETE CASCADE,
+    user_message_id         TEXT,
+    assistant_message_id    TEXT,
+    task_type               TEXT NOT NULL,
+    target_endpoint         TEXT,
+    overall_status          TEXT NOT NULL,
+    routing_decision        TEXT,
+    escalated               INTEGER DEFAULT 0 CHECK(escalated IN (0, 1)),
+    handoff_provenance_hash TEXT,
+    total_latency_seconds   REAL DEFAULT 0.0,
+    stages_json             TEXT NOT NULL,
+    error_message           TEXT,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cascade_traces_inv ON cascade_execution_traces(investigation_id);
+
+-- 14. Investigation Observations (Target HTTP Evidence - Phase 12.X)
+CREATE TABLE IF NOT EXISTS investigation_observations (
+    id                      TEXT PRIMARY KEY,
+    investigation_id        TEXT NOT NULL REFERENCES investigations(investigation_id) ON DELETE CASCADE,
+    fact_id                 TEXT NOT NULL,
+    asset_id                TEXT NOT NULL,
+    http_method             TEXT NOT NULL,
+    host                    TEXT NOT NULL,
+    raw_path                TEXT NOT NULL,
+    normalized_path         TEXT NOT NULL,
+    response_status         INTEGER NOT NULL,
+    request_headers         TEXT, -- JSON
+    request_body            TEXT,
+    response_headers        TEXT, -- JSON
+    response_body           TEXT,
+    statement               TEXT NOT NULL,
+    source_type             TEXT NOT NULL, -- 'har', 'raw_http', 'manual', 'burp'
+    source_artifact         TEXT,
+    researcher_note         TEXT,
+    transaction_digest      TEXT NOT NULL,
+    redacted_secret_count   INTEGER DEFAULT 0,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(investigation_id, transaction_digest)
+);
+
+CREATE INDEX IF NOT EXISTS idx_obs_inv ON investigation_observations(investigation_id);
+CREATE INDEX IF NOT EXISTS idx_obs_asset ON investigation_observations(asset_id);
+
+

@@ -15,7 +15,7 @@ This document is a formal **Technical Erratum** recording an implementation-leve
 
 > [!IMPORTANT]
 > **Historical Artifact Immutability**:
-> This erratum does **NOT** modify, overwrite, recalculate, or retroactively invalidate the empirical M4.9 confirmatory benchmark results. The official M4.9 artifact ([`data/eval/m4_live_llm_benchmark_final.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m4_live_llm_benchmark_final.json)) and its companion checksum file remain permanently sealed and byte-identical to their initial generation state. Phase M4.9 remains **CLOSED**. No rerun of M4.9 is authorized.
+> This erratum does **NOT** modify, overwrite, recalculate, or retroactively invalidate the empirical M4.9 confirmatory benchmark results. The official M4.9 artifact ([`data/eval/m4_live_llm_benchmark_final.json`](data/eval/m4_live_llm_benchmark_final.json)) and its companion checksum file remain permanently sealed and byte-identical to their initial generation state. Phase M4.9 remains **CLOSED**. No rerun of M4.9 is authorized.
 
 The purpose of this erratum is to document the exact software engineering failure mechanism that led to 336/336 parser failures, establish the boundary of what the confirmatory benchmark did and did not measure, and define the architectural requirements for future milestones.
 
@@ -23,9 +23,9 @@ The purpose of this erratum is to document the exact software engineering failur
 
 ## 2. M4.9 Confirmatory Execution Facts
 
-The official M4.9 confirmatory benchmark was executed under the frozen protocol specified in [`docs/M4_REASONING_ENGINE_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_REASONING_ENGINE_PLAN.md):
+The official M4.9 confirmatory benchmark was executed under the frozen protocol specified in [`docs/M4_REASONING_ENGINE_PLAN.md`](docs/M4_REASONING_ENGINE_PLAN.md):
 
-- **Dataset**: Authoritative 84-scenario benchmark ([`data/benchmarks/m1_5_frozen_manifest.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/benchmarks/m1_5_frozen_manifest.json), SHA-256: `b2b85a672124acf21066a257d8c7f5093000368b224ee013c02574c96a0ae707`).
+- **Dataset**: Authoritative 84-scenario benchmark ([`data/benchmarks/m1_5_frozen_manifest.json`](data/benchmarks/m1_5_frozen_manifest.json), SHA-256: `b2b85a672124acf21066a257d8c7f5093000368b224ee013c02574c96a0ae707`).
   - 36 benchmark vulnerable scenarios.
   - 48 negative-control scenarios.
 - **Tracks Evaluated**:
@@ -70,11 +70,11 @@ The official M4.9 confirmatory benchmark was executed under the frozen protocol 
 
 ## 3. Source-Level Root Cause: Mutually Exclusive Prompt Branching
 
-A thorough inspection of [`src/engine/context_builder.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py) reveals the primary engineering defect responsible for the uniform parser failure.
+A thorough inspection of [`src/engine/context_builder.py`](src/engine/context_builder.py) reveals the primary engineering defect responsible for the uniform parser failure.
 
 ### 3.1 The Flawed Branching Structure
 
-In [`ReasoningContextBuilder.build_context()`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py#L100-L250), system prompt construction was implemented using an `if / elif` cascade:
+In [`ReasoningContextBuilder.build_context()`](src/engine/context_builder.py#L100-L250), system prompt construction was implemented using an `if / elif` cascade:
 
 ```python
 # src/engine/context_builder.py (Lines 141-249)
@@ -159,7 +159,7 @@ The implementation contained multiple competing and mutually contradictory outpu
    }
    ```
    ```
-3. **Evaluation Parser**: The confirmatory harness ([`src/eval/m4_live_benchmark.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/m4_live_benchmark.py#L393)), knowing that $I_4$ was nominally active in the configuration, invoked [`parse_bair(raw_response)`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/bair_extractor.py#L74).
+3. **Evaluation Parser**: The confirmatory harness ([`src/eval/m4_live_benchmark.py`](src/eval/m4_live_benchmark.py#L393)), knowing that $I_4$ was nominally active in the configuration, invoked [`parse_bair(raw_response)`](src/engine/bair_extractor.py#L74).
 4. **AST Failure**: `parse_bair()` expects `<bair>...</bair>` XML tags. Finding only JSON text, it raised `BairParseError("No <bair> root tag found in model response")`.
 5. **AC1 Classification**: Under the mutually exclusive failure taxonomy, the failure was classified as `PARSER_FAILURE`.
 6. **Fail-Closed Gate**: All downstream layers (I5 decision policy, grounding validator, and hypothesis scoring) were skipped. All 336 evaluations failed closed to abstention/rejection.
@@ -190,10 +190,10 @@ To maintain scientific integrity, a strict boundary must be drawn between what M
 The official M4.9 confirmatory benchmark artifacts remain sealed and unaltered in their original locations:
 
 - **Primary Result Artifact**:
-  - Path: [`data/eval/m4_live_llm_benchmark_final.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m4_live_llm_benchmark_final.json)
+  - Path: [`data/eval/m4_live_llm_benchmark_final.json`](data/eval/m4_live_llm_benchmark_final.json)
   - Verified SHA-256: `459b9ec63c3a2dc760abde12ec196760f7e505fbab5317f0da0c46b32c5eaac7`
 - **Companion Checksum File**:
-  - Path: [`data/eval/m4_live_llm_benchmark_final.json.sha256`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m4_live_llm_benchmark_final.json.sha256)
+  - Path: [`data/eval/m4_live_llm_benchmark_final.json.sha256`](data/eval/m4_live_llm_benchmark_final.json.sha256)
   - Content: `459b9ec63c3a2dc760abde12ec196760f7e505fbab5317f0da0c46b32c5eaac7`
 - **Planning Freeze State**:
   - Tag: `m4-v1.1.0-planning-freeze`
@@ -205,20 +205,20 @@ The official M4.9 confirmatory benchmark artifacts remain sealed and unaltered i
 
 The following components and files in the repository are directly involved in the composition conflict:
 
-1. [`src/engine/context_builder.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py):
+1. [`src/engine/context_builder.py`](src/engine/context_builder.py):
    - `ReasoningContextBuilder.build_context()`: Contains the mutually exclusive `if/elif` cascade (lines 141–249) that causes $I_2$ to shadow $I_3$, $I_4$, and $I_5$.
    - Counterfactual block addition (lines 463–478): References JSON field names rather than the active protocol, and bypasses P0/P1 budget checking.
-2. [`src/engine/bair_extractor.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/bair_extractor.py):
+2. [`src/engine/bair_extractor.py`](src/engine/bair_extractor.py):
    - `parse_bair()`: Bounded XML AST parser expecting `<bair>...</bair>`.
    - `validate_bair()`, `map_bair_to_s0()`: Extraction and schema adaptation pipeline.
-3. [`src/eval/m4_live_benchmark.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/m4_live_benchmark.py):
+3. [`src/eval/m4_live_benchmark.py`](src/eval/m4_live_benchmark.py):
    - `M4ConfirmatoryHarness.build_prompt_for_track()`: Passes all combined flags to `build_context()`.
    - `M4ConfirmatoryHarness.execute_scenario_track()`: Invocates `parse_bair()` unconditionally under combined configuration.
-4. [`src/eval/m4_screening_harness.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/m4_screening_harness.py):
+4. [`src/eval/m4_screening_harness.py`](src/eval/m4_screening_harness.py):
    - `M4ScreeningHarness.execute_scenario_track()`: Contains the parallel COMBINED branch that produced the original 20/20 parser failures in M4.8.
-5. [`src/engine/models.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/models.py):
+5. [`src/engine/models.py`](src/engine/models.py):
    - `classify_primary_failure()`: Correctly flagged the parser error under AC1 precedence.
-6. [`src/engine/decision_policy.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/decision_policy.py):
+6. [`src/engine/decision_policy.py`](src/engine/decision_policy.py):
    - `deterministic_decide()`: Operates on `HypothesisModelOutput`, which was starved of valid input due to upstream parser rejection.
 
 ---

@@ -2,8 +2,8 @@
 
 **Milestone:** M4 — Reasoning Engine Optimization & Epistemic Calibration  
 **Subsystem:** Phase M4.1 — Failure Taxonomy & Trace Profiling  
-**Authoritative Input Source:** [data/eval/m3_live_llm_benchmark_20260920.json](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m3_live_llm_benchmark_20260920.json) (SHA-256: `c516fdc112418e00955ffc7231482ea52dd4b1c96da71a83a5e92ebfcbe31dac`, strictly read-only)  
-**Target Catalog Artifact:** [data/eval/m4_failure_trace_profile.json](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m4_failure_trace_profile.json)  
+**Authoritative Input Source:** [data/eval/m3_live_llm_benchmark_20260920.json](data/eval/m3_live_llm_benchmark_20260920.json) (SHA-256: `c516fdc112418e00955ffc7231482ea52dd4b1c96da71a83a5e92ebfcbe31dac`, strictly read-only)  
+**Target Catalog Artifact:** [data/eval/m4_failure_trace_profile.json](data/eval/m4_failure_trace_profile.json)  
 **Parent M4 Planning Freeze:** `m4-v1.1.0-planning-freeze` (`1e1a87070a018542a0a2e79f8a78654f34df5aba`)  
 **Parent M3 Freeze:** `m3-v2.3.8-planning-freeze` (`819b83399e24080bf2942c3941cc96728885df49`)  
 **Status:** COMPLETE / FORENSIC REPORT ONLY (NO CODE IMPLEMENTATION)  
@@ -26,7 +26,7 @@ Milestone M4 addresses the empirical bottlenecks identified during the live loca
 
 ### 11/336 vs 26/336 Baseline Reconciliation
 
-1. **Prior Planning Specification Reference**: The frozen M4 planning specification ([docs/M4_REASONING_ENGINE_PLAN.md](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_REASONING_ENGINE_PLAN.md), v1.2.4) referenced `11/336 truncation-associated structured-output failures` as the prior historical characterization derived during M3 validation.
+1. **Prior Planning Specification Reference**: The frozen M4 planning specification ([docs/M4_REASONING_ENGINE_PLAN.md](docs/M4_REASONING_ENGINE_PLAN.md), v1.2.4) referenced `11/336 truncation-associated structured-output failures` as the prior historical characterization derived during M3 validation.
 2. **Application of Strict M4.1 Taxonomy**: Phase M4.1 applied the now-explicit, mutually exclusive primary failure taxonomy and deterministic precedence rules:
    $$\text{RUNTIME\_TRANSPORT\_FAILURE} > \text{MAX\_TOKEN\_TRUNCATION} > \text{PARSER\_FAILURE} > \text{SCHEMA\_VALIDITY\_FAILURE} > \text{SEMANTIC\_GROUNDING\_FAILURE}$$
 3. **Forensic Reclassification Result**: Under this exhaustive and deterministic classification, exactly **26 / 336 evaluation attempts** are classified as `MAX_TOKEN_TRUNCATION`. Every single one of these 26 runs reached the 300-token ceiling mid-generation with character lengths between 1,381 and 1,567 chars (average 1,474.5 chars), causing trailing closing braces and delimiters to be cut off.
@@ -100,7 +100,7 @@ Every scheduled evaluation attempt across the 84 scenarios and 4 tracks is assig
 - **Causal Motivation**: Motivates **Intervention I3** (counterfactual invariant prompting) and **Intervention I5** (calibrated decision policy) to activate hypothesis formation without degrading negative-control safety.
 
 ### 4.4 3B $\to$ 7B Handoff Implementation-Path Evidence
-- **Implementation-Path Evidence**: Inspection of the M3 context-building path ([src/engine/context_builder.py](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py#L240-L255)) shows that Channel B advisory content can pass natural-language triage rationale and subjective suspected category assertions (e.g. `Suspected Category: BOLA`, `Triage Rationale: Endpoint lacks authentication check`) into Partition P3.
+- **Implementation-Path Evidence**: Inspection of the M3 context-building path ([src/engine/context_builder.py](src/engine/context_builder.py#L240-L255)) shows that Channel B advisory content can pass natural-language triage rationale and subjective suspected category assertions (e.g. `Suspected Category: BOLA`, `Triage Rationale: Endpoint lacks authentication check`) into Partition P3.
 - **Architectural Motivation**: This implementation-path evidence directly motivates **Intervention I6** (`HandoffSerializer`) to restrict P3 strictly to verified Class-1 predicate booleans, eliminating unconstrained natural language overhead and potential label priming.
 - **Measurement Boundary**: Anchoring bias remains an architectural hypothesis rather than an empirically measured metric on the benchmark.
 

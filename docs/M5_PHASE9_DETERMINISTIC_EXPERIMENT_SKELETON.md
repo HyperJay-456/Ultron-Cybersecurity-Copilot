@@ -9,9 +9,9 @@
 **Sealed Phase 7 SHA-256**: `1e0ed90c4aa672f135d2d2f2240a14d22fa0037c03efda33634f4bf10ff0b125`  
 **Sealed Phase 8 SHA-256**: `b1df9a62fb07d76e0abf6e3935ccbabdaa1713f4c594019ae30c9e59567a45c6`  
 **Scenarios SHA-256**: `102789655bfb04041de9259d1bf6db7f088979e5bce9bac9eb050564ef0110a8`  
-**Primary Study Dataset**: [`data/eval/m5_phase9_semantic_budget_study.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase9_semantic_budget_study.json)  
+**Primary Study Dataset**: [`data/eval/m5_phase9_semantic_budget_study.json`](data/eval/m5_phase9_semantic_budget_study.json)  
 **Dataset SHA-256**: `3c0d3e503c7ed24470b14dfde0bd763c631a9b5dbf70c047bbca72cfaab07f95`  
-**Verification Suite**: [`tests/unit/test_m5_phase9_experiment_skeleton.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_phase9_experiment_skeleton.py) (`31/31 passed`)  
+**Verification Suite**: [`tests/unit/test_m5_phase9_experiment_skeleton.py`](tests/unit/test_m5_phase9_experiment_skeleton.py) (`31/31 passed`)  
 
 ---
 
@@ -52,7 +52,7 @@ In Milestone M5 Phase 7 and Phase 8, the following empirical facts were establis
 
 ## 2. Phase 9 Architecture & Pre-Registered Controls
 
-Following the Phase 9.0 architectural audit, five mandatory controls were implemented in [`src/engine/experiment_skeleton.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/experiment_skeleton.py):
+Following the Phase 9.0 architectural audit, five mandatory controls were implemented in [`src/engine/experiment_skeleton.py`](src/engine/experiment_skeleton.py):
 
 ### 2.1 No Breach/Safe Outcome Partition Leakage (Correction 1)
 - The descriptor exposes a single, flat, alphabetically sorted vocabulary: `legal_outcomes`.
@@ -124,7 +124,7 @@ Inference-only latency (Ollama server duration) was not logged separately in the
 
 ### 4.2 Timeout Enforcement Status: RUNTIME CONTROL DEVIATION
 - **Architectural Specification**: Frozen architecture documents define $\le 12.0\text{s}$ as `LATENCY_OPTIMAL`, $12.0\text{s} - 30.0\text{s}$ as `LATENCY_OVER_TARGET`, and $> 30.0\text{s}$ as `LATENCY_TIMEOUT`.
-- **Actual Implementation**: In [`src/engine/runner.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/runner.py), the underlying HTTP transport client was configured with `timeout_seconds = 120` (`httpx.Client(timeout=120)`). The study runner did **not** enforce a hard process abort or cancellation watchdog at 30,000 ms.
+- **Actual Implementation**: In [`src/engine/runner.py`](src/engine/runner.py), the underlying HTTP transport client was configured with `timeout_seconds = 120` (`httpx.Client(timeout=120)`). The study runner did **not** enforce a hard process abort or cancellation watchdog at 30,000 ms.
 - **Observed Impact**:
   - **24 of 44 calls** completed $\le 30.0\text{s}$ (including all 8 active-evidence calls).
   - **20 of 44 calls** completed with recorded latency $> 30.0\text{s}$ (ranging from $30.11\text{s}$ to $50.76\text{s}$).
@@ -187,7 +187,7 @@ Inference-only latency (Ollama server duration) was not logged separately in the
 
 ## 5. Observed Results
 
-All metrics below are calculated directly from the frozen empirical dataset [`data/eval/m5_phase9_semantic_budget_study.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase9_semantic_budget_study.json) without post-hoc modification.
+All metrics below are calculated directly from the frozen empirical dataset [`data/eval/m5_phase9_semantic_budget_study.json`](data/eval/m5_phase9_semantic_budget_study.json) without post-hoc modification.
 
 ### 5.1 Representative Benchmark Sample across Completion Budgets (N=36)
 
@@ -295,13 +295,13 @@ The following are mechanism hypotheses consistent with the data, not established
 ## 10. Artifact Ledger & Verification Hashes
 
 - **Engine Implementation**:
-  - [`src/engine/experiment_skeleton.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/experiment_skeleton.py)
-  - [`src/engine/runner.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/runner.py)
-  - [`src/eval/m5_phase9_study.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/m5_phase9_study.py)
+  - [`src/engine/experiment_skeleton.py`](src/engine/experiment_skeleton.py)
+  - [`src/engine/runner.py`](src/engine/runner.py)
+  - [`src/eval/m5_phase9_study.py`](src/eval/m5_phase9_study.py)
 - **Primary Empirical Dataset**:
-  - [`data/eval/m5_phase9_semantic_budget_study.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase9_semantic_budget_study.json)
+  - [`data/eval/m5_phase9_semantic_budget_study.json`](data/eval/m5_phase9_semantic_budget_study.json)
   - SHA-256: `3c0d3e503c7ed24470b14dfde0bd763c631a9b5dbf70c047bbca72cfaab07f95`
 - **Unit Verification Suite**:
-  - [`tests/unit/test_m5_phase9_experiment_skeleton.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_phase9_experiment_skeleton.py) (`31 / 31 passed`)
+  - [`tests/unit/test_m5_phase9_experiment_skeleton.py`](tests/unit/test_m5_phase9_experiment_skeleton.py) (`31 / 31 passed`)
 
 **Phase 9 post-run integrity audit is COMPLETE, VERIFIED, and SCIENTIFICALLY SEALED.**

@@ -29,7 +29,7 @@ Phase 6.9 implements this governance decision exclusively within the evaluation 
 Applicability MUST NOT be determined from model-generated prose, `evidence_gap` text, claims that a FACT is anomalous, `expected_decision`, `ground_truth_vulnerable`, scenario ID suffixes (`-VULN-`, `-PATCH-`), model confidence, model decisions, or methodology references.
 
 ### Implementation: `canonical_vulnerability_evidence_present`
-In [`src/eval/scorer.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py):
+In [`src/eval/scorer.py`](src/eval/scorer.py):
 ```python
 CANONICAL_ANOMALY_KEYS: Set[str] = {
     # Class-1 structural predicate booleans from LosslessStructuralPack
@@ -176,7 +176,7 @@ Both scenarios present neutral OpenAPI documentation (`GET /api/v1/invoices/{id}
 
 ## 9. Deterministic Unit Tests
 
-The test suite [`tests/unit/test_m5_policy3_evaluation.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_policy3_evaluation.py) implements 15 exhaustive deterministic tests:
+The test suite [`tests/unit/test_m5_policy3_evaluation.py`](tests/unit/test_m5_policy3_evaluation.py) implements 15 exhaustive deterministic tests:
 
 | Test Identifier | Invariant Verified | Result |
 | :--- | :--- | :--- |
@@ -234,11 +234,11 @@ All protected artifacts were verified byte-identical before and after implementa
 ## 11. Modified and New Files
 
 - **Modified Files**:
-  - [`src/eval/scorer.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py): Added Policy 3 evaluation types, predicates, and `DeterministicScorer.score_policy3()`.
-  - [`src/eval/__init__.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/__init__.py): Exported Policy 3 evaluation symbols.
+  - [`src/eval/scorer.py`](src/eval/scorer.py): Added Policy 3 evaluation types, predicates, and `DeterministicScorer.score_policy3()`.
+  - [`src/eval/__init__.py`](src/eval/__init__.py): Exported Policy 3 evaluation symbols.
 - **New Files**:
-  - [`tests/unit/test_m5_policy3_evaluation.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_policy3_evaluation.py): 15 deterministic unit tests.
-  - [`docs/M5_PHASE6_9_POLICY3_SCORING_IMPLEMENTATION.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M5_PHASE6_9_POLICY3_SCORING_IMPLEMENTATION.md): This report.
+  - [`tests/unit/test_m5_policy3_evaluation.py`](tests/unit/test_m5_policy3_evaluation.py): 15 deterministic unit tests.
+  - [`docs/M5_PHASE6_9_POLICY3_SCORING_IMPLEMENTATION.md`](docs/M5_PHASE6_9_POLICY3_SCORING_IMPLEMENTATION.md): This report.
 
 ---
 

@@ -5,10 +5,10 @@
 **Status:** DRAFT / DESIGN SPECIFICATION (STRICT DESIGN ONLY — NO CODE CHANGES)  
 **Parent Milestones:** 
 - Milestone M4 (Reasoning Engine Optimization & Epistemic Calibration — CLOSED)
-- Milestone M4.9 Confirmatory Evaluation ([`data/eval/m4_live_llm_benchmark_final.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m4_live_llm_benchmark_final.json), SHA-256: `459b9ec63c3a2dc760abde12ec196760f7e505fbab5317f0da0c46b32c5eaac7` — CLOSED & IMMUTABLE)
+- Milestone M4.9 Confirmatory Evaluation ([`data/eval/m4_live_llm_benchmark_final.json`](data/eval/m4_live_llm_benchmark_final.json), SHA-256: `459b9ec63c3a2dc760abde12ec196760f7e505fbab5317f0da0c46b32c5eaac7` — CLOSED & IMMUTABLE)
 **Foundational Audit Documents:**
-- [`docs/M4_9_TECHNICAL_ERRATUM.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_9_TECHNICAL_ERRATUM.md)
-- [`docs/M4_COMPOSITION_AUDIT.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_COMPOSITION_AUDIT.md)
+- [`docs/M4_9_TECHNICAL_ERRATUM.md`](docs/M4_9_TECHNICAL_ERRATUM.md)
+- [`docs/M4_COMPOSITION_AUDIT.md`](docs/M4_COMPOSITION_AUDIT.md)
 **Authoritative Planning Freeze Anchor:** `1e1a87070a018542a0a2e79f8a78654f34df5aba` (`m4-v1.1.0-planning-freeze`)  
 **Target Specification File:** `docs/M5_REASONING_INTERFACE_PLAN.md`  
 
@@ -22,9 +22,9 @@ resulted in a catastrophic software composition failure during the Phase M4.9 co
 
 Specifically, **336 out of 336 scheduled evaluations terminated in `PARSER_FAILURE`**, yielding $0.00\%$ Useful Hypotheses and $100.00\%$ True Negative Rate on negative controls via fail-closed rejection.
 
-As established by the comprehensive post-execution audits in [`docs/M4_9_TECHNICAL_ERRATUM.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_9_TECHNICAL_ERRATUM.md) and [`docs/M4_COMPOSITION_AUDIT.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M4_COMPOSITION_AUDIT.md), this outcome was caused not by model incapacity, context window exhaustion, or retrieval failure, but by an **unreconciled output-protocol conflict and system-prompt shadowing**:
-1. **Mutually Exclusive System Policy Branching**: [`ReasoningContextBuilder.build_context()`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py#L141-L249) selected system prompt policies using an `if/elif` cascade. When $I_2$ and $I_4$ were simultaneously enabled, $I_2$ evaluated first, commanding JSON output and **completely suppressing the $I_4$ BAIR XML instructions**.
-2. **Protocol Schism**: The prompt commanded JSON, while the evaluation harness in [`src/eval/m4_live_benchmark.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/eval/m4_live_benchmark.py#L393) called [`parse_bair()`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/bair_extractor.py#L74), which requires XML `<bair>...</bair>` tags.
+As established by the comprehensive post-execution audits in [`docs/M4_9_TECHNICAL_ERRATUM.md`](docs/M4_9_TECHNICAL_ERRATUM.md) and [`docs/M4_COMPOSITION_AUDIT.md`](docs/M4_COMPOSITION_AUDIT.md), this outcome was caused not by model incapacity, context window exhaustion, or retrieval failure, but by an **unreconciled output-protocol conflict and system-prompt shadowing**:
+1. **Mutually Exclusive System Policy Branching**: [`ReasoningContextBuilder.build_context()`](src/engine/context_builder.py#L141-L249) selected system prompt policies using an `if/elif` cascade. When $I_2$ and $I_4$ were simultaneously enabled, $I_2$ evaluated first, commanding JSON output and **completely suppressing the $I_4$ BAIR XML instructions**.
+2. **Protocol Schism**: The prompt commanded JSON, while the evaluation harness in [`src/eval/m4_live_benchmark.py`](src/eval/m4_live_benchmark.py#L393) called [`parse_bair()`](src/engine/bair_extractor.py#L74), which requires XML `<bair>...</bair>` tags.
 3. **Budget Accounting Gaps**: $I_3$ counterfactual instructions were appended after the token floor check, permitting silent context expansion; conversely, $I_6$ protected handoff was silently dropped if budget headroom was exhausted.
 4. **Single-Factor Test Blindness**: Existing unit tests strictly validated single-factor isolation, leaving multi-intervention composition and prompt-parser agreement untested.
 
@@ -191,7 +191,7 @@ In Milestone M5, every reasoning attempt follows a formal 9-stage lifecycle gove
 
 ## 7. Modular Prompt Compiler & Mixin Architecture
 
-To eliminate the `if/elif` shadowing defect, [`ReasoningContextBuilder`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py) is refactored into a **Prompt Contract Compiler** using modular policy mixins:
+To eliminate the `if/elif` shadowing defect, [`ReasoningContextBuilder`](src/engine/context_builder.py) is refactored into a **Prompt Contract Compiler** using modular policy mixins:
 
 ```python
 # M5 Architectural Pattern: Modular Policy Compilation
@@ -450,10 +450,10 @@ Before finalizing implementation in Phase 4+, the following design choices must 
 The following sequential tasks are specified for execution in Phase 4 and subsequent phases:
 
 - [ ] **Task 1: Contract Infrastructure**:
-  - Implement `OutputProtocolContract` enum and descriptors in [`src/engine/models.py`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/models.py).
+  - Implement `OutputProtocolContract` enum and descriptors in [`src/engine/models.py`](src/engine/models.py).
   - Define `BairJsonObject` Pydantic model with strict field definitions and regex patterns.
 - [ ] **Task 2: Modular Prompt Compiler**:
-  - Refactor [`ReasoningContextBuilder`](file:///c:/Projects/Bug%20Bounty%20AI/src/engine/context_builder.py) to assemble system policy and user prompt using modular mixins.
+  - Refactor [`ReasoningContextBuilder`](src/engine/context_builder.py) to assemble system policy and user prompt using modular mixins.
   - Eliminate the `if/elif` cascade in system policy construction.
   - Relocate $I_3$ counterfactual block into mandatory P1 budgeting.
   - Implement fail-closed `ContextBudgetOverflowError` if $I_6$ handoff cannot fit.

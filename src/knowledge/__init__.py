@@ -22,6 +22,12 @@ from src.knowledge.grounding_validator import (
 )
 from src.knowledge.poisoning_defense import KnowledgePoisoningDefense
 from src.knowledge.pipeline import VaptReasoningPipeline
+from src.knowledge.embedding_backend import MiniLMEmbeddingBackend
+from src.knowledge.vector_index import PersistentVectorIndex
+from src.knowledge.minilm_retriever import (
+    MiniLmDenseOnlyRetriever,
+    MiniLmVectorFts5Retriever,
+)
 
 __all__ = [
     "KnowledgeSourceType",
@@ -38,4 +44,8 @@ __all__ = [
     "KnowledgeGroundingResult",
     "KnowledgePoisoningDefense",
     "VaptReasoningPipeline",
+    "MiniLMEmbeddingBackend",
+    "PersistentVectorIndex",
+    "MiniLmVectorFts5Retriever",
+    "MiniLmDenseOnlyRetriever",
 ]

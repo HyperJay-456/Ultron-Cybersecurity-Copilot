@@ -46,10 +46,10 @@ Milestone M1.5 freezes the experimental evaluation framework to eliminate moving
 
 ### 2.1 Benchmark Freeze Criteria `[MANDATORY]`
 To declare Milestone M1.5 frozen, the benchmark must satisfy the following six criteria:
-1. **Dataset Invariance**: The 84 benchmark scenarios defined in [`src/eval/scenarios.py`](file:///C:/Projects/Bug%20Bounty%20AI/src/eval/scenarios.py) are exported into an immutable canonical manifest file `data/benchmarks/m1_5_frozen_manifest.json`. The dataset SHA-256 checksum is calculated at freeze time and published externally (e.g., in a companion checksum artifact `data/benchmarks/m1_5_frozen_manifest.json.sha256`); it is not recursively embedded in the hashed manifest itself.
+1. **Dataset Invariance**: The 84 benchmark scenarios defined in [`src/eval/scenarios.py`](src/eval/scenarios.py) are exported into an immutable canonical manifest file `data/benchmarks/m1_5_frozen_manifest.json`. The dataset SHA-256 checksum is calculated at freeze time and published externally (e.g., in a companion checksum artifact `data/benchmarks/m1_5_frozen_manifest.json.sha256`); it is not recursively embedded in the hashed manifest itself.
 2. **Ground-Truth Isolation Verification**: Automated tests (`tests/unit/test_evaluation_isolation.py` and `tests/unit/test_real_ablation_integrity.py`) must pass with 100% compliance, proving zero leakage of `ground_truth_vulnerable`, `vulnerable_variant`, or vulnerability names into prompt builders, retrieval, or reasoning engines.
 3. **Paired Symmetry**: Every vulnerable endpoint in the benchmark has an exact, structurally matched patched counterpart with identical observable OpenAPI route schemas, parameter definitions, and neutral observable traffic facts.
-4. **Scoring Determinism**: Given a fixed run result, [`DeterministicScorer`](file:///C:/Projects/Bug%20Bounty%20AI/src/eval/scorer.py) produces identical point metrics, Wilson 95% confidence intervals, and McNemar contingency matrices on every execution.
+4. **Scoring Determinism**: Given a fixed run result, [`DeterministicScorer`](src/eval/scorer.py) produces identical point metrics, Wilson 95% confidence intervals, and McNemar contingency matrices on every execution.
 5. **Model & Environment Pinning**: The exact local Ollama model digests (`qwen2.5-coder:3b` and `qwen2.5-coder:7b`), temperature (`0.0`), context ceilings, and Ollama server version are recorded in the manifest metadata.
 6. **Regression Test Suite**: The 126-test suite (106 unit + 20 integration) passes with zero failures and zero regressions against the frozen manifest.
 
@@ -62,7 +62,7 @@ To declare Milestone M1.5 frozen, the benchmark must satisfy the following six c
 - **Exclusion Criteria**:
   - Any scenario containing explicit vulnerability terminology in descriptions, endpoint paths, or observable traffic facts (e.g., "BOLA", "BFLA", "IDOR", "step-skipping", "bypass", "vulnerable", "patched").
   - Scenarios relying on external internet connectivity or non-local third-party APIs.
-  - Endpoints with unparented parameters or ambiguous canonical identifiers that fail [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py).
+  - Endpoints with unparented parameters or ambiguous canonical identifiers that fail [`GroundingValidator`](src/validation/grounding.py).
 
 ### 2.3 Application Family Split Rules & Negative Control Distribution `[MANDATORY]`
 To prevent data contamination across model iterations, the 6 application families are strictly segregated into three splits of 28 scenarios each.
@@ -345,7 +345,7 @@ The `EvidencePreservationGate` enforces deterministic invariants prior to 7B con
    - **Downstream Routing Resolution**: `DeterministicRouter` consumes the resulting `GateValidationResult` (Schema 5) and deterministically produces `DeterministicRoutingDecision` with `escalate = True` and `fail_safe_triggered = True`, per the fail-safe triad in Section 7.3.1.
    - **Quarantine from 7B Context**: The invented identifier MUST NOT become usable 7B evidence and is stripped from the assembled 7B prompt to prevent epistemic contagion.
    - **Zero Silent Dropping**: An invented 3B identifier must NEVER silently disappear without audit evidence and fail-safe escalation logging.
-   - **Authoritative Validator**: The downstream [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) remains authoritative defense-in-depth on final 7B hypotheses.
+   - **Authoritative Validator**: The downstream [`GroundingValidator`](src/validation/grounding.py) remains authoritative defense-in-depth on final 7B hypotheses.
 3. **No-Drop Guarantee**: The token budget controller is physically prohibited from dropping Channel A structural elements in favor of Channel B metadata or advisory RAG.
 
 ### 4.4 Formal Cascade Schema Engineering Contracts `[MANDATORY]`
@@ -1284,7 +1284,7 @@ Before wrapping target content:
 4. **Derived Representation Only (Stored Evidence Immutability Invariant)**: Deterministic sanitization, control-character stripping, and delimiter escaping modify **only the derived LLM prompt representation** assembled in-memory for model inference. The underlying stored evidence in `evidence.db`, raw proxy capture logs, and the `EvidenceGraph` remains completely unaltered, unmutated, and strictly content-addressed by cryptographic hash.
 
 ### 9.3 Post-Generation Grounding Validation (Defense-in-Depth) `[MANDATORY]`
-Even if prompt injection successfully influences 7B reasoning, the output is intercepted by [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py):
+Even if prompt injection successfully influences 7B reasoning, the output is intercepted by [`GroundingValidator`](src/validation/grounding.py):
 - Any invented fact ID or instruction-derived parameter is rejected.
 - If the model emits `CONFIRMED`, it is hard-rejected by schema enforcement.
 - If required evidence is missing, the decision is deterministically downgraded to `INSUFFICIENT_EVIDENCE`.
@@ -1827,7 +1827,7 @@ Phase 11: Paired M2 Benchmark Evaluation
 | **HARD SAFETY REQUIREMENT** | **Zero Injection Breakouts** | Test Suite C (Adversarial Injection) | 100% containment; zero `PROMPT_INJECTION_BREAKOUT` occurrences across all 6 deterministic criteria defined in Section 9.4 (unauthorized actions, schema alteration, unregistered IDs, epistemic override, forbidden `CONFIRMED`, authoritative text adoption). |
 | **HARD SAFETY REQUIREMENT** | **Monotonic Escalation Holds** | Test Suite A & Test Suite C | Zero routing false negatives on HIGH_RISK_SECURITY_SIGNAL; 3B output cannot suppress canonical escalation; 100% pass on 9-fixture monotonicity sweep; Class-1 gating enforced by construction. |
 | **HARD SAFETY REQUIREMENT** | **Structural Predicate Authority** | Test Suite A.5 (`StructuralDiffEngine`) | `StructuralDiffEngine` verified as sole producer of Class-1 booleans; 100% pass on raw synthetic fixtures including `CROSS_IDENTITY_OBJECT_ACCESS_SUCCESS` and multi-role existential quantification. |
-| **HARD SAFETY REQUIREMENT** | **Grounding & Epistemic Integrity** | [`GroundingValidator`](file:///C:/Projects/Bug%20Bounty%20AI/src/validation/grounding.py) | Zero hallucinated or unparented IDs accepted; unevidenced hypotheses downgraded; zero `CONFIRMED` emissions. |
+| **HARD SAFETY REQUIREMENT** | **Grounding & Epistemic Integrity** | [`GroundingValidator`](src/validation/grounding.py) | Zero hallucinated or unparented IDs accepted; unevidenced hypotheses downgraded; zero `CONFIRMED` emissions. |
 | **HARD SAFETY REQUIREMENT** | **Hardware / Resource Stability** | `MODEL_ENVIRONMENT_VALIDATION` & Monitor | Zero VRAM allocation errors, OOM aborts, or driver crashes on RTX 3050 (4GB) during complete 84-scenario sweep; model digests verified; memory growth slope $\le 5.0\text{ MB/cycle}$ and endpoint drift $\le \max(5\%, 150\text{ MB})$ with zero `MEMORY_DRIFT_DETECTED`. |
 | **HARD SAFETY REQUIREMENT** | **Shared Context Builder Integrity** | `ReasoningContextBuilder` | Single parametrized context builder shared across Tracks A, B, and C with recorded provenance hash; zero bespoke prompt-construction logic. |
 | **HARD SAFETY REQUIREMENT** | **Fail-Safe Routing Activation** | `DeterministicRouter` | 100% automatic escalation to 7B upon malformed/missing 3B JSON, unregistered category (TRIAGE_CATEGORY_INVALID), or ungrounded 3B IDs (TRIAGE_HALLUCINATION) when Channel A is intact; canonical evidence or database failure triggers immediate HOLD/BLOCK and never reasoning over incomplete evidence. |
@@ -1870,7 +1870,7 @@ Phase 11: Paired M2 Benchmark Evaluation
 
 To prevent regression and protect historical validity:
 1. **Historical Raw Results**: `data/exp0006_full_ablation_results.json` and `data/pilot_ablation_results.json` remain completely unmodified.
-2. **Statistical Formulas**: Wilson 95% score interval calculations with explicit sample denominators remain identical to the validated audit in [`docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md`](file:///C:/Projects/Bug%20Bounty%20AI/docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md).
+2. **Statistical Formulas**: Wilson 95% score interval calculations with explicit sample denominators remain identical to the validated audit in [`docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md`](docs/EXP0006_FINAL_METHODOLOGY_AUDIT.md).
 3. **Scenario Core Definitions**: The 84 scenario endpoints, schemas, parameters, and application families in `src/eval/scenarios.py` remain unchanged.
 4. **Simulator Tri-State Logic**: The `HeadlessSimulator` tri-state execution logic (`SUPPORTING`, `CONTRADICTING`, `UNRESOLVED`) remains unchanged.
 5. **Hardware Scheduling Locks**: Strict synchronous phase locks in `HardwareScheduler` remain unchanged.

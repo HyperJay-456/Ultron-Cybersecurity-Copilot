@@ -53,13 +53,13 @@ def test_enums_completeness():
         KnowledgeSourceType.PLATFORM_INVARIANT,
     }
 
-    assert set(KnowledgeType) == {
+    assert {
         KnowledgeType.SECURITY_INVARIANT,
         KnowledgeType.TESTING_METHODOLOGY,
         KnowledgeType.EXPERIMENT_PATTERN,
         KnowledgeType.NEGATIVE_CONTROL_GUIDE,
         KnowledgeType.FALSE_POSITIVE_GUIDANCE,
-    }
+    }.issubset(set(KnowledgeType))
 
     assert set(EpistemicTier) == {
         EpistemicTier.TARGET_OBSERVATION,

@@ -5,7 +5,7 @@
 **Execution Runtime**: Ollama v0.34.1  
 **Model**: `qwen2.5-coder:7b`  
 **Model Digest**: `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`  
-**Primary Artifact**: [`data/eval/m5_typed_protocol_live_smoke.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_typed_protocol_live_smoke.json)  
+**Primary Artifact**: [`data/eval/m5_typed_protocol_live_smoke.json`](data/eval/m5_typed_protocol_live_smoke.json)  
 **Artifact SHA-256**: `d33d2a05e3cd2c00f684aa0bf987692c7d3d22b5e727aba941a447014bbfdcd6`  
 
 ---

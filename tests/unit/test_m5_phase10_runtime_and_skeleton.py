@@ -721,7 +721,8 @@ def test_20_duplicate_call_prevention():
         runner.save_checkpoint(pre_seeded)
 
         # Run benchmark with max_calls=2 (so it should execute exactly 1 more call)
-        records = runner.run_benchmark(require_live_ollama=False, max_calls=2)
+        with patch("src.eval.run_m5_phase10_benchmark.run_phase10_preflight_gates"):
+            records = runner.run_benchmark(require_live_ollama=False, max_calls=2)
 
         # The first condition for first_scen_id was skipped; call_counter must be 1, total records 2
         assert call_counter["calls"] == 1

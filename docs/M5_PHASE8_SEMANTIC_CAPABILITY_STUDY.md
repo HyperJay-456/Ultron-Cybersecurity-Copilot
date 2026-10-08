@@ -5,12 +5,12 @@
 **Execution Runtime**: Ollama v0.34.1  
 **Model**: `qwen2.5-coder:7b` (`Q4_K_M`)  
 **Model Digest**: `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`  
-**Sealed Phase 7 Artifact**: [`data/eval/m5_phase7_benchmark_final.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase7_benchmark_final.json)  
+**Sealed Phase 7 Artifact**: [`data/eval/m5_phase7_benchmark_final.json`](data/eval/m5_phase7_benchmark_final.json)  
 **Sealed Phase 7 SHA-256**: `1e0ed90c4aa672f135d2d2f2240a14d22fa0037c03efda33634f4bf10ff0b125`  
-**Primary Diagnostic Artifact**: [`data/eval/m5_phase8_semantic_study.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase8_semantic_study.json)  
+**Primary Diagnostic Artifact**: [`data/eval/m5_phase8_semantic_study.json`](data/eval/m5_phase8_semantic_study.json)  
 **Artifact SHA-256**: `b1df9a62fb07d76e0abf6e3935ccbabdaa1713f4c594019ae30c9e59567a45c6`  
-**Companion SHA File**: [`data/eval/m5_phase8_semantic_study.json.sha256`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase8_semantic_study.json.sha256)  
-**Verification Suite**: [`tests/unit/test_m5_phase8_semantic_study.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_phase8_semantic_study.py)  
+**Companion SHA File**: [`data/eval/m5_phase8_semantic_study.json.sha256`](data/eval/m5_phase8_semantic_study.json.sha256)  
+**Verification Suite**: [`tests/unit/test_m5_phase8_semantic_study.py`](tests/unit/test_m5_phase8_semantic_study.py)  
 
 ---
 
@@ -56,14 +56,14 @@ Phase 8 was executed as a controlled diagnostic study to determine whether that 
    - **Conclusion on Evidence**: Lack of empirical anomaly evidence explains why the model abstains to `INSUFFICIENT_EVIDENCE` in 67% of cases, but does **NOT** explain why experiment construction fails when a hypothesis is attempted.
 
 4. **Latency Envelope Audit (Phase 8.4)**:
-   - An audit of frozen planning documents ([`docs/M1_5_M2_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M1_5_M2_PLAN.md) §12.4 and [`docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md) §11.2) established that the 25-second figure is an **engineering performance target / profiling metric, NOT a hard disqualification gate**.
+   - An audit of frozen planning documents ([`docs/M1_5_M2_PLAN.md`](docs/M1_5_M2_PLAN.md) §12.4 and [`docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md`](docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md) §11.2) established that the 25-second figure is an **engineering performance target / profiling metric, NOT a hard disqualification gate**.
    - The hard execution gate is 30.0s (`LATENCY_TIMEOUT`). Phase 7 had zero timeouts.
 
 ---
 
 ## 2. Phase 8.0 — Preflight Verification & Immutability Audit
 
-Before running any diagnostic live calls, Phase 7 artifacts and benchmark code were verified byte-for-byte using [`tests/unit/test_m5_phase8_semantic_study.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_phase8_semantic_study.py):
+Before running any diagnostic live calls, Phase 7 artifacts and benchmark code were verified byte-for-byte using [`tests/unit/test_m5_phase8_semantic_study.py`](tests/unit/test_m5_phase8_semantic_study.py):
 
 | Target Artifact / Runtime Property | Authoritative Value / SHA-256 | Verification Status |
 | :--- | :--- | :--- |
@@ -208,11 +208,11 @@ All 4 fixtures were verified offline to transition the applicability state to `V
 In Phase 7, the overall mean latency was reported as **25.34 s** (Track A: 21.70s, Track B: 23.32s, Track C: 27.57s, Track D: 28.77s). An audit of frozen planning documents was performed to clarify whether this 25-second limit is a hard acceptance gate, a primary compute-envelope requirement, or an engineering target.
 
 ### Authoritative Specification Review:
-1. **[`docs/M1_5_M2_PLAN.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M1_5_M2_PLAN.md) Section 12.4 ("Latency Tiers and SLAs")**:
+1. **[`docs/M1_5_M2_PLAN.md`](docs/M1_5_M2_PLAN.md) Section 12.4 ("Latency Tiers and SLAs")**:
    - $\le 12.0 \text{ s}$: Interactive target for desktop/agent workflows.
    - $12.0 \text{ s} - 30.0 \text{ s}$: Formally classified as `LATENCY_OVER_TARGET` (*"Deep offline reasoning; logged as performance warning; execution remains fully valid"*).
    - $> 30.0 \text{ s}$: Hard timeout (`LATENCY_TIMEOUT`).
-2. **[`docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md) Section 11.2**:
+2. **[`docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md`](docs/M3_v2_3_6_PLANNING_HARDENING_AUDIT.md) Section 11.2**:
    - Confirms that execution times up to 30.0s are accepted for local 7B quantization on developer workstations.
 3. **Phase 7 Empirical Reality**:
    - Zero calls exceeded 30.0s. All 336 calls completed cleanly without transport failure.
@@ -247,10 +247,10 @@ When the deterministic engine fixes the legal experiment action (Condition P3), 
 
 | Deliverable | File Path | Status |
 | :--- | :--- | :---: |
-| Diagnostic Report | [`docs/M5_PHASE8_SEMANTIC_CAPABILITY_STUDY.md`](file:///c:/Projects/Bug%20Bounty%20AI/docs/M5_PHASE8_SEMANTIC_CAPABILITY_STUDY.md) | **COMPLETE** |
-| Study Dataset (44 calls) | [`data/eval/m5_phase8_semantic_study.json`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase8_semantic_study.json) | **SEALED** |
-| Artifact Checksum | [`data/eval/m5_phase8_semantic_study.json.sha256`](file:///c:/Projects/Bug%20Bounty%20AI/data/eval/m5_phase8_semantic_study.json.sha256) | **`b1df9a62fb07d76e0abf6e3935ccbabdaa1713f4c594019ae30c9e59567a45c6`** |
-| Diagnostic Unit Tests | [`tests/unit/test_m5_phase8_semantic_study.py`](file:///c:/Projects/Bug%20Bounty%20AI/tests/unit/test_m5_phase8_semantic_study.py) | **5/5 PASSED** |
+| Diagnostic Report | [`docs/M5_PHASE8_SEMANTIC_CAPABILITY_STUDY.md`](docs/M5_PHASE8_SEMANTIC_CAPABILITY_STUDY.md) | **COMPLETE** |
+| Study Dataset (44 calls) | [`data/eval/m5_phase8_semantic_study.json`](data/eval/m5_phase8_semantic_study.json) | **SEALED** |
+| Artifact Checksum | [`data/eval/m5_phase8_semantic_study.json.sha256`](data/eval/m5_phase8_semantic_study.json.sha256) | **`b1df9a62fb07d76e0abf6e3935ccbabdaa1713f4c594019ae30c9e59567a45c6`** |
+| Diagnostic Unit Tests | [`tests/unit/test_m5_phase8_semantic_study.py`](tests/unit/test_m5_phase8_semantic_study.py) | **5/5 PASSED** |
 | Frozen Benchmark | `src/eval/scenarios.py` | **UNMODIFIED** |
 | Historical Benchmark | `data/eval/m5_phase7_benchmark_final.json` | **UNMODIFIED** |
 

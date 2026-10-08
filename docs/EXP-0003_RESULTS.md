@@ -11,7 +11,7 @@
 
 ## 1. Pre-Registered Protocol Reference
 
-This evaluation was conducted strictly in accordance with [docs/EXP-0003_PROTOCOL.md](file:///c:/Projects/Bug%20Bounty%20AI/docs/EXP-0003_PROTOCOL.md). All scenario distributions, family splits, budget definitions, metric formulations, and statistical hypothesis tests were frozen prior to benchmark execution.
+This evaluation was conducted strictly in accordance with [docs/EXP-0003_PROTOCOL.md](docs/EXP-0003_PROTOCOL.md). All scenario distributions, family splits, budget definitions, metric formulations, and statistical hypothesis tests were frozen prior to benchmark execution.
 
 ---
 

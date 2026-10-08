@@ -134,7 +134,7 @@ The repository does contain useful controls: parameterized SQLite queries, YAML 
 - **Python source files inspected:** 128
 - **Python test files inspected:** 90
 - **Data/evaluation artifacts:** 211 files present under `data/`
-- **Test command:** `.\.venv\Scripts\pytest.exe -q -p no:cacheprovider tests` from `C:\Projects\Bug Bounty AI`
+- **Test command:** `.\.venv\Scripts\pytest.exe -q -p no:cacheprovider tests` from repository root
 - **Observed result:** 740 passed, 2 failed, 4 errors, 11 skipped, 2 warnings
 - **Project modifications:** No source, test, configuration, benchmark, data, or Git-history files modified. This report is the only created project file.
 

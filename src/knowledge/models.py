@@ -17,12 +17,21 @@ class KnowledgeSourceType(str, Enum):
 
 
 class KnowledgeType(str, Enum):
-    """Functional categorization of security knowledge chunks."""
+    """Functional categorization of security knowledge chunks (Milestone M5 Section 13)."""
     SECURITY_INVARIANT = "SECURITY_INVARIANT"
     TESTING_METHODOLOGY = "TESTING_METHODOLOGY"
     EXPERIMENT_PATTERN = "EXPERIMENT_PATTERN"
+    NEGATIVE_CONTROL = "NEGATIVE_CONTROL"
     NEGATIVE_CONTROL_GUIDE = "NEGATIVE_CONTROL_GUIDE"
     FALSE_POSITIVE_GUIDANCE = "FALSE_POSITIVE_GUIDANCE"
+    VERSION_CONSTRAINT = "VERSION_CONSTRAINT"
+    VULNERABILITY_PATTERN = "VULNERABILITY_PATTERN"
+    SECURE_CONFIGURATION = "SECURE_CONFIGURATION"
+    MITIGATION = "MITIGATION"
+    TOOL_GUIDANCE = "TOOL_GUIDANCE"
+    PROTOCOL_BEHAVIOR = "PROTOCOL_BEHAVIOR"
+    ATTACK_SURFACE_PATTERN = "ATTACK_SURFACE_PATTERN"
+    CODE_SECURITY_PATTERN = "CODE_SECURITY_PATTERN"
 
 
 class EpistemicTier(str, Enum):
@@ -150,3 +159,24 @@ class CorpusManifest(BaseModel):
     chunker_code_hash: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     index_identity: Optional[str] = None
+
+
+# Canonical M9 Entity Models
+from src.knowledge.canonical_models import (
+    AuthorityLevel,
+    CanonicalSourceType,
+    KnowledgeFreshnessStatus,
+    KnowledgeRelationType,
+    KnowledgeSource,
+    KnowledgeVersion,
+    KnowledgeDocument,
+    KnowledgeSection,
+    KnowledgeClaim,
+    KnowledgeReference,
+    KnowledgeRelation,
+    KnowledgeQuery,
+    KnowledgeCitation,
+    KnowledgeConflict,
+    KnowledgeAnswer,
+    KnowledgeResearchSession,
+)

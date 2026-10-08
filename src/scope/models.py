@@ -75,3 +75,22 @@ class ScopePolicy(BaseModel):
     program_constraints: Dict[str, Any] = Field(default_factory=dict)
     rules_of_engagement: Dict[str, Any] = Field(default_factory=dict)
     tool_policy: Dict[str, ToolPolicy] = Field(default_factory=dict)
+
+
+class AssessmentScopeStatus(str, Enum):
+    """M6 Assessment Scope decision states."""
+    IN_SCOPE = "IN_SCOPE"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
+    UNKNOWN = "UNKNOWN"
+
+
+class ExtendedScopeDecisionResult(BaseModel):
+    """M6 Auditable multi-target scope evaluation result."""
+    scope_status: AssessmentScopeStatus
+    is_permitted: bool
+    target_identifier: str
+    asset_type: Optional[str] = None
+    matched_rule: Optional[str] = None
+    out_of_scope_rule: Optional[str] = None
+    reason: str
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

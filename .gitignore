@@ -20,13 +20,23 @@ sdist/
 var/
 wheels/
 *.egg-info/
+src/*.egg-info/
 .installed.cfg
 *.egg
 
 # Testing & Linting
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.tox/
+.nox/
+
+# Frontend / Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.oxlint_cache/
 
 # Local data & databases (except schema fixtures)
 data/*.db
@@ -36,15 +46,26 @@ vectorstore/
 scope/.tld_cache/
 scratch/
 
+# Temporary Extraction & Analysis Artifacts
+data/quarantine/
+data/temp_apk/
+data/temp_bin/
+*.apk.extracted/
+*.apk.unpacked/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.code-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+*.tmp
+*~
 
 # Secrets & Credentials
 .env
