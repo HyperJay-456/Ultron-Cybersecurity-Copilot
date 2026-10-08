@@ -88,6 +88,14 @@ class DatabaseManager:
                     VALUES(new.rowid, new.fact_id, new.statement, new.source_tool);
                 END;
             """)
+            try:
+                conn.execute("ALTER TABLE conversation_messages ADD COLUMN response_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE conversation_messages ADD COLUMN status TEXT DEFAULT 'COMPLETED'")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     # Scope Decision Operations
@@ -595,32 +603,72 @@ class DatabaseManager:
 
         created_at = msg.get("created_at") or datetime.now(timezone.utc).isoformat()
         with self.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO conversation_messages (
-                    id, investigation_id, sequence_number, sender, content,
-                    structured_type, structured_data, delivery_status,
-                    cascade_trace_id, model_name, model_digest, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    delivery_status = excluded.delivery_status,
-                    structured_data = excluded.structured_data
-                """,
-                (
-                    msg["id"],
-                    msg["investigation_id"],
-                    msg["sequence_number"],
-                    msg["sender"],
-                    msg["content"],
-                    msg.get("structured_type", "NONE"),
-                    structured_data,
-                    msg.get("delivery_status", "delivered"),
-                    msg.get("cascade_trace_id"),
-                    msg.get("model_name"),
-                    msg.get("model_digest"),
-                    created_at,
-                ),
-            )
+            # Check if M11.5 columns exist
+            has_response_id = False
+            try:
+                cols = [r["name"] for r in conn.execute("PRAGMA table_info(conversation_messages)").fetchall()]
+                has_response_id = "response_id" in cols
+            except Exception:
+                pass
+
+            if has_response_id:
+                conn.execute(
+                    """
+                    INSERT INTO conversation_messages (
+                        id, investigation_id, sequence_number, sender, content,
+                        structured_type, structured_data, delivery_status,
+                        cascade_trace_id, model_name, model_digest, response_id, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        delivery_status = excluded.delivery_status,
+                        structured_data = excluded.structured_data,
+                        response_id = excluded.response_id,
+                        status = excluded.status
+                    """,
+                    (
+                        msg["id"],
+                        msg["investigation_id"],
+                        msg["sequence_number"],
+                        msg["sender"],
+                        msg["content"],
+                        msg.get("structured_type", "NONE"),
+                        structured_data,
+                        msg.get("delivery_status", "delivered"),
+                        msg.get("cascade_trace_id"),
+                        msg.get("model_name"),
+                        msg.get("model_digest"),
+                        msg.get("response_id"),
+                        msg.get("status", "COMPLETED"),
+                        created_at,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO conversation_messages (
+                        id, investigation_id, sequence_number, sender, content,
+                        structured_type, structured_data, delivery_status,
+                        cascade_trace_id, model_name, model_digest, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        delivery_status = excluded.delivery_status,
+                        structured_data = excluded.structured_data
+                    """,
+                    (
+                        msg["id"],
+                        msg["investigation_id"],
+                        msg["sequence_number"],
+                        msg["sender"],
+                        msg["content"],
+                        msg.get("structured_type", "NONE"),
+                        structured_data,
+                        msg.get("delivery_status", "delivered"),
+                        msg.get("cascade_trace_id"),
+                        msg.get("model_name"),
+                        msg.get("model_digest"),
+                        created_at,
+                    ),
+                )
             # Update parent investigation updated_at
             conn.execute(
                 "UPDATE investigations SET updated_at = ? WHERE investigation_id = ?",

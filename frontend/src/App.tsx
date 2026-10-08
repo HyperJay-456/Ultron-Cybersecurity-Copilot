@@ -365,6 +365,7 @@ export const App: React.FC = () => {
               onRejectExperiment={handleRejectExperiment}
               onExecuteExperiment={handleExecuteExperiment}
               onOpenDrawer={openDrawerWithTab}
+              onSendFollowUp={handleSendMessage}
             />
 
             <Composer

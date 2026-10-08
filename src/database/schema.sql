@@ -237,6 +237,8 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     cascade_trace_id    TEXT,
     model_name          TEXT,
     model_digest        TEXT,
+    response_id         TEXT,
+    status              TEXT DEFAULT 'COMPLETED',
     created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(investigation_id, sequence_number)
 );

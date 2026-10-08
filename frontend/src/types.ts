@@ -23,6 +23,56 @@ export interface ChatMessage {
   cascade_trace_id?: string;
   model_name?: string;
   model_digest?: string;
+  response_id?: string;
+  status?: string;
+}
+
+export type ResponseStatus =
+  | 'GENERATING'
+  | 'CONTINUING'
+  | 'COMPLETED'
+  | 'USER_STOPPED'
+  | 'MODEL_STOPPED'
+  | 'TOKEN_LIMIT'
+  | 'CONTEXT_LIMIT'
+  | 'TIMEOUT'
+  | 'ERROR';
+
+export interface ResponseChunk {
+  chunk_id: string;
+  sequence_number: number;
+  content: string;
+  raw_content: string;
+  content_hash: string;
+  token_count: number;
+  generation_time: number;
+  stop_reason: string;
+  created_at: string;
+}
+
+export interface ResponseVersion {
+  version_id: string;
+  response_id: string;
+  version_number: number;
+  content: string;
+  model: string;
+  status: ResponseStatus;
+  created_at: string;
+}
+
+export interface ResponseSession {
+  response_id: string;
+  investigation_id: string;
+  parent_message_id?: string;
+  model: string;
+  chunks: ResponseChunk[];
+  cumulative_tokens: number;
+  status: ResponseStatus;
+  termination_reason?: string;
+  final_content: string;
+  started_at: string;
+  completed_at?: string;
+  active_version: number;
 }
 
 export interface InvestigationSummary {

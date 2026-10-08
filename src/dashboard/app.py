@@ -33,6 +33,10 @@ from src.dashboard.models import (
     VerifyHypothesisRequest,
     VerifyFindingRequest,
     CreateFindingRequest,
+    ResponseActionRequest,
+    ContinueResponseRequest,
+    StopResponseRequest,
+    RegenerateResponseRequest,
 )
 from src.dashboard.service import WorkspaceService
 from src.copilot.orchestration import CopilotOrchestrator
@@ -536,6 +540,115 @@ def create_dashboard_app(
         """Execute experiment proposal through DeterministicExecutionEngine."""
         outcome = workspace_service.execute_experiment(exp_id, safe_simulation=True)
         return outcome.model_dump()
+
+    # -------------------------------------------------------------------------
+    # M11.5 Long Response & Research Subsystem Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/responses/metrics")
+    def get_response_metrics(
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch structured metrics for long response generation, continuation, and reliability."""
+        return workspace_service.get_response_metrics()
+
+    @app.get("/api/responses/{response_id}")
+    def get_response_session(
+        response_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Get session details and active status for a multi-chunk response."""
+        session = workspace_service.get_response_session(response_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Response '{response_id}' not found")
+        return session.model_dump()
+
+    @app.get("/api/responses/{response_id}/chunks")
+    def get_response_chunks(
+        response_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """Get granular chunk lineage and stop reasons for diagnostics."""
+        chunks = workspace_service.get_response_chunks(response_id)
+        return [c.model_dump() for c in chunks]
+
+    @app.get("/api/responses/{response_id}/versions")
+    def get_response_versions(
+        response_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """Get generation versions for an answer."""
+        versions = workspace_service.get_response_versions(response_id)
+        return [v.model_dump() for v in versions]
+
+    @app.post("/api/responses/{response_id}/stop")
+    def stop_response_generation(
+        response_id: str,
+        req: Optional[StopResponseRequest] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Stop an in-flight response generation deterministically."""
+        reason = req.reason if req else "User requested stop"
+        stopped = workspace_service.stop_generation(response_id, reason=reason)
+        return {"stopped": stopped, "response_id": response_id}
+
+    @app.post("/api/responses/{response_id}/continue")
+    def continue_response_generation(
+        response_id: str,
+        req: Optional[ContinueResponseRequest] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Explicitly request continuation for an incomplete response."""
+        try:
+            directive = req.custom_directive if req else None
+            session = workspace_service.continue_response(response_id, custom_directive=directive)
+            return session.model_dump()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.post("/api/responses/{response_id}/regenerate")
+    def regenerate_response_generation(
+        response_id: str,
+        req: Optional[RegenerateResponseRequest] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Regenerate answer, saving a new version without deleting previous generations."""
+        try:
+            temp = req.temperature if req else 0.7
+            session = workspace_service.regenerate_response(response_id, temperature=temp)
+            return session.model_dump()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.post("/api/responses/{response_id}/actions")
+    def perform_answer_action(
+        response_id: str,
+        req: ResponseActionRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Execute context-aware analytical action on a response (explain, summarize, checklist, etc.)."""
+        try:
+            session = workspace_service.perform_answer_action(response_id, req.action, detail=req.detail)
+            return session.model_dump()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/api/responses/{response_id}/export")
+    def export_response_text(
+        response_id: str,
+        format: str = Query("markdown", pattern="^(markdown|txt)$"),
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Export response formatted as Markdown or TXT with secret redaction enforced."""
+        try:
+            content = workspace_service.export_response(response_id, format_type=format)
+            return {
+                "response_id": response_id,
+                "format": format,
+                "content": content,
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
     # -------------------------------------------------------------------------
     # Legacy / Base Hypothesis & Review Endpoints (100% Backward Compatible)

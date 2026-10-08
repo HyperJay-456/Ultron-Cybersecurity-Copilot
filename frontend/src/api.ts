@@ -229,6 +229,89 @@ export async function fetchObservationDetail(invId: string, obsId: string): Prom
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// M11.5 Long Response API Methods
+// ---------------------------------------------------------------------------
+
+export async function fetchResponseSession(responseId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch response: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchResponseChunks(responseId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/chunks`);
+  if (!res.ok) throw new Error(`Failed to fetch response chunks: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchResponseVersions(responseId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/versions`);
+  if (!res.ok) throw new Error(`Failed to fetch response versions: ${res.statusText}`);
+  return res.json();
+}
+
+export async function stopResponseGeneration(responseId: string, reason?: string): Promise<{ stopped: boolean; response_id: string }> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: reason || 'User requested stop' }),
+  });
+  if (!res.ok) throw new Error(`Failed to stop response: ${res.statusText}`);
+  return res.json();
+}
+
+export async function continueResponse(responseId: string, directive?: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ custom_directive: directive }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to continue response: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function regenerateResponse(responseId: string, temperature: number = 0.7): Promise<any> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/regenerate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ temperature }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to regenerate response: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function performResponseAction(responseId: string, action: string, detail?: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, detail }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to perform response action: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportResponse(responseId: string, format: 'markdown' | 'txt' = 'markdown'): Promise<{ response_id: string; format: string; content: string }> {
+  const res = await fetch(`${BASE_URL}/responses/${encodeURIComponent(responseId)}/export?format=${format}`);
+  if (!res.ok) throw new Error(`Failed to export response: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchResponseMetrics(): Promise<any> {
+  const res = await fetch(`${BASE_URL}/responses/metrics`);
+  if (!res.ok) throw new Error(`Failed to fetch response metrics: ${res.statusText}`);
+  return res.json();
+}
+
 function jsonStringify(obj: any): string {
   return JSON.stringify(obj);
 }

@@ -77,6 +77,8 @@ class ChatMessage(BaseModel):
     cascade_trace_id: Optional[str] = None
     model_name: Optional[str] = None
     model_digest: Optional[str] = None
+    response_id: Optional[str] = None
+    status: Optional[str] = "COMPLETED"
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -239,3 +241,24 @@ class CreateFindingRequest(BaseModel):
     root_cause: str
     remediation: str
     references: List[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# M11.5 Long Response Subsystem Schemas
+# ---------------------------------------------------------------------------
+
+class ResponseActionRequest(BaseModel):
+    action: str = Field(description="Action: explain | summarize | expand | compare | checklist | indicators | evidence | report")
+    detail: Optional[str] = None
+
+
+class ContinueResponseRequest(BaseModel):
+    custom_directive: Optional[str] = None
+
+
+class StopResponseRequest(BaseModel):
+    reason: Optional[str] = "User requested stop"
+
+
+class RegenerateResponseRequest(BaseModel):
+    temperature: Optional[float] = 0.7

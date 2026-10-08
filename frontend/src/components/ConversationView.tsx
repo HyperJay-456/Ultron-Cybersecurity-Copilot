@@ -7,6 +7,7 @@ import { ExperimentCard } from './cards/ExperimentCard';
 import { ObservationCard } from './cards/ObservationCard';
 import { AuditCard } from './cards/AuditCard';
 import { getImportPresentation } from '../utils/importPresentation';
+import { LargeResponseView } from './LargeResponseView';
 
 interface ConversationViewProps {
   messages: ChatMessage[];
@@ -24,6 +25,7 @@ interface ConversationViewProps {
   onRejectExperiment: (id: string) => Promise<any>;
   onExecuteExperiment: (id: string) => Promise<any>;
   onOpenDrawer: (tab: string) => void;
+  onSendFollowUp?: (prompt: string) => void;
 }
 
 export const ConversationView: React.FC<ConversationViewProps> = ({
@@ -42,6 +44,7 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   onRejectExperiment,
   onExecuteExperiment,
   onOpenDrawer,
+  onSendFollowUp,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
@@ -425,21 +428,29 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
               </div>
 
               {/* Message Content Container */}
-              <div
-                style={{
-                  maxWidth: isUser ? '85%' : '100%',
-                  width: isUser ? 'auto' : '100%',
-                  backgroundColor: isUser ? 'var(--bg-surface-hover)' : 'transparent',
-                  padding: isUser ? '10px 16px' : '0',
-                  borderRadius: isUser ? 'var(--radius-lg)' : '0',
-                  fontSize: '14.5px',
-                  lineHeight: 1.6,
-                  color: 'var(--text-primary)',
-                  whiteSpace: 'pre-line',
-                }}
-              >
-                {msg.content}
-              </div>
+              {isUser ? (
+                <div
+                  style={{
+                    maxWidth: '85%',
+                    backgroundColor: 'var(--bg-surface-hover)',
+                    padding: '10px 16px',
+                    borderRadius: 'var(--radius-lg)',
+                    fontSize: '14.5px',
+                    lineHeight: 1.6,
+                    color: 'var(--text-primary)',
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {msg.content}
+                </div>
+              ) : (
+                <div style={{ width: '100%' }}>
+                  <LargeResponseView
+                    message={msg}
+                    onSendFollowUp={onSendFollowUp}
+                  />
+                </div>
+              )}
 
               {/* Delivery status for user messages */}
               {isUser && msg.delivery_status === 'sending' && (

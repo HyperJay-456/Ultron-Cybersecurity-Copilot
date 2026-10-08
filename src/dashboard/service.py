@@ -43,6 +43,15 @@ from src.scope.gate import ScopeGate, canonicalize_host
 from src.scope.models import ScopePolicy, ToolPolicy
 
 from src.evidence.ingestion.pipeline import EvidenceIngestionPipeline
+from src.response.generator import LongResponseEngine
+from src.response.stream import CancellationToken
+from src.response.models import (
+    GenerationTermination,
+    ResponseSession,
+    ResponseChunk,
+    ResponseVersion,
+    ResponseStatus,
+)
 from src.dashboard.models import (
     ChatMessage,
     CreateInvestigationRequest,
@@ -196,6 +205,11 @@ class WorkspaceService:
         self._messages: Dict[str, List[ChatMessage]] = {}
         self._experiments: Dict[str, Dict[str, Any]] = {}
         self._execution_descriptors: Dict[str, ExecutionDescriptor] = {}
+        self.response_engine = LongResponseEngine(
+            db_manager=self.db,
+            ollama_client=self.cascade_orchestrator.ollama_client,
+        )
+        self._active_cancellations: Dict[str, CancellationToken] = {}
 
         # NOTE: Do NOT auto-seed demo investigation on startup.
         # Production workspace starts clean. Demo fixture is strictly opt-in.
@@ -965,15 +979,16 @@ class WorkspaceService:
                     f"Assistant:"
                 )
 
-                resp = self.cascade_orchestrator.ollama_client.generate_raw(
-                    prompt=full_prompt,
-                    temperature=0.7,
-                    num_predict=200,
-                    timeout_seconds=25.0,
+                session = self.response_engine.generate_response(
+                    investigation_id=inv["id"],
+                    user_prompt=content,
+                    system_policy=system_prompt + ("\n\n" + history_context if history_context else ""),
+                    model_name="qwen2.5-coder:7b",
+                    auto_continue=True,
                 )
-                text = resp.get("response", "").strip()
+                text = session.final_content.strip()
                 if text:
-                    return text, "qwen2.5-coder:7b", None
+                    return text, "qwen2.5-coder:7b", None, session.response_id
             except Exception as e:
                 logger.warning(f"Conversational LLM call fallback: {e}")
 
@@ -1356,7 +1371,13 @@ class WorkspaceService:
         is_conversational = self._is_conversational_query(q_lower)
 
         if is_conversational:
-            reply_text, model_name, model_digest = self._handle_conversational_query(inv, redacted_user_content)
+            conv_res = self._handle_conversational_query(inv, redacted_user_content)
+            if len(conv_res) == 4:
+                reply_text, model_name, model_digest, response_id = conv_res
+            else:
+                reply_text, model_name, model_digest = conv_res
+                response_id = None
+
             redacted_reply = self.vault.redact_text(reply_text)
             resp_id = f"MSG-{secrets_token_hex()[:6].upper()}"
             asst_seq = self.db.get_next_sequence_number(inv_id)
@@ -1373,6 +1394,8 @@ class WorkspaceService:
                 "cascade_trace_id": None,
                 "model_name": model_name,
                 "model_digest": model_digest,
+                "response_id": response_id,
+                "status": "COMPLETED",
                 "created_at": resp_now,
             }
             self.db.insert_message(asst_msg_record)
@@ -1387,6 +1410,8 @@ class WorkspaceService:
                     delivery_status="delivered",
                     model_name=model_name,
                     model_digest=model_digest,
+                    response_id=response_id,
+                    status="COMPLETED",
                     timestamp=resp_now,
                 )
             ]
@@ -1891,6 +1916,130 @@ class WorkspaceService:
             hypothesis_state=hyp_state,
             new_evidence=new_fact,
         )
+
+    # -------------------------------------------------------------------------
+    # M11.5 Long Response & Security UX Operations
+    # -------------------------------------------------------------------------
+
+    def get_response_session(self, response_id: str) -> Optional[ResponseSession]:
+        """Fetch persistent response session by response ID."""
+        return self.response_engine.persistence.get_session(response_id)
+
+    def get_response_chunks(self, response_id: str) -> List[ResponseChunk]:
+        """Fetch granular chunk lineage for a response session."""
+        return self.response_engine.persistence.get_chunks(response_id)
+
+    def get_response_versions(self, response_id: str) -> List[ResponseVersion]:
+        """Fetch historical generation versions for a response."""
+        return self.response_engine.persistence.get_versions(response_id)
+
+    def stop_generation(self, response_id: str, reason: str = "User stopped generation") -> bool:
+        """Trigger cancellation token to halt in-flight response generation immediately."""
+        token = self._active_cancellations.get(response_id)
+        if token:
+            token.cancel(reason=reason)
+            return True
+        session = self.response_engine.persistence.get_session(response_id)
+        if session and session.status in (ResponseStatus.GENERATING, ResponseStatus.CONTINUING):
+            self.response_engine.persistence.update_session(
+                response_id=response_id,
+                status=ResponseStatus.USER_STOPPED,
+                final_content=session.final_content,
+                cumulative_tokens=session.cumulative_tokens,
+                termination_reason=GenerationTermination.CLIENT_ABORT,
+                completed_at=datetime_now_iso(),
+            )
+            return True
+        return False
+
+    def continue_response(self, response_id: str, custom_directive: Optional[str] = None) -> ResponseSession:
+        """Explicitly request continuation for an incomplete or token-capped answer."""
+        session = self.response_engine.persistence.get_session(response_id)
+        if not session:
+            raise ValueError(f"Response session '{response_id}' not found")
+        prompt = custom_directive or "Continue the previous analysis directly from the interruption point."
+        return self.response_engine.continue_response(response_id=response_id, user_prompt=prompt)
+
+    def regenerate_response(self, response_id: str, temperature: float = 0.7) -> ResponseSession:
+        """Regenerate answer from scratch, saving a new version without deleting previous versions."""
+        session = self.response_engine.persistence.get_session(response_id)
+        if not session:
+            raise ValueError(f"Response session '{response_id}' not found")
+        prompt = f"Regenerate technical analysis for investigation {session.investigation_id}."
+        return self.response_engine.regenerate_response(response_id=response_id, user_prompt=prompt)
+
+    def perform_answer_action(self, response_id: str, action: str, detail: Optional[str] = None) -> ResponseSession:
+        """
+        Execute context-aware analytical action on a response (explain, summarize, checklist, etc.).
+        Epistemically segregated: creates a new model response without mutating canonical findings or scope.
+        """
+        session = self.response_engine.persistence.get_session(response_id)
+        if not session:
+            raise ValueError(f"Response session '{response_id}' not found")
+
+        content = session.final_content
+        action_map = {
+            "explain": f"Explain this analysis in deeper technical depth, focusing on protocol mechanics:\n\n{content}",
+            "summarize": f"Provide an executive summary of the following security analysis:\n\n{content}",
+            "expand": f"Expand on the threat model, prerequisites, and edge cases of this finding:\n\n{content}",
+            "compare": f"Compare this vulnerability mechanism with related alternative attack vectors:\n\n{content}",
+            "checklist": f"Create a step-by-step verification and remediation checklist based on this analysis:\n\n{content}",
+            "indicators": f"Extract concrete technical indicators of compromise (IoCs) and parameter patterns from:\n\n{content}",
+            "evidence": f"Extract and list all discrete evidence claims made in this text, identifying any gaps:\n\n{content}",
+            "report": f"Convert this technical explanation into a structured VAPT report section:\n\n{content}",
+        }
+
+        action_key = action.lower().strip()
+        user_prompt = action_map.get(action_key, f"Perform {action} on the following analysis:\n\n{content}")
+        if detail:
+            user_prompt += f"\n\nSpecific Focus: {detail}"
+
+        return self.response_engine.generate_response(
+            investigation_id=session.investigation_id,
+            user_prompt=user_prompt,
+            parent_message_id=session.parent_message_id,
+            model_name=session.model,
+            auto_continue=True,
+        )
+
+    def export_response(self, response_id: str, format_type: str = "markdown") -> str:
+        """Export response formatted as Markdown or TXT with secret redaction strictly applied."""
+        session = self.response_engine.persistence.get_session(response_id)
+        if not session:
+            raise ValueError(f"Response session '{response_id}' not found")
+
+        raw_content = session.final_content
+        redacted = self.vault.redact_text(raw_content)
+
+        if format_type.lower() == "txt":
+            return (
+                f"BUG BOUNTY AI - RESEARCH RESPONSE EXPORT\n"
+                f"Response ID: {session.response_id}\n"
+                f"Investigation ID: {session.investigation_id}\n"
+                f"Model: {session.model}\n"
+                f"Status: {session.status.value}\n"
+                f"Generated: {session.started_at}\n\n"
+                f"==================================================\n\n"
+                f"{redacted}\n"
+            )
+
+        # Markdown format default
+        return (
+            f"# Bug Bounty AI - Research Response Export\n\n"
+            f"- **Response ID**: `{session.response_id}`\n"
+            f"- **Investigation**: `{session.investigation_id}`\n"
+            f"- **Model**: `{session.model}`\n"
+            f"- **Status**: `{session.status.value}`\n"
+            f"- **Cumulative Tokens**: `{session.cumulative_tokens}`\n"
+            f"- **Generated At**: `{session.started_at}`\n\n"
+            f"---\n\n"
+            f"{redacted}\n"
+        )
+
+    def get_response_metrics(self) -> Dict[str, Any]:
+        """Fetch structured response observability metrics."""
+        return self.response_engine.telemetry.get_metrics_snapshot()
+
 
 
 def secrets_token_hex() -> str:
