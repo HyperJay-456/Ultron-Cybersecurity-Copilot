@@ -64,7 +64,35 @@ from src.dashboard.models import (
     ManualObservationRequest,
     StructuredCardType,
     SystemStatusResponse,
+    CreateMemoryItemRequest,
+    SearchMemoryRequest,
+    PromoteMemoryRequest,
+    SupersedeMemoryRequest,
+    ForgetMemoryRequest,
+    RetireMemoryRequest,
 )
+from src.memory import (
+    EpisodicMemoryAdapters,
+    EpistemicStatus,
+    GLOBAL_MEMORY_TELEMETRY,
+    HybridMemoryRetriever,
+    LifecycleState,
+    MemoryAccessContext,
+    MemoryAdmissionPipeline,
+    MemoryAuthority,
+    MemoryDeletionEngine,
+    MemoryIsolationEngine,
+    MemoryItem,
+    MemoryLifecycleEngine,
+    MemoryNamespace,
+    MemoryPermissionGate,
+    MemoryPersistence,
+    MemoryPromotionEngine,
+    MemorySourceType,
+    PromotionStatus,
+    SensitivityClassification,
+)
+
 
 logger = get_logger("WorkspaceService")
 
@@ -210,6 +238,16 @@ class WorkspaceService:
             ollama_client=self.cascade_orchestrator.ollama_client,
         )
         self._active_cancellations: Dict[str, CancellationToken] = {}
+
+        # M12 Security Research Memory Subsystem
+        self.memory_persistence = MemoryPersistence(self.db)
+        self.memory_admission = MemoryAdmissionPipeline()
+        self.memory_retriever = HybridMemoryRetriever(self.memory_persistence)
+        self.memory_isolation_engine = MemoryIsolationEngine()
+        self.memory_promotion_engine = MemoryPromotionEngine()
+        self.memory_lifecycle_engine = MemoryLifecycleEngine()
+        self.memory_deletion_engine = MemoryDeletionEngine()
+
 
         # NOTE: Do NOT auto-seed demo investigation on startup.
         # Production workspace starts clean. Demo fixture is strictly opt-in.
@@ -2039,6 +2077,259 @@ class WorkspaceService:
     def get_response_metrics(self) -> Dict[str, Any]:
         """Fetch structured response observability metrics."""
         return self.response_engine.telemetry.get_metrics_snapshot()
+
+    # -------------------------------------------------------------------------
+    # M12 Security Research Memory & Knowledge Management Methods
+    # -------------------------------------------------------------------------
+
+    def create_memory_item(self, request: CreateMemoryItemRequest, context: Optional[MemoryAccessContext] = None) -> MemoryItem:
+        """Admits a candidate memory item through the deterministic admission pipeline."""
+        ctx = context or MemoryAccessContext()
+        candidate = MemoryItem(
+            memory_id="",
+            namespace=MemoryNamespace(request.namespace),
+            owner_id=ctx.user_id,
+            tenant_id=ctx.tenant_id,
+            assessment_id=request.assessment_id or ctx.assessment_id,
+            source_type=MemorySourceType(request.source_type),
+            epistemic_status=EpistemicStatus(request.epistemic_status),
+            authority_level=MemoryAuthority(request.authority_level),
+            content=request.content,
+            title=request.title or "",
+            summary=request.summary or "",
+            confidence=request.confidence,
+            provenance_references=request.provenance_references or [f"user:{ctx.user_id}"],
+            evidence_references=request.evidence_references,
+        )
+
+        existing_items = self.memory_persistence.list_items()
+        existing_hashes = {it.memory_id: it.content_hash for it in existing_items}
+
+        admitted_item, conflict = self.memory_admission.process_candidate(
+            candidate=candidate,
+            existing_items=existing_items,
+            existing_hashes=existing_hashes,
+        )
+
+        self.memory_persistence.save_item(admitted_item)
+        if conflict:
+            self.memory_persistence.save_conflict(conflict)
+
+        try:
+            vec = self.memory_retriever.embedding_backend.embed(admitted_item.content)
+            self.memory_persistence.save_embedding(admitted_item.memory_id, vec)
+        except Exception:
+            pass
+
+        return admitted_item
+
+    def list_memory_items(
+        self,
+        context: Optional[MemoryAccessContext] = None,
+        namespace: Optional[str] = None,
+        assessment_id: Optional[str] = None,
+    ) -> List[MemoryItem]:
+        """Queries authorized memory items enforcing tenant and assessment isolation."""
+        ctx = context or MemoryAccessContext(assessment_id=assessment_id)
+        if assessment_id:
+            ctx.assessment_id = assessment_id
+
+        where_data = self.memory_isolation_engine.build_query_filter_sql(ctx)
+        where_clause = where_data["where_clause"]
+        params = where_data["params"]
+
+        if namespace:
+            where_clause += " AND namespace = ?"
+            params.append(namespace)
+
+        items = self.memory_persistence.list_items(where_clause=where_clause, params=params)
+        return self.memory_isolation_engine.filter_authorized_candidates(ctx, items)
+
+    def get_memory_item(
+        self,
+        memory_id: str,
+        context: Optional[MemoryAccessContext] = None,
+        include_deleted: bool = False,
+    ) -> Optional[MemoryItem]:
+        """Fetches a specific memory item if authorized and not deleted."""
+        ctx = context or MemoryAccessContext()
+        item = self.memory_persistence.get_item(memory_id)
+        if not item:
+            return None
+        if not include_deleted and (item.lifecycle_state == LifecycleState.DELETED or item.is_tombstone):
+            return None
+        from src.memory.permissions import MemoryPermissionGate
+        MemoryPermissionGate.check_can_read(ctx, item)
+        return item
+
+    def delete_memory_item(
+        self,
+        memory_id: str,
+        user_id: str = "researcher",
+        context: Optional[MemoryAccessContext] = None,
+        reason: str = "User deletion",
+    ) -> bool:
+        """Tombstones and removes an item from active indexes."""
+        ctx = context or MemoryAccessContext(user_id=user_id)
+        item = self.memory_persistence.get_item(memory_id)
+        if not item:
+            return False
+        from src.memory.permissions import MemoryPermissionGate
+        MemoryPermissionGate.check_can_delete(ctx, item)
+
+        item, tombstone = self.memory_deletion_engine.tombstone_item(item, deleted_by=user_id, reason=reason)
+        self.memory_persistence.save_item(item)
+        self.memory_persistence.save_tombstone(tombstone)
+        self.memory_persistence.delete_item_index(memory_id)
+        GLOBAL_MEMORY_TELEMETRY.record_deletion()
+        return True
+
+    def search_memory(
+        self,
+        request: SearchMemoryRequest,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> Any:
+        """Executes hybrid retrieval over authorized memory items."""
+        ctx = context or MemoryAccessContext(assessment_id=request.assessment_id)
+        if request.assessment_id:
+            ctx.assessment_id = request.assessment_id
+        if request.allowed_namespaces:
+            ctx.allowed_namespaces = [MemoryNamespace(ns) for ns in request.allowed_namespaces]
+
+        return self.memory_retriever.retrieve(
+            query=request.query,
+            context=ctx,
+            top_k=request.top_k,
+            include_superseded=request.include_superseded,
+        )
+
+    def promote_memory(
+        self,
+        request: PromoteMemoryRequest,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> MemoryItem:
+        """Promotes an eligible memory item to SHARED_RESEARCH or VERIFIED_PATTERN with human review."""
+        ctx = context or MemoryAccessContext(user_id=request.requester_id)
+        item = self.memory_persistence.get_item(request.memory_id)
+        if not item:
+            raise ValueError(f"Memory item '{request.memory_id}' not found")
+
+        target_ns = MemoryNamespace(request.target_namespace)
+        promotion = self.memory_promotion_engine.request_promotion(
+            item=item,
+            target_namespace=target_ns,
+            requester_id=request.requester_id,
+            justification=request.justification,
+        )
+        self.memory_persistence.save_promotion(promotion)
+
+        if request.approve_immediately and request.reviewer_id:
+            promoted_item = self.memory_promotion_engine.approve_promotion(
+                promotion=promotion,
+                item=item,
+                reviewer_id=request.reviewer_id,
+            )
+            self.memory_persistence.save_item(item)
+            self.memory_persistence.save_item(promoted_item)
+            self.memory_persistence.save_promotion(promotion)
+
+            try:
+                vec = self.memory_retriever.embedding_backend.embed(promoted_item.content)
+                self.memory_persistence.save_embedding(promoted_item.memory_id, vec)
+            except Exception:
+                pass
+
+            GLOBAL_MEMORY_TELEMETRY.record_promotion()
+            return promoted_item
+
+        self.memory_persistence.save_item(item)
+        return item
+
+    def supersede_memory(
+        self,
+        request: SupersedeMemoryRequest,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> MemoryItem:
+        """Creates a new superseded version of an existing memory item."""
+        ctx = context or MemoryAccessContext(user_id=request.actor)
+        item = self.memory_persistence.get_item(request.memory_id)
+        if not item:
+            raise ValueError(f"Memory item '{request.memory_id}' not found")
+
+        old_item, new_item, snapshot = self.memory_lifecycle_engine.supersede_item(
+            old_item=item,
+            new_content=request.new_content,
+            new_epistemic_status=EpistemicStatus(request.new_epistemic_status) if request.new_epistemic_status else None,
+            new_authority=MemoryAuthority(request.new_authority) if request.new_authority else None,
+            change_rationale=request.change_rationale,
+            actor=request.actor,
+        )
+
+        self.memory_persistence.save_item(old_item)
+        self.memory_persistence.save_item(new_item)
+        self.memory_persistence.save_version(snapshot)
+
+        try:
+            vec = self.memory_retriever.embedding_backend.embed(new_item.content)
+            self.memory_persistence.save_embedding(new_item.memory_id, vec)
+        except Exception:
+            pass
+
+        GLOBAL_MEMORY_TELEMETRY.record_supersession()
+        return new_item
+
+    def forget_memory(
+        self,
+        request: ForgetMemoryRequest,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> bool:
+        """Convenience wrapper for user-initiated forgetting of a memory item."""
+        return self.delete_memory_item(
+            memory_id=request.memory_id,
+            user_id=request.user_id,
+            context=context,
+            reason=request.reason or "User forget request",
+        )
+
+    def get_memory_provenance(
+        self,
+        memory_id: str,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> Dict[str, Any]:
+        """Returns provenance references and evidence pointers for an item."""
+        item = self.get_memory_item(memory_id, context)
+        if not item:
+            raise ValueError(f"Memory item '{memory_id}' not found")
+        return {
+            "memory_id": item.memory_id,
+            "namespace": item.namespace.value,
+            "epistemic_status": item.epistemic_status.value,
+            "authority_level": item.authority_level.value,
+            "provenance_references": item.provenance_references,
+            "evidence_references": item.evidence_references,
+            "evidence_pointers": [ptr.model_dump() for ptr in item.evidence_pointers],
+            "content_hash": item.content_hash,
+            "version": item.version,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+        }
+
+    def get_memory_history(
+        self,
+        memory_id: str,
+        context: Optional[MemoryAccessContext] = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns historical version snapshots for a memory item."""
+        item = self.get_memory_item(memory_id, context)
+        if not item:
+            raise ValueError(f"Memory item '{memory_id}' not found")
+        versions = self.memory_persistence.list_versions(memory_id)
+        return [v.model_dump() for v in versions]
+
+    def get_memory_metrics(self) -> Dict[str, Any]:
+        """Returns structured memory observability telemetry."""
+        return GLOBAL_MEMORY_TELEMETRY.get_metrics_snapshot()
+
 
 
 

@@ -262,3 +262,59 @@ class StopResponseRequest(BaseModel):
 
 class RegenerateResponseRequest(BaseModel):
     temperature: Optional[float] = 0.7
+
+
+# ---------------------------------------------------------------------------
+# M12 Security Research Memory & Knowledge Management Schemas
+# ---------------------------------------------------------------------------
+
+class CreateMemoryItemRequest(BaseModel):
+    namespace: str = Field(default="ASSESSMENT_LOCAL")
+    content: str = Field(min_length=5)
+    title: Optional[str] = ""
+    summary: Optional[str] = ""
+    assessment_id: Optional[str] = None
+    epistemic_status: str = Field(default="OBSERVATION")
+    authority_level: str = Field(default="USER_PROVIDED")
+    source_type: str = Field(default="ANALYST_NOTE")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    provenance_references: List[str] = Field(default_factory=list)
+    evidence_references: List[str] = Field(default_factory=list)
+
+
+class SearchMemoryRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=50)
+    assessment_id: Optional[str] = None
+    allowed_namespaces: Optional[List[str]] = None
+    include_superseded: bool = Field(default=False)
+
+
+class PromoteMemoryRequest(BaseModel):
+    memory_id: str
+    target_namespace: str = Field(default="SHARED_RESEARCH")
+    requester_id: str = "researcher"
+    reviewer_id: Optional[str] = None
+    justification: str = Field(min_length=5)
+    approve_immediately: bool = Field(default=False)
+
+
+class SupersedeMemoryRequest(BaseModel):
+    memory_id: str
+    new_content: str = Field(min_length=5)
+    change_rationale: str = Field(min_length=3)
+    new_epistemic_status: Optional[str] = None
+    new_authority: Optional[str] = None
+    actor: str = "researcher"
+
+
+class ForgetMemoryRequest(BaseModel):
+    memory_id: str
+    user_id: str = "researcher"
+    reason: Optional[str] = "User requested memory forget"
+
+
+class RetireMemoryRequest(BaseModel):
+    memory_id: str
+    reason: Optional[str] = "Retiring outdated research memory"
+

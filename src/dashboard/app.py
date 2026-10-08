@@ -37,7 +37,14 @@ from src.dashboard.models import (
     ContinueResponseRequest,
     StopResponseRequest,
     RegenerateResponseRequest,
+    CreateMemoryItemRequest,
+    SearchMemoryRequest,
+    PromoteMemoryRequest,
+    SupersedeMemoryRequest,
+    ForgetMemoryRequest,
+    RetireMemoryRequest,
 )
+from src.memory import MemoryAccessContext
 from src.dashboard.service import WorkspaceService
 from src.copilot.orchestration import CopilotOrchestrator
 from src.copilot.registry import DomainKnowledgeRegistry
@@ -74,6 +81,10 @@ class DashboardSession(BaseModel):
     role: DashboardRole
     expires_at: Optional[float] = None
     revoked: bool = False
+
+    @property
+    def user_id(self) -> str:
+        return self.username
 
 
 class DashboardAuthManager:
@@ -649,6 +660,158 @@ def create_dashboard_app(
             }
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
+
+    # -------------------------------------------------------------------------
+    # M12 Security Research Memory & Knowledge Management Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.post("/api/memory/items")
+    def create_memory_item(
+        req: CreateMemoryItemRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Admits a candidate research memory item through the 12-stage validation pipeline."""
+        try:
+            ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=req.assessment_id)
+            item = workspace_service.create_memory_item(req, context=ctx)
+            return item.model_dump()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/memory/items")
+    def list_memory_items(
+        namespace: Optional[str] = None,
+        assessment_id: Optional[str] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """List authorized memory items enforcing tenant and assessment isolation."""
+        ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=assessment_id)
+        items = workspace_service.list_memory_items(context=ctx, namespace=namespace, assessment_id=assessment_id)
+        return [it.model_dump() for it in items]
+
+    @app.get("/api/memory/items/{memory_id}")
+    def get_memory_item(
+        memory_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Get an authorized memory item by ID."""
+        ctx = MemoryAccessContext(user_id=user.user_id)
+        item = workspace_service.get_memory_item(memory_id, context=ctx)
+        if not item:
+            raise HTTPException(status_code=404, detail=f"Memory item '{memory_id}' not found")
+        return item.model_dump()
+
+    @app.delete("/api/memory/items/{memory_id}")
+    def delete_memory_item(
+        memory_id: str,
+        reason: Optional[str] = "User deletion",
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Tombstones and deletes an item from active indexes."""
+        ctx = MemoryAccessContext(user_id=user.user_id)
+        success = workspace_service.delete_memory_item(memory_id, user_id=user.user_id, context=ctx, reason=reason or "User deletion")
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Memory item '{memory_id}' not found")
+        return {"deleted": True, "memory_id": memory_id}
+
+    @app.post("/api/memory/search")
+    def search_memory(
+        req: SearchMemoryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Hybrid sparse + dense search across authorized memory namespaces."""
+        ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=req.assessment_id)
+        result = workspace_service.search_memory(req, context=ctx)
+        return result.model_dump()
+
+    @app.post("/api/memory/promote")
+    def promote_memory_item(
+        req: PromoteMemoryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Promote assessment memory to shared research memory with human review."""
+        try:
+            ctx = MemoryAccessContext(user_id=user.user_id)
+            promoted = workspace_service.promote_memory(req, context=ctx)
+            return promoted.model_dump()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/api/memory/supersede")
+    def supersede_memory_item(
+        req: SupersedeMemoryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Supersede a memory item with an updated version."""
+        try:
+            ctx = MemoryAccessContext(user_id=user.user_id)
+            new_item = workspace_service.supersede_memory(req, context=ctx)
+            return new_item.model_dump()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/api/memory/forget")
+    def forget_memory_item(
+        req: ForgetMemoryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """User-requested memory forget action."""
+        ctx = MemoryAccessContext(user_id=user.user_id)
+        success = workspace_service.forget_memory(req, context=ctx)
+        return {"forgotten": success, "memory_id": req.memory_id}
+
+    @app.get("/api/memory/{memory_id}/provenance")
+    def get_memory_provenance(
+        memory_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Get provenance lineage and evidence pointers for an item."""
+        try:
+            ctx = MemoryAccessContext(user_id=user.user_id)
+            return workspace_service.get_memory_provenance(memory_id, context=ctx)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/api/memory/{memory_id}/history")
+    def get_memory_history(
+        memory_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """Get version history for an item."""
+        try:
+            ctx = MemoryAccessContext(user_id=user.user_id)
+            return workspace_service.get_memory_history(memory_id, context=ctx)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/api/assessments/{assessment_id}/memory")
+    def get_assessment_memory(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """List isolated local memory items for a specific assessment."""
+        ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=assessment_id)
+        items = workspace_service.list_memory_items(context=ctx, assessment_id=assessment_id)
+        return [it.model_dump() for it in items]
+
+    @app.post("/api/assessments/{assessment_id}/memory/search")
+    def search_assessment_memory(
+        assessment_id: str,
+        req: SearchMemoryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Search isolated memory for a specific assessment."""
+        req.assessment_id = assessment_id
+        ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=assessment_id)
+        result = workspace_service.search_memory(req, context=ctx)
+        return result.model_dump()
+
+    @app.get("/api/memory/metrics")
+    def get_memory_metrics(
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch memory subsystem observability telemetry."""
+        return workspace_service.get_memory_metrics()
 
     # -------------------------------------------------------------------------
     # Legacy / Base Hypothesis & Review Endpoints (100% Backward Compatible)
