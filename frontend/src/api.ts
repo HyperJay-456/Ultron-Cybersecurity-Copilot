@@ -312,8 +312,243 @@ export async function fetchResponseMetrics(): Promise<any> {
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// M13 Full Security Assessment Workspace API Calls
+// ---------------------------------------------------------------------------
+
+export async function fetchAssessments(): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments`);
+  if (!res.ok) throw new Error(`Failed to fetch assessments: ${res.statusText}`);
+  const data = await res.json();
+  return data.assessments || [];
+}
+
+export async function createAssessment(organization: string, assessment_name: string, created_by: string = 'HUMAN_OPERATOR'): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ organization, assessment_name, created_by }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to create assessment: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAssessmentWorkspace(assessmentId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/workspace`);
+  if (!res.ok) throw new Error(`Failed to fetch workspace for ${assessmentId}: ${res.statusText}`);
+  const data = await res.json();
+  return data.workspace;
+}
+
+export async function fetchAssessmentOverview(assessmentId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/overview`);
+  if (!res.ok) throw new Error(`Failed to fetch overview for ${assessmentId}: ${res.statusText}`);
+  const data = await res.json();
+  return data.overview;
+}
+
+export async function fetchAssessmentActivity(assessmentId: string, limit: number = 50): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/activity?limit=${limit}`);
+  if (!res.ok) throw new Error(`Failed to fetch activity for ${assessmentId}: ${res.statusText}`);
+  const data = await res.json();
+  return data.activity || [];
+}
+
+export async function fetchAssessmentAssets(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/assets`);
+  if (!res.ok) throw new Error(`Failed to fetch assets for ${assessmentId}: ${res.statusText}`);
+  const data = await res.json();
+  return data.assets || [];
+}
+
+export async function createAssessmentAsset(assessmentId: string, asset: { canonical_identifier: string; asset_type: string; scope_status: string; tags?: string[] }): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/assets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(asset),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to create asset: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAssessmentObservations(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/observations`);
+  if (!res.ok) throw new Error(`Failed to fetch observations: ${res.statusText}`);
+  const data = await res.json();
+  return data.observations || [];
+}
+
+export async function fetchAssessmentHypotheses(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/hypotheses`);
+  if (!res.ok) throw new Error(`Failed to fetch hypotheses: ${res.statusText}`);
+  const data = await res.json();
+  return data.hypotheses || [];
+}
+
+export async function generateAssessmentHypotheses(assessmentId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/hypotheses`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to generate hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAssessmentExperiments(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/experiments`);
+  if (!res.ok) throw new Error(`Failed to fetch experiments: ${res.statusText}`);
+  const data = await res.json();
+  return data.experiments || [];
+}
+
+export async function proposeAssessmentExperiment(assessmentId: string, experiment: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/experiments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(experiment),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to propose experiment: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAssessmentFindings(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/findings`);
+  if (!res.ok) throw new Error(`Failed to fetch findings: ${res.statusText}`);
+  const data = await res.json();
+  return data.findings || [];
+}
+
+export async function createAssessmentFinding(assessmentId: string, finding: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/findings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(finding),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to create finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function verifyFindingAuthoritative(findingId: string, human_reviewer: string, justification: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/findings/${encodeURIComponent(findingId)}/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ human_reviewer, justification }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to verify finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateAssessmentReport(assessmentId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/report`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to generate report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportAssessmentReport(assessmentId: string, format: string = 'markdown'): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/reports/export?format_type=${encodeURIComponent(format)}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to export report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function validateAssessmentScope(assessmentId: string, target: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/scope/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to validate scope: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAssessmentArtifacts(assessmentId: string): Promise<any[]> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/artifacts`);
+  if (!res.ok) throw new Error(`Failed to fetch artifacts: ${res.statusText}`);
+  const data = await res.json();
+  return data.artifacts || [];
+}
+
+export async function registerAssessmentArtifact(assessmentId: string, artifact: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/artifacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(artifact),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to register artifact: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function searchWorkspaceGlobal(query: string, assessmentId?: string): Promise<any[]> {
+  const url = assessmentId
+    ? `${BASE_URL}/workspace/search?query=${encodeURIComponent(query)}&assessment_id=${encodeURIComponent(assessmentId)}`
+    : `${BASE_URL}/workspace/search?query=${encodeURIComponent(query)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
+  const data = await res.json();
+  return data.results || [];
+}
+
+export async function setAssessmentAuthorization(assessmentId: string, payload: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/authorization`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to set authorization: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function setAssessmentScope(assessmentId: string, payload: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/scope`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to set scope: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 function jsonStringify(obj: any): string {
   return JSON.stringify(obj);
 }
+
 
 

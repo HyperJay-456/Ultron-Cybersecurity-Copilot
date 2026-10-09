@@ -318,3 +318,37 @@ class RetireMemoryRequest(BaseModel):
     memory_id: str
     reason: Optional[str] = "Retiring outdated research memory"
 
+
+# ---------------------------------------------------------------------------
+# M13 Full Security Assessment Workspace Schemas
+# ---------------------------------------------------------------------------
+
+class ValidateScopeRequest(BaseModel):
+    target: str = Field(min_length=1, description="URL, domain, or IP target to test against ScopeGate")
+
+
+class RegisterArtifactRequest(BaseModel):
+    artifact_id: str = Field(min_length=1)
+    filename: str = Field(min_length=1)
+    sha256: str = Field(min_length=1)
+    byte_size: int = Field(ge=0)
+    artifact_type: str = Field(default="TEXT_LOG")
+    quarantine_status: Optional[str] = Field(default="CLEARED")
+
+
+class UpdateViewStateRequest(BaseModel):
+    active_section: Optional[str] = "overview"
+    search_query: Optional[str] = ""
+    selected_asset_id: Optional[str] = None
+    selected_hypothesis_id: Optional[str] = None
+    selected_finding_id: Optional[str] = None
+    selected_artifact_id: Optional[str] = None
+    filter_severity: Optional[str] = None
+    filter_verification: Optional[str] = None
+    filter_scope: Optional[str] = None
+
+
+class GlobalSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    assessment_id: Optional[str] = None
+

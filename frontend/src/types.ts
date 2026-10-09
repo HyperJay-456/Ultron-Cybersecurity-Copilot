@@ -287,3 +287,192 @@ export interface ManualObservationPayload {
   researcher_note?: string;
 }
 
+// ---------------------------------------------------------------------------
+// M13 Full Security Assessment Workspace Types
+// ---------------------------------------------------------------------------
+
+export type AssessmentLifecycleState =
+  | 'DRAFT'
+  | 'AUTHORIZATION_PENDING'
+  | 'AUTHORIZED'
+  | 'SCOPE_DEFINED'
+  | 'ASSESSMENT_ACTIVE'
+  | 'ASSESSMENT_PAUSED'
+  | 'REMEDIAL_HOLD'
+  | 'REPORTING'
+  | 'COMPLETED'
+  | 'ARCHIVED'
+  | 'REJECTED';
+
+export interface AssessmentWorkflowStatus {
+  authorization_valid: boolean;
+  scope_defined: boolean;
+  telemetry_ingested: boolean;
+  attack_surface_mapped: boolean;
+  hypotheses_evaluated: boolean;
+  experiments_executed: boolean;
+  findings_reviewed: boolean;
+  report_generated: boolean;
+  current_milestone: string;
+}
+
+export interface AssessmentSummary {
+  assessment_id: string;
+  organization: string;
+  assessment_name: string;
+  state: AssessmentLifecycleState;
+  authorization_status: string;
+  authorization_type?: string;
+  created_at: string;
+  updated_at: string;
+  asset_count: number;
+  observation_count: number;
+  hypothesis_count: number;
+  finding_count: number;
+  verified_finding_count: number;
+  last_activity_at?: string;
+}
+
+export interface AssessmentOverview {
+  assessment_id: string;
+  organization: string;
+  assessment_name: string;
+  state: AssessmentLifecycleState;
+  authorization_id?: string;
+  authorization_status: string;
+  valid_from?: string;
+  valid_until?: string;
+  scope_policy_id?: string;
+  in_scope_count: number;
+  out_of_scope_count: number;
+  asset_count: number;
+  observation_count: number;
+  hypothesis_count: number;
+  evidence_gap_count: number;
+  experiment_count: number;
+  finding_count: number;
+  verified_finding_count: number;
+  workflow_status: AssessmentWorkflowStatus;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+}
+
+export interface WorkspaceViewState {
+  active_section: string;
+  search_query: string;
+  selected_asset_id?: string;
+  selected_hypothesis_id?: string;
+  selected_finding_id?: string;
+  selected_artifact_id?: string;
+  filter_severity?: string;
+  filter_verification?: string;
+  filter_scope?: string;
+}
+
+export interface AssessmentWorkspace {
+  overview: AssessmentOverview;
+  view_state: WorkspaceViewState;
+  allowed_sections: string[];
+  is_read_only: boolean;
+  warning_banners: string[];
+}
+
+export interface AssessmentActivity {
+  event_id: string;
+  assessment_id: string;
+  timestamp: string;
+  actor: string;
+  component: string;
+  event_type: string;
+  summary: string;
+  details: Record<string, any>;
+  authorization_state: string;
+  scope_state: string;
+  epistemic_state: string;
+}
+
+export interface GlobalSearchResultItem {
+  entity_id: string;
+  entity_type: string;
+  title: string;
+  assessment_id?: string;
+  assessment_name?: string;
+  snippet: string;
+  provenance: Record<string, any>;
+  url_target: string;
+}
+
+export interface AssetItem {
+  asset_id: string;
+  assessment_id: string;
+  asset_type: string;
+  canonical_identifier: string;
+  parent_asset_id?: string;
+  scope_status: 'IN_SCOPE' | 'OUT_OF_SCOPE' | 'UNKNOWN';
+  tags: string[];
+  discovered_at: string;
+  discovery_method: string;
+}
+
+export interface FindingItem {
+  finding_id: string;
+  assessment_id: string;
+  title: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFORMATIONAL';
+  asset: string;
+  affected_component: string;
+  description: string;
+  impact: string;
+  evidence: string[];
+  reproduction_reference: string;
+  security_invariant: string;
+  root_cause: string;
+  remediation: string;
+  references: string[];
+  verification_status: 'UNVERIFIED' | 'EVIDENCE_REVIEW' | 'HUMAN_VERIFIED' | 'REJECTED' | 'DISPUTED';
+  verified_by?: string;
+  verified_at?: string;
+  justification?: string;
+}
+
+export interface HypothesisItem {
+  hypothesis_id: string;
+  assessment_id: string;
+  title: string;
+  description: string;
+  target_asset: string;
+  epistemic_certainty: string;
+  evidence_ids: string[];
+  evidence_gaps: string[];
+  state: string;
+  author: string;
+}
+
+export interface ExperimentItem {
+  experiment_id: string;
+  hypothesis_id: string;
+  objective: string;
+  target_asset: string;
+  steps: string[];
+  expected_secure_result: string;
+  expected_vulnerable_result: string;
+  falsification_condition: string;
+  negative_control: string;
+  risk_level: string;
+  status: string;
+  approval_status: string;
+}
+
+export interface ArtifactItem {
+  artifact_id: string;
+  assessment_id: string;
+  filename: string;
+  sha256: string;
+  byte_size: number;
+  artifact_type: string;
+  quarantine_status: 'CLEARED' | 'QUARANTINED' | 'PENDING';
+  created_at?: string;
+}
+
+

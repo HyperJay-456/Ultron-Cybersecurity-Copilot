@@ -9,6 +9,7 @@ interface SidebarProps {
   onLoadDemo: () => void;
   onOpenSystemStatus: () => void;
   systemStatusReady: boolean;
+  onOpenWorkspace?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -19,6 +20,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLoadDemo,
   onOpenSystemStatus,
   systemStatusReady,
+  onOpenWorkspace,
 }) => {
   const [search, setSearch] = useState('');
 
@@ -69,6 +71,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Local
           </span>
         </div>
+
+        {/* Workspace Switcher Button */}
+        {onOpenWorkspace && (
+          <button
+            onClick={onOpenWorkspace}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              marginBottom: '10px',
+              padding: '8px 12px',
+              backgroundColor: 'var(--accent-primary)',
+              color: '#FFFFFF',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <span>🛡️</span>
+            <span>Assessment Workspace</span>
+          </button>
+        )}
 
         {/* New Investigation Button */}
         <button

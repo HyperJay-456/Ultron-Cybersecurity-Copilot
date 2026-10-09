@@ -43,6 +43,10 @@ from src.dashboard.models import (
     SupersedeMemoryRequest,
     ForgetMemoryRequest,
     RetireMemoryRequest,
+    ValidateScopeRequest,
+    RegisterArtifactRequest,
+    UpdateViewStateRequest,
+    GlobalSearchRequest,
 )
 from src.memory import MemoryAccessContext
 from src.dashboard.service import WorkspaceService
@@ -50,6 +54,7 @@ from src.copilot.orchestration import CopilotOrchestrator
 from src.copilot.registry import DomainKnowledgeRegistry
 from src.copilot.tools import ToolKnowledgeBase
 from src.assessment.manager import AssessmentManager
+from src.assessment.lifecycle import AssessmentLifecycleEngine
 from src.assessment.models import (
     AssessmentLifecycleState,
     AuthorizationRecord,
@@ -59,9 +64,22 @@ from src.assessment.models import (
     AssessmentScopeStatus,
     ExperimentRiskLevel,
     FindingSeverity,
+    FindingVerificationStatus,
     AssessmentFinding,
 )
 from src.scope.models import ScopePolicy
+from src.artifacts.metadata import ArtifactRecord, ArtifactType, QuarantineStatus
+from src.workspace import (
+    AssessmentSection,
+    AssessmentWorkflowStatus,
+    AssessmentSummary,
+    AssessmentOverview,
+    AssessmentActivity,
+    WorkspaceViewState,
+    AssessmentWorkspace,
+    GlobalSearchResultItem,
+    UnifiedWorkspaceService,
+)
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8000
@@ -1037,6 +1055,12 @@ def create_dashboard_app(
     # M6 Authorized Security Assessment Endpoints (Section 40)
     # -------------------------------------------------------------------------
     assessment_mgr = AssessmentManager.get_instance()
+    workspace_svc = UnifiedWorkspaceService(assessment_mgr)
+
+    @app.get("/api/assessments")
+    def list_assessments() -> Dict[str, Any]:
+        summaries = workspace_svc.list_assessment_summaries()
+        return {"status": "success", "assessments": [s.model_dump() for s in summaries]}
 
     @app.post("/api/assessments")
     def create_assessment(req: CreateAssessmentRequest) -> Dict[str, Any]:
@@ -1053,6 +1077,105 @@ def create_dashboard_app(
         if not rec:
             raise HTTPException(status_code=404, detail="Assessment not found.")
         return {"status": "success", "assessment": rec.model_dump()}
+
+    @app.get("/api/assessments/{assessment_id}/workspace")
+    def get_assessment_workspace(assessment_id: str) -> Dict[str, Any]:
+        try:
+            ws = workspace_svc.get_assessment_workspace(assessment_id)
+            return {"status": "success", "workspace": ws.model_dump()}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.get("/api/assessments/{assessment_id}/overview")
+    def get_assessment_overview(assessment_id: str) -> Dict[str, Any]:
+        try:
+            ov = workspace_svc.get_workspace_overview(assessment_id)
+            return {"status": "success", "overview": ov.model_dump()}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.get("/api/assessments/{assessment_id}/activity")
+    def get_assessment_activity(assessment_id: str, limit: int = 50) -> Dict[str, Any]:
+        try:
+            act = workspace_svc.get_activity_timeline(assessment_id, limit=limit)
+            return {"status": "success", "activity": [a.model_dump() for a in act]}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.post("/api/assessments/{assessment_id}/view-state")
+    def update_view_state(assessment_id: str, req: UpdateViewStateRequest) -> Dict[str, Any]:
+        try:
+            vs = WorkspaceViewState(
+                active_section=AssessmentSection(req.active_section) if req.active_section else AssessmentSection.OVERVIEW,
+                search_query=req.search_query or "",
+                selected_asset_id=req.selected_asset_id,
+                selected_hypothesis_id=req.selected_hypothesis_id,
+                selected_finding_id=req.selected_finding_id,
+                selected_artifact_id=req.selected_artifact_id,
+                filter_severity=FindingSeverity(req.filter_severity) if req.filter_severity else None,
+                filter_verification=FindingVerificationStatus(req.filter_verification) if req.filter_verification else None,
+                filter_scope=AssessmentScopeStatus(req.filter_scope) if req.filter_scope else None,
+            )
+            saved = workspace_svc.update_view_state(assessment_id, vs)
+            return {"status": "success", "view_state": saved.model_dump()}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.post("/api/assessments/{assessment_id}/scope/validate")
+    def validate_scope(assessment_id: str, req: ValidateScopeRequest) -> Dict[str, Any]:
+        try:
+            res = workspace_svc.validate_scope_target(assessment_id, req.target)
+            return {"status": "success", "validation": res}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.get("/api/assessments/{assessment_id}/artifacts")
+    def list_artifacts(assessment_id: str) -> Dict[str, Any]:
+        try:
+            registry = workspace_svc.get_artifact_registry(assessment_id)
+            artifacts = registry.list_artifacts(include_quarantined=True)
+            return {"status": "success", "artifacts": [a.model_dump() for a in artifacts]}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+
+    @app.post("/api/assessments/{assessment_id}/artifacts")
+    def register_artifact(assessment_id: str, req: RegisterArtifactRequest) -> Dict[str, Any]:
+        try:
+            registry = workspace_svc.get_artifact_registry(assessment_id)
+            atype = ArtifactType(req.artifact_type)
+            qstatus = QuarantineStatus(req.quarantine_status) if req.quarantine_status else QuarantineStatus.VALIDATED
+            rec = ArtifactRecord(
+                artifact_id=req.artifact_id,
+                assessment_id=assessment_id,
+                filename=req.filename,
+                sha256=req.sha256,
+                size_bytes=req.byte_size,
+                artifact_type=atype,
+                quarantine_status=qstatus,
+            )
+            registry.register(rec)
+            cont = assessment_mgr.get_container(assessment_id)
+            cont.audit_logger.record_event(
+                event_type="ARTIFACT_REGISTERED",
+                actor="HUMAN_OPERATOR",
+                component="ArtifactRegistry",
+                authorization_state=cont.authorization.status.value if cont.authorization else "NONE",
+                scope_state="IN_SCOPE",
+                input_reference=req.artifact_id,
+            )
+            return {"status": "success", "artifact": rec.model_dump()}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/workspace/search")
+    def search_workspace(query: str = Query(..., min_length=1), assessment_id: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            results = workspace_svc.search_workspace(query=query, assessment_id=assessment_id)
+            return {"status": "success", "count": len(results), "results": [r.model_dump() for r in results]}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.patch("/api/assessments/{assessment_id}")
     def update_assessment(assessment_id: str, req: UpdateAssessmentRequest) -> Dict[str, Any]:
@@ -1287,6 +1410,23 @@ def create_dashboard_app(
         try:
             md = assessment_mgr.generate_report(assessment_id)
             return {"status": "success", "report_markdown": md}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/api/assessments/{assessment_id}/reports/export")
+    def export_report(assessment_id: str, format_type: str = "markdown") -> Dict[str, Any]:
+        try:
+            cont = assessment_mgr.get_container(assessment_id)
+            md = assessment_mgr.generate_report(assessment_id)
+            cont.audit_logger.record_event(
+                event_type="REPORT_EXPORTED",
+                actor="HUMAN_OPERATOR",
+                component="AssessmentReportGenerator",
+                authorization_state=cont.authorization.status.value if cont.authorization else "ACTIVE",
+                scope_state="IN_SCOPE",
+                input_reference=format_type,
+            )
+            return {"status": "success", "format": format_type, "content": md}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 

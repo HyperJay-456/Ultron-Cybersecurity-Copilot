@@ -22,9 +22,11 @@ import { Sidebar } from './components/Sidebar';
 import { SystemStatusModal } from './components/SystemStatusModal';
 import { ImportTrafficModal } from './components/ImportTrafficModal';
 import { AddObservationModal } from './components/AddObservationModal';
+import { WorkspaceShell } from './components/workspace/WorkspaceShell';
 import type { ChatMessage, IngestionResult, InvestigationDetail, InvestigationSummary, SystemStatus } from './types';
 
 export const App: React.FC = () => {
+  const [appMode, setAppMode] = useState<'workspace' | 'copilot'>('workspace');
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<InvestigationDetail | null>(null);
@@ -307,6 +309,10 @@ export const App: React.FC = () => {
     setDrawerOpen(true);
   };
 
+  if (appMode === 'workspace') {
+    return <WorkspaceShell onBackToCopilot={() => setAppMode('copilot')} />;
+  }
+
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       {/* Sidebar */}
@@ -318,6 +324,7 @@ export const App: React.FC = () => {
         onLoadDemo={handleLoadDemo}
         onOpenSystemStatus={() => setShowStatusModal(true)}
         systemStatusReady={status?.local_ai === 'READY'}
+        onOpenWorkspace={() => setAppMode('workspace')}
       />
 
       {/* Main Workspace Column */}

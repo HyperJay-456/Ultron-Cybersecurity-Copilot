@@ -260,6 +260,7 @@ class AssessmentRecord(BaseModel):
     organization: str
     assessment_name: str
     state: AssessmentLifecycleState = AssessmentLifecycleState.DRAFT
+    created_by: str = "HUMAN_OPERATOR"
     authorization_id: Optional[str] = None
     scope_policy_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

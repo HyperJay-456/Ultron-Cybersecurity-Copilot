@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-08T17:36:54.903397+00:00",
+  "timestamp": "2026-10-09T02:53:33.643066+00:00",
   "target_hardware": {
     "cpu": "AMD Ryzen 5 5600H",
     "ram": "24 GB",
@@ -35,8 +35,8 @@
     "verified_finding_pointer_integrity": 1.0,
     "context_relevance": 0.942,
     "escalation_3b_to_7b_accuracy": 0.965,
-    "avg_retrieval_latency_ms": 91.69,
-    "avg_indexing_latency_ms": 43.63,
+    "avg_retrieval_latency_ms": 96.9,
+    "avg_indexing_latency_ms": 47.45,
     "hard_invariant_violations": 0
   },
   "ablation_tracks": {

@@ -114,6 +114,7 @@ class AssessmentManager:
             organization=organization,
             assessment_name=assessment_name,
             state=AssessmentLifecycleState.DRAFT,
+            created_by=created_by,
         )
         container = AssessmentContainer(rec)
         self._assessments[aid] = container
