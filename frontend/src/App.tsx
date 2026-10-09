@@ -26,7 +26,17 @@ import { WorkspaceShell } from './components/workspace/WorkspaceShell';
 import type { ChatMessage, IngestionResult, InvestigationDetail, InvestigationSummary, SystemStatus } from './types';
 
 export const App: React.FC = () => {
-  const [appMode, setAppMode] = useState<'workspace' | 'copilot'>('workspace');
+  const getInitialAppMode = (): 'workspace' | 'copilot' => {
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    if (path.includes('/workspace') || path.includes('/assessment') || hash.includes('workspace') || search.includes('mode=workspace')) {
+      return 'workspace';
+    }
+    return 'copilot';
+  };
+
+  const [appMode, setAppMode] = useState<'workspace' | 'copilot'>(getInitialAppMode);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<InvestigationDetail | null>(null);
@@ -54,11 +64,14 @@ export const App: React.FC = () => {
       setInvestigations(invs);
       if (sysStatus) setStatus(sysStatus);
 
-      // Only select if explicitly directed by URL subroute, otherwise start at clean Welcome screen
+      // Check URL route for direct investigation navigation
       const pathParts = window.location.pathname.split('/');
       const invIndex = pathParts.indexOf('investigations');
       if (invIndex !== -1 && pathParts[invIndex + 1]) {
         selectInvestigation(pathParts[invIndex + 1]);
+      } else if (invs && invs.length > 0 && !activeId) {
+        // Auto-select first existing investigation so Copilot conversation is immediately ready
+        selectInvestigation(invs[0].id);
       }
     } catch (err) {
       console.error('Failed to initialize workspace:', err);

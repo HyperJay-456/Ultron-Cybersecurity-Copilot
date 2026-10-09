@@ -135,7 +135,6 @@ export const ExperimentsTab: React.FC<ExperimentsTabProps> = ({
         gap: '8px',
         color: 'var(--text-secondary)',
       }}>
-        <span>🛡️</span>
         <span>
           <strong>Two-Plane Safety Policy:</strong> Plane A runs under deterministic loopback simulation with human preflight approval. Plane B organizes reproduction steps without autonomous live target exploitation.
         </span>

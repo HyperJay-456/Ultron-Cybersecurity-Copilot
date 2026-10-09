@@ -20,27 +20,22 @@ export const ResearchTab: React.FC<ResearchTabProps> = ({
     {
       name: 'AppSec Analyst',
       description: 'Web application vulnerabilities (XSS, SSRF, IDOR, SQLi, CSRF, Path Traversal)',
-      icon: '🌐',
     },
     {
       name: 'API Security Specialist',
       description: 'REST, GraphQL, JWT/OAuth misconfigurations, mass assignment, BOLA/BFLA',
-      icon: '🔌',
     },
     {
       name: 'Mobile & Binary Auditor',
       description: 'Android APK decompilation, exported components, native libs, buffer overflows',
-      icon: '📱',
     },
     {
       name: 'Auth & Session Flaw Hunter',
       description: 'Session fixation, privilege escalation, multi-tenant boundary bypasses',
-      icon: '🔐',
     },
     {
       name: 'Falsification & Negative Control Agent',
       description: 'Refutation testing, evidence gap detection, false-positive elimination',
-      icon: '🔬',
     },
   ];
 
@@ -116,7 +111,6 @@ export const ResearchTab: React.FC<ResearchTabProps> = ({
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '18px' }}>{agent.icon}</span>
               <span style={{ fontWeight: 600, fontSize: '13px' }}>{agent.name}</span>
             </div>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', flex: 1 }}>

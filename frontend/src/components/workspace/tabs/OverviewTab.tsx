@@ -176,8 +176,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '14px' }}>
-                    {item.completed ? '✅' : '⏳'}
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                    {item.completed ? '✓' : '—'}
                   </span>
                   <span style={{
                     fontSize: '13px',
@@ -247,7 +247,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 fontWeight: 600,
               }}
             >
-              📄 Preview Report
+              Preview Report
             </button>
             <button
               onClick={onRefresh}
@@ -260,7 +260,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 fontSize: '12px',
               }}
             >
-              🔄 Refresh
+              Refresh
             </button>
             <button
               onClick={() => onNavigateSection('activity_audit')}
@@ -272,7 +272,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 fontSize: '12px',
               }}
             >
-              📜 Audit History
+              Audit History
             </button>
           </div>
         </div>

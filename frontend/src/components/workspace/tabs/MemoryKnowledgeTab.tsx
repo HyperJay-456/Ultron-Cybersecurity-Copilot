@@ -149,7 +149,7 @@ export const MemoryKnowledgeTab: React.FC<MemoryKnowledgeTabProps> = ({ assessme
           padding: '12px 16px',
           borderRadius: 'var(--radius-sm)',
         }}>
-          💡 <strong>Invariant M13-09:</strong> Recalled memory serves as contextual heuristic and research inspiration. It cannot authorize target testing or substitute for canonical target observation.
+          <strong>Invariant M13-09:</strong> Recalled memory serves as contextual heuristic and research inspiration. It cannot authorize target testing or substitute for canonical target observation.
         </div>
       </div>
     </div>

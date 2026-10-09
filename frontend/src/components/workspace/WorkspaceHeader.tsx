@@ -71,7 +71,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               gap: '6px',
             }}
           >
-            <span>📁</span>
             <span>{overview.assessment_name}</span>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({overview.organization})</span>
             <span style={{ fontSize: '10px' }}>▼</span>
@@ -153,7 +152,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               gap: '6px',
             }}
           >
-            <span>🔍 Search...</span>
+            <span>Search...</span>
             <kbd style={{ fontSize: '10px', background: 'var(--bg-surface-muted)', padding: '2px 4px', borderRadius: '4px' }}>Ctrl+K</kbd>
           </button>
 
@@ -169,7 +168,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               color: 'var(--text-secondary)',
             }}
           >
-            🔄
+            Refresh
           </button>
         </div>
       </div>

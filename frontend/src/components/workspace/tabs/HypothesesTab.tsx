@@ -76,7 +76,7 @@ export const HypothesesTab: React.FC<HypothesesTabProps> = ({
             opacity: generating ? 0.7 : 1,
           }}
         >
-          {generating ? 'Analyzing Attack Surface...' : '⚡ Generate Hypotheses'}
+          {generating ? 'Analyzing Attack Surface...' : 'Generate Hypotheses'}
         </button>
       </div>
 
@@ -171,7 +171,7 @@ export const HypothesesTab: React.FC<HypothesesTabProps> = ({
                     fontWeight: 600,
                   }}
                 >
-                  🧪 Design Controlled Experiment
+                  Design Controlled Experiment
                 </button>
               </div>
             </div>

@@ -77,7 +77,7 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({ assessmentId }) => {
               fontWeight: 500,
             }}
           >
-            {loading ? 'Compiling...' : '🔄 Regenerate Draft'}
+            {loading ? 'Compiling...' : 'Regenerate Draft'}
           </button>
           <button
             onClick={() => handleExport('markdown')}
@@ -91,7 +91,7 @@ export const ReportsTab: React.FC<ReportsTabProps> = ({ assessmentId }) => {
               fontWeight: 600,
             }}
           >
-            {exporting ? 'Exporting...' : '📥 Export Markdown (.md)'}
+            {exporting ? 'Exporting...' : 'Export Markdown (.md)'}
           </button>
         </div>
       </div>

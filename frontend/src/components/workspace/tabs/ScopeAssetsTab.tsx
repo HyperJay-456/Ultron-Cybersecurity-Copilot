@@ -165,7 +165,7 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
             justifyContent: 'space-between',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>{validationResult.is_in_scope ? '✅ IN SCOPE' : '🛑 OUT OF SCOPE'}</span>
+              <span style={{ fontWeight: 600 }}>{validationResult.is_in_scope ? 'IN SCOPE' : 'OUT OF SCOPE'}</span>
               <span>— {validationResult.evaluation_reason}</span>
             </div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>

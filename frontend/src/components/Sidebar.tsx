@@ -92,7 +92,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               cursor: 'pointer',
             }}
           >
-            <span>🛡️</span>
             <span>Assessment Workspace</span>
           </button>
         )}

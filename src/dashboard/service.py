@@ -43,6 +43,7 @@ from src.scope.gate import ScopeGate, canonicalize_host
 from src.scope.models import ScopePolicy, ToolPolicy
 
 from src.evidence.ingestion.pipeline import EvidenceIngestionPipeline
+from src.knowledge.knowledge_orchestrator import CybersecurityKnowledgeOrchestrator
 from src.response.generator import LongResponseEngine
 from src.response.stream import CancellationToken
 from src.response.models import (
@@ -238,6 +239,7 @@ class WorkspaceService:
             ollama_client=self.cascade_orchestrator.ollama_client,
         )
         self._active_cancellations: Dict[str, CancellationToken] = {}
+        self.knowledge_orchestrator = CybersecurityKnowledgeOrchestrator()
 
         # M12 Security Research Memory Subsystem
         self.memory_persistence = MemoryPersistence(self.db)
@@ -816,6 +818,8 @@ class WorkspaceService:
                     cascade_trace_id=m.get("cascade_trace_id"),
                     model_name=m.get("model_name"),
                     model_digest=m.get("model_digest"),
+                    response_id=m.get("response_id"),
+                    status=m.get("status", "COMPLETED"),
                     timestamp=m.get("created_at", datetime_now_iso()),
                 )
             )
@@ -918,8 +922,8 @@ class WorkspaceService:
 
 
     def _is_conversational_query(self, q: str) -> bool:
-        """Determine whether prompt is conversational rather than an investigation command."""
-        cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in q).strip()
+        """Determine whether prompt is conversational/conceptual rather than a target investigation command."""
+        cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in q).strip().lower()
         words = cleaned.split()
         if not words:
             return True
@@ -935,6 +939,21 @@ class WorkspaceService:
         ]
         if any(cleaned == p or cleaned.startswith(p) for p in meta_phrases):
             return True
+
+        # Check for conceptual learning / methodology questions
+        conceptual_starters = (
+            "explain", "what is", "what are", "how does", "how do", "how can",
+            "tell me about", "tell me how", "tell me more", "describe",
+            "difference between", "compare", "guide to", "overview of", "checklist for"
+        )
+        if any(cleaned.startswith(starter) for starter in conceptual_starters):
+            # Explicit target evidence analysis commands override:
+            target_evidence_indicators = (
+                "target evidence", "imported traffic", "this target", "current evidence",
+                "registered gaps", "propose experiments for this", "synthesize hypotheses for this"
+            )
+            if not any(t in cleaned for t in target_evidence_indicators):
+                return True
 
         concepts = [
             "what is bola", "explain bola", "what is broken object level authorization",
@@ -957,11 +976,11 @@ class WorkspaceService:
 
     def _handle_conversational_query(
         self, inv: Dict[str, Any], content: str
-    ) -> Tuple[str, Optional[str], Optional[str]]:
+    ) -> Tuple[str, Optional[str], Optional[str], Optional[str], str]:
         """
-        Generate conversational AI response using local LLM without fabricating investigation state.
+        Generate conversational AI response using local LLM or authoritative knowledge engine.
         Supplies bounded canonical history to Ollama context.
-        Returns: (response_text, model_name, model_digest)
+        Returns: (response_text, model_name, model_digest, response_id, status)
         """
         q_lower = content.lower().strip()
 
@@ -970,9 +989,11 @@ class WorkspaceService:
             status_info = self.cascade_orchestrator.check_runtime_status()
             active_m = status_info.get("active_model", "qwen2.5-coder:7b")
             return (
-                f"I am powered by {active_m} running locally via Ollama with deterministic cascade routing.",
-                "qwen2.5-coder:7b",
+                f"I am powered by {active_m} running locally via Ollama with deterministic cascade routing and local knowledge verification.",
+                "local_assistant",
                 None,
+                None,
+                "COMPLETED",
             )
 
         # Retrieve bounded canonical history (last 10 messages)
@@ -990,10 +1011,25 @@ class WorkspaceService:
             prior_user_msgs = [m for m in db_messages if m["sender"] == "user" and m["content"].strip() != content.strip()]
             if prior_user_msgs:
                 last_q = prior_user_msgs[-1]["content"]
-                return f"Earlier in this conversation, you asked: \"{last_q}\".", "qwen2.5-coder:7b", None
+                return f"Earlier in this conversation, you asked: \"{last_q}\".", "local_assistant", None, None, "COMPLETED"
             else:
-                return "This is the first question in our conversation so far.", "qwen2.5-coder:7b", None
+                return "This is the first question in our conversation so far.", "local_assistant", None, None, "COMPLETED"
 
+        # Check for pure greeting
+        greetings = ("hello", "hi", "hey", "good morning", "good afternoon", "good evening", "howdy")
+        cleaned_words = [w.strip("?.!,;:") for w in q_lower.split()]
+        if len(cleaned_words) <= 3 and any(w in greetings for w in cleaned_words):
+            return (
+                "Hello. I'm your local security research assistant. "
+                "You can ask conceptual cybersecurity questions (such as Android application security, volumetric DDoS defense, "
+                "authentication vs authorization, IDOR/BOLA, API security), provide target observations, or instruct me to analyze verified evidence.",
+                "local_assistant",
+                None,
+                None,
+                "COMPLETED",
+            )
+
+        # If Ollama local inference is running, run local LLM generation
         if self.cascade_orchestrator.ollama_client.is_available():
             try:
                 system_prompt = (
@@ -1001,8 +1037,9 @@ class WorkspaceService:
                     "You operate strictly locally on the researcher's workstation. "
                     "You assist researchers in analyzing target evidence, modeling application behavior, "
                     "identifying security invariants, formulating hypotheses, and preparing experiments for human review. "
-                    "Respond helpfully, concisely, and naturally to conversational queries. "
-                    "Maintain conversational continuity using the prior conversation turns. "
+                    "When answering conceptual cybersecurity questions, provide detailed, substantive explanations "
+                    "with clear definitions, mechanics, practical examples, defensive mitigations, and safe testing methodologies. "
+                    "Maintain conversational continuity using prior conversation turns. "
                     "Do NOT fabricate target endpoints, pretend evidence exists, or invent findings."
                 )
 
@@ -1010,35 +1047,63 @@ class WorkspaceService:
                 if history_turns:
                     history_context = "Conversation History:\n" + "\n".join(history_turns) + "\n\n"
 
-                full_prompt = (
-                    f"{system_prompt}\n\n"
-                    f"{history_context}"
-                    f"User: {content}\n"
-                    f"Assistant:"
-                )
+                # Check if knowledge RAG context can augment the prompt
+                knowledge_context = ""
+                try:
+                    ans = self.knowledge_orchestrator.answer_query(content)
+                    if ans and ans.claims:
+                        knowledge_context = "Authoritative Security Knowledge Context:\n" + "\n".join(f"- {c.statement}" for c in ans.claims[:6]) + "\n\n"
+                except Exception as ke:
+                    logger.debug(f"Knowledge augmentation note: {ke}")
+
+                policy_context = system_prompt
+                if knowledge_context:
+                    policy_context += f"\n\n{knowledge_context}"
+                if history_context:
+                    policy_context += f"\n\n{history_context}"
 
                 session = self.response_engine.generate_response(
                     investigation_id=inv["id"],
                     user_prompt=content,
-                    system_policy=system_prompt + ("\n\n" + history_context if history_context else ""),
+                    system_policy=policy_context,
                     model_name="qwen2.5-coder:7b",
                     auto_continue=True,
                 )
                 text = session.final_content.strip()
                 if text:
-                    return text, "qwen2.5-coder:7b", None, session.response_id
+                    return text, "qwen2.5-coder:7b", None, session.response_id, "COMPLETED"
             except Exception as e:
                 logger.warning(f"Conversational LLM call fallback: {e}")
 
-        # Lightweight deterministic fallback if LLM is offline or timed out
-        if any(w in q_lower for w in ("hello", "hi", "hey", "morning", "evening")):
+        # When local LLM is offline or un-invoked, utilize the local authoritative knowledge engine
+        try:
+            ans = self.knowledge_orchestrator.answer_query(content)
+            if ans and (ans.sufficiency_status == "SUFFICIENT" or len(ans.claims) > 0):
+                return ans.answer_text, "local_knowledge_engine", None, None, "COMPLETED"
+        except Exception as ke:
+            logger.warning(f"Knowledge query exception: {ke}")
+
+        # Specific deterministic concepts
+        if "bola" in q_lower or "idor" in q_lower:
             return (
-                "Hello. I'm your local security research assistant. "
-                "I can help analyze evidence, model application behavior, identify "
-                "security invariants, formulate hypotheses, and prepare experiments "
-                "for human review.",
-                "local_rule_engine",
+                "Broken Object Level Authorization (BOLA / IDOR, CWE-639) occurs when an application receives a user-supplied "
+                "identifier to access a resource and fails to validate that the authenticated actor has authorization "
+                "to access that specific object. In our research pipeline, BOLA hypotheses require cross-identity replay "
+                "experiments to prove or disprove boundary isolation.",
+                "local_knowledge_engine",
                 None,
+                None,
+                "COMPLETED",
+            )
+        elif "grounding" in q_lower:
+            return (
+                "Grounding is a strict epistemic constraint in Bug Bounty AI. Every assertion, hypothesis parameter, "
+                "or experiment proposal must be directly linked to empirical target observations (e.g. FACT-OBS-xx). "
+                "Unsubstantiated or hallucinated identifiers fail the GroundingValidator.",
+                "local_knowledge_engine",
+                None,
+                None,
+                "COMPLETED",
             )
         elif any(w in q_lower for w in ("who are you", "what can you do", "what do you do", "help")):
             return (
@@ -1046,31 +1111,22 @@ class WorkspaceService:
                 "I follow a deterministic research pipeline: observing application traffic, establishing security "
                 "invariants, identifying missing evidence gaps, synthesizing grounded hypotheses via a 3B → 7B "
                 "cascade, and generating falsifiable experiment proposals requiring human approval.",
-                "local_rule_engine",
+                "local_assistant",
                 None,
-            )
-        elif "bola" in q_lower:
-            return (
-                "Broken Object Level Authorization (BOLA / IDOR) occurs when an application receives a user-supplied "
-                "identifier to access a resource and fails to validate that the authenticated actor has authorization "
-                "to access that specific object. In our research pipeline, BOLA hypotheses require cross-identity replay "
-                "experiments to prove or disprove boundary isolation.",
-                "local_rule_engine",
                 None,
+                "COMPLETED",
             )
-        elif "grounding" in q_lower:
-            return (
-                "Grounding is a strict epistemic constraint in Bug Bounty AI. Every assertion, hypothesis parameter, "
-                "or experiment proposal must be directly linked to empirical target observations (e.g. FACT-OBS-xx). "
-                "Unsubstantiated or hallucinated identifiers fail the GroundingValidator.",
-                "local_rule_engine",
-                None,
-            )
+
+        # Honest status when model is offline and query is not in static VAPT knowledge base
         return (
-            "I'm your local security research assistant. You can provide target observations, ask conceptual questions, "
-            "or instruct me to analyze verified evidence.",
-            "local_rule_engine",
+            "The local language model inference service (Ollama on `127.0.0.1:11434`) is currently offline or unreachable. "
+            "To enable full multi-turn conversational reasoning, ensure Ollama is running (`ollama serve` and `ollama run qwen2.5-coder:7b`).\n\n"
+            "In offline mode, you can ask conceptual cybersecurity questions (such as Android application security review, volumetric DDoS defense, "
+            "authentication vs authorization, IDOR/BOLA, API security, and cryptography) or import HTTP traffic observations for deterministic pipeline analysis.",
+            "system_status",
             None,
+            None,
+            "SERVICE_UNAVAILABLE",
         )
 
     def _handle_investigation_query(
@@ -1410,11 +1466,15 @@ class WorkspaceService:
 
         if is_conversational:
             conv_res = self._handle_conversational_query(inv, redacted_user_content)
-            if len(conv_res) == 4:
+            if len(conv_res) == 5:
+                reply_text, model_name, model_digest, response_id, status = conv_res
+            elif len(conv_res) == 4:
                 reply_text, model_name, model_digest, response_id = conv_res
+                status = "COMPLETED"
             else:
                 reply_text, model_name, model_digest = conv_res
                 response_id = None
+                status = "COMPLETED"
 
             redacted_reply = self.vault.redact_text(reply_text)
             resp_id = f"MSG-{secrets_token_hex()[:6].upper()}"
@@ -1433,7 +1493,7 @@ class WorkspaceService:
                 "model_name": model_name,
                 "model_digest": model_digest,
                 "response_id": response_id,
-                "status": "COMPLETED",
+                "status": status,
                 "created_at": resp_now,
             }
             self.db.insert_message(asst_msg_record)
@@ -1449,7 +1509,7 @@ class WorkspaceService:
                     model_name=model_name,
                     model_digest=model_digest,
                     response_id=response_id,
-                    status="COMPLETED",
+                    status=status,
                     timestamp=resp_now,
                 )
             ]

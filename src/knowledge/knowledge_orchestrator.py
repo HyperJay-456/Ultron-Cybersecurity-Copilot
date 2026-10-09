@@ -221,8 +221,14 @@ class CybersecurityKnowledgeOrchestrator:
         formulations = CybersecurityQueryRewriter.generate_multi_query_formulations(rewritten_query)
         chunk_scores: Dict[str, Tuple[float, KnowledgeChunk]] = {}
 
+        STOP_WORDS = {
+            "what", "how", "the", "and", "for", "with", "from", "this", "that", "can",
+            "tell", "about", "your", "are", "you", "why", "when", "where", "who", "which",
+            "will", "would", "could", "should", "does", "did", "have", "has", "had",
+        }
         for formulation in formulations:
-            words = set(re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", formulation.lower()))
+            raw_words = set(re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", formulation.lower()))
+            words = raw_words - STOP_WORDS
             if not words:
                 continue
             for chunk in self.corpus_chunks:

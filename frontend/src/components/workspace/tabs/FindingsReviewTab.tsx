@@ -175,7 +175,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
         fontSize: '12px',
         color: 'var(--badge-green-text)',
       }}>
-        🛡️ <strong>Rule M13-16:</strong> AI models cannot mark findings verified. Only a human reviewer passing all 13 checklist validation predicates can confirm a finding.
+        <strong>Rule M13-16:</strong> AI models cannot mark findings verified. Only a human reviewer passing all 13 checklist validation predicates can confirm a finding.
       </div>
 
       {/* Filter Toolbar */}
@@ -265,7 +265,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
                       color: isVerified ? 'var(--badge-green-text)' : 'var(--text-secondary)',
                       border: `1px solid ${isVerified ? 'var(--badge-green-border)' : 'var(--border-subtle)'}`,
                     }}>
-                      {isVerified ? '✅ HUMAN VERIFIED' : '⏳ UNVERIFIED CANDIDATE'}
+                      {isVerified ? 'HUMAN VERIFIED' : 'UNVERIFIED CANDIDATE'}
                     </span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
                       {f.finding_id}
@@ -296,7 +296,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
                         fontWeight: 600,
                       }}
                     >
-                      ✍️ Human Verification Check
+                      Human Verification Check
                     </button>
                   )}
                   {isVerified && (

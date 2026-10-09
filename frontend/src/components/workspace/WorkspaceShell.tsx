@@ -107,18 +107,18 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = ({ onBackToCopilot 
   };
 
   const navItems = [
-    { id: 'overview', label: '1. Overview', icon: '📊' },
-    { id: 'scope_assets', label: '2. Scope & Assets', icon: '🎯' },
-    { id: 'attack_surface', label: '3. Attack Surface', icon: '🌐' },
-    { id: 'artifacts', label: '4. Artifacts Lab', icon: '📦' },
-    { id: 'research', label: '5. Research & Q&A', icon: '💡' },
-    { id: 'hypotheses', label: '6. Hypotheses & Gaps', icon: '❓' },
-    { id: 'evidence', label: '7. Evidence & Lineage', icon: '🔍' },
-    { id: 'experiments', label: '8. Controlled Experiments', icon: '🧪' },
-    { id: 'findings_review', label: '9. Findings & Review', icon: '⚖️' },
-    { id: 'reports', label: '10. Report Center', icon: '📄' },
-    { id: 'memory_knowledge', label: '11. Research Memory', icon: '🧠' },
-    { id: 'activity_audit', label: '12. Audit Timeline', icon: '📜' },
+    { id: 'overview', label: '1. Overview' },
+    { id: 'scope_assets', label: '2. Scope & Assets' },
+    { id: 'attack_surface', label: '3. Attack Surface' },
+    { id: 'artifacts', label: '4. Artifacts Lab' },
+    { id: 'research', label: '5. Research & Q&A' },
+    { id: 'hypotheses', label: '6. Hypotheses & Gaps' },
+    { id: 'evidence', label: '7. Evidence & Lineage' },
+    { id: 'experiments', label: '8. Controlled Experiments' },
+    { id: 'findings_review', label: '9. Findings & Review' },
+    { id: 'reports', label: '10. Report Center' },
+    { id: 'memory_knowledge', label: '11. Research Memory' },
+    { id: 'activity_audit', label: '12. Audit Timeline' },
   ];
 
   return (
@@ -143,10 +143,8 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = ({ onBackToCopilot 
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontWeight: 700, letterSpacing: '-0.02em', fontSize: '13px' }}>
-            BUG BOUNTY AI — M13 UNIFIED WORKSPACE
+            BUG BOUNTY AI
           </span>
-          <span style={{ color: 'var(--text-muted)' }}>|</span>
-          <span style={{ color: 'var(--text-secondary)' }}>Full Lifecycle Security Research</span>
         </div>
         {onBackToCopilot && (
           <button
@@ -216,7 +214,6 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = ({ onBackToCopilot 
                   border: 'none',
                 }}
               >
-                <span>{item.icon}</span>
                 <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {item.label}
                 </span>

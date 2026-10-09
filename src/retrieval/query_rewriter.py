@@ -59,6 +59,10 @@ class CybersecurityQueryRewriter:
         "tgt": ("Ticket Granting Ticket", ["Kerberos KDC", "AS-REP", "krbtgt"]),
         "tgs": ("Ticket Granting Service", ["Kerberos SPN", "service ticket"]),
         "spn": ("Service Principal Name", ["Active Directory service account", "Kerberoasting"]),
+        "ddos": ("Distributed Denial of Service", ["volumetric attack", "traffic flooding", "amplification", "rate limiting"]),
+        "dos": ("Denial of Service", ["resource exhaustion", "availability impact", "service disruption"]),
+        "authn": ("Authentication", ["identity verification", "credentials", "401 Unauthorized"]),
+        "authz": ("Authorization", ["access control", "permissions", "403 Forbidden"]),
     }
 
     # Famous CVE mappings to authoritative names

@@ -441,6 +441,27 @@ class VaptDomainCorpus:
             tags=["Certificate_Pinning", "Frida", "OkHttp", "MITM", "Mobile_Testing"],
         ))
 
+        chunks.append(cls._create_chunk(
+            doc_id="MOB-ANDROID-SECURITY-REVIEW",
+            sec_idx=3,
+            title="Android Application Security Review & APK Static Analysis",
+            section_heading="Static Analysis Workflow, Manifest Review, and Storage Security",
+            content=(
+                "Android application security assessment begins with APK static analysis and manifest inspection: "
+                "1) Manifest Inspection (AndroidManifest.xml): Check for exported activities, services, receivers, and content providers "
+                "(android:exported='true'); verify debuggable flag (android:debuggable='true' must be false in release); inspect custom permissions. "
+                "2) Local Storage & Data Leakage: Verify sensitive credentials, tokens, or PII are not stored in plaintext in SharedPreferences, "
+                "SQLite databases, internal cache files, or external public storage (Environment.getExternalStorageDirectory). "
+                "3) Cryptography & Keystore: Ensure Android Keystore provider is used for hardware-backed cryptographic keys rather than hardcoded keys. "
+                "4) Network Security Configuration (res/xml/network_security_config.xml): Check for cleartextTrafficPermitted='true' and certificate pinning. "
+                "5) Code Decompilation & Reverse Engineering: Use jadx, apktool, or dex2jar to review Smali and Java bytecode for hardcoded API keys, "
+                "secrets, unprotected IPC endpoints, insecure WebViews (setJavaScriptEnabled with addJavascriptInterface), and deep link handling."
+            ),
+            ktype=KnowledgeType.TESTING_METHODOLOGY,
+            domain_name="MOBILE",
+            tags=["Android", "APK", "Static_Analysis", "AndroidManifest", "SharedPreferences", "Keystore", "jadx", "Deep_Links", "Mobile_Testing"],
+        ))
+
         # -------------------------------------------------------------
         # 7. NETWORK SECURITY
         # -------------------------------------------------------------
@@ -475,6 +496,26 @@ class VaptDomainCorpus:
             ktype=KnowledgeType.SECURITY_INVARIANT,
             domain_name="NETWORK",
             tags=["TLS", "TLS_1.3", "RFC_8446", "ECDHE", "Forward_Secrecy"],
+        ))
+
+        chunks.append(cls._create_chunk(
+            doc_id="NET-DDOS-VOLUMETRIC",
+            sec_idx=3,
+            title="Volumetric DDoS Attacks & Defensive Mitigations",
+            section_heading="Traffic Flooding, Protocol Exhaustion, and Scrubbing Architecture",
+            content=(
+                "Distributed Denial of Service (DDoS) attacks attempt to exhaust network bandwidth, system resources, or application capacity: "
+                "1) Volumetric Attacks: Flood network bandwidth with massive traffic volumes (Gbps/Tbps). Common vectors include UDP reflection/amplification "
+                "(DNS, NTP, Memcached, SNMP) where spoofed requests elicit disproportionately large responses directed at the victim. "
+                "2) Protocol Attacks: Exploit transport/network layer state tables (e.g. TCP SYN floods, ICMP floods) to exhaust firewall and connection tracking tables. "
+                "3) Application Layer (L7) Attacks: Target server computational resources with HTTP floods or slow connection holding (Slowloris). "
+                "Defensive Mitigations: Organizations defend against volumetric DDoS using Anycast BGP routing to distribute load globally across scrubbing centers, "
+                "cloud DDoS protection services (Cloudflare, AWS Shield), upstream ISP Flowspec and BGP blackholing, SYN cookies (RFC 4987) to resist state exhaustion, "
+                "and adaptive Web Application Firewall (WAF) rate limiting."
+            ),
+            ktype=KnowledgeType.MITIGATION,
+            domain_name="NETWORK",
+            tags=["DDoS", "Volumetric_Attack", "UDP_Amplification", "SYN_Flood", "Anycast", "Scrubbing", "Rate_Limiting", "DoS"],
         ))
 
         # -------------------------------------------------------------
