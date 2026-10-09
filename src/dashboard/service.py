@@ -928,6 +928,10 @@ class WorkspaceService:
         if not words:
             return True
 
+        q_lower = q.lower().strip()
+        if _is_explicit_gap_retrieval(q_lower) or _is_explicit_audit_query(q_lower):
+            return False
+
         greetings = {"hello", "hi", "hey", "good morning", "good afternoon", "good evening", "howdy", "greetings", "yo"}
         if cleaned in greetings or (words[0] in greetings and len(words) <= 3):
             return True
