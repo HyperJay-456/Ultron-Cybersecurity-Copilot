@@ -123,8 +123,9 @@ def test_auth_vs_authz_routing(workspace_service):
     assert "authorization" in content_lower or "authz" in content_lower
 
 
-def test_offline_unsupported_query_honest_status(workspace_service):
+def test_offline_unsupported_query_honest_status(workspace_service, monkeypatch):
     """When model is offline and query is outside VAPT corpus, return honest availability status."""
+    monkeypatch.setattr(workspace_service.cascade_orchestrator.ollama_client, "is_available", lambda: False)
     inv = workspace_service.create_investigation(
         CreateInvestigationRequest(name="Offline Status", target_host="lab.target.local")
     )
