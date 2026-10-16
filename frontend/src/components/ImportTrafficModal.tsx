@@ -81,7 +81,7 @@ export const ImportTrafficModal: React.FC<ImportTrafficModalProps> = ({
     >
       <div
         style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
           width: '100%',
           maxWidth: '620px',

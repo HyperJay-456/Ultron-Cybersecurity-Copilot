@@ -141,9 +141,30 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = ({ onBackToCopilot 
         alignItems: 'center',
         fontSize: '12px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontWeight: 700, letterSpacing: '-0.02em', fontSize: '13px' }}>
-            BUG BOUNTY AI
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }} data-former="BUG BOUNTY AI">
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontWeight: 800,
+            letterSpacing: '0.06em',
+            fontSize: '13px',
+            color: 'var(--text-primary)',
+          }}>
+            <span style={{ color: 'var(--accent-primary)', textShadow: 'var(--accent-glow)' }}>//</span>
+            ULTRON
+          </span>
+          <span style={{
+            fontSize: '10px',
+            color: 'var(--text-muted)',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            padding: '2px 8px',
+            borderRadius: '4px',
+            letterSpacing: '0.04em',
+            fontWeight: 600,
+          }}>
+            SECURITY WORKSPACE
           </span>
         </div>
         {onBackToCopilot && (

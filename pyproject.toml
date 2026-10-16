@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bug-bounty-ai"
-version = "10.0.0"
-description = "Local AI-Assisted Bug Bounty Research Platform (v10.0 Deep Android & Binary Reverse Engineering)"
+name = "ultron"
+version = "13.0.0"
+description = "Ultron — Autonomous Local AI-Assisted Cybersecurity Research & Investigation Workspace"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

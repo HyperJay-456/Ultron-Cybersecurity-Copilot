@@ -48,15 +48,15 @@ export const NewInvestigationModal: React.FC<NewInvestigationModalProps> = ({ on
           width: '460px',
           maxWidth: '90vw',
           padding: '24px 28px',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-elevated)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <div>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
-              NEW RESEARCH RUN
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary)', letterSpacing: '0.06em' }}>
+              ULTRON TARGET INVESTIGATION
             </span>
             <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
               Create Investigation

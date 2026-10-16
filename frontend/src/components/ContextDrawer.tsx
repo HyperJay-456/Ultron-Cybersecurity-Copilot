@@ -74,7 +74,7 @@ export const ContextDrawer: React.FC<ContextDrawerProps> = ({
     <div
       style={{
         width: '420px',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--bg-surface)',
         borderLeft: '1px solid var(--border-subtle)',
         display: 'flex',
         flexDirection: 'column',

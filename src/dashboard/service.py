@@ -1037,7 +1037,7 @@ class WorkspaceService:
         if self.cascade_orchestrator.ollama_client.is_available():
             try:
                 system_prompt = (
-                    "You are Bug Bounty AI, a rigorous local security research assistant. "
+                    "You are Ultron, a rigorous local security research assistant. "
                     "You operate strictly locally on the researcher's workstation. "
                     "You assist researchers in analyzing target evidence, modeling application behavior, "
                     "identifying security invariants, formulating hypotheses, and preparing experiments for human review. "
@@ -1101,7 +1101,7 @@ class WorkspaceService:
             )
         elif "grounding" in q_lower:
             return (
-                "Grounding is a strict epistemic constraint in Bug Bounty AI. Every assertion, hypothesis parameter, "
+                "Grounding is a strict epistemic constraint in Ultron (formerly Bug Bounty AI). Every assertion, hypothesis parameter, "
                 "or experiment proposal must be directly linked to empirical target observations (e.g. FACT-OBS-xx). "
                 "Unsubstantiated or hallucinated identifiers fail the GroundingValidator.",
                 "local_knowledge_engine",
@@ -1111,7 +1111,7 @@ class WorkspaceService:
             )
         elif any(w in q_lower for w in ("who are you", "what can you do", "what do you do", "help")):
             return (
-                "I am Bug Bounty AI, an evidence-grounded research assistant running entirely locally. "
+                "I am Ultron, an evidence-grounded research assistant running entirely locally. "
                 "I follow a deterministic research pipeline: observing application traffic, establishing security "
                 "invariants, identifying missing evidence gaps, synthesizing grounded hypotheses via a 3B → 7B "
                 "cascade, and generating falsifiable experiment proposals requiring human approval.",
@@ -2115,7 +2115,7 @@ class WorkspaceService:
 
         if format_type.lower() == "txt":
             return (
-                f"BUG BOUNTY AI - RESEARCH RESPONSE EXPORT\n"
+                f"ULTRON (BUG BOUNTY AI) - RESEARCH RESPONSE EXPORT\n"
                 f"Response ID: {session.response_id}\n"
                 f"Investigation ID: {session.investigation_id}\n"
                 f"Model: {session.model}\n"
@@ -2127,7 +2127,7 @@ class WorkspaceService:
 
         # Markdown format default
         return (
-            f"# Bug Bounty AI - Research Response Export\n\n"
+            f"# Ultron (Bug Bounty AI) - Research Response Export\n\n"
             f"- **Response ID**: `{session.response_id}`\n"
             f"- **Investigation**: `{session.investigation_id}`\n"
             f"- **Model**: `{session.model}`\n"

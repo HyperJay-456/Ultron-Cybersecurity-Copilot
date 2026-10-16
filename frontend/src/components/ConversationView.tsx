@@ -253,16 +253,34 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
           textAlign: 'center',
         }}
       >
+        <div style={{
+          width: '52px',
+          height: '52px',
+          borderRadius: '14px',
+          background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.22) 0%, rgba(229, 9, 20, 0.05) 100%)',
+          border: '1px solid rgba(229, 9, 20, 0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: '18px',
+          boxShadow: 'var(--accent-glow-subtle)',
+        }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z" />
+            <path d="M12 8v5" />
+            <circle cx="12" cy="16" r="1.2" fill="var(--accent-primary)" />
+          </svg>
+        </div>
         <h2
           style={{
             fontSize: '22px',
-            fontWeight: 500,
+            fontWeight: 600,
             color: 'var(--text-primary)',
             marginBottom: '8px',
             letterSpacing: '-0.01em',
           }}
         >
-          No target evidence yet
+          Ultron Intelligence Ready
         </h2>
         <p
           style={{
@@ -273,7 +291,7 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
             marginBottom: '20px',
           }}
         >
-          Import captured HTTP traffic or add an observation to begin.
+          Import captured target traffic or add an observation to initiate autonomous security invariant modeling.
         </p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
           {onOpenImport && (
@@ -424,7 +442,12 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                   marginBottom: '6px',
                 }}
               >
-                <span>{isUser ? 'You' : 'Assistant'}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  {!isUser && <span className="ultron-pulse-dot" style={{ width: '6px', height: '6px' }} />}
+                  <span style={{ fontWeight: isUser ? 500 : 700, color: isUser ? 'var(--text-muted)' : '#F87171' }}>
+                    {isUser ? 'You' : 'Ultron'}
+                  </span>
+                </span>
               </div>
 
               {/* Message Content Container */}

@@ -5,11 +5,11 @@ import path from 'node:path';
 
 const SRC_DIR = path.resolve('src');
 
-test('Branding: Header displays exactly BUG BOUNTY AI without M13 unified workspace tagline', () => {
+test('Branding: Header displays ULTRON without M13 unified workspace tagline', () => {
   const shellPath = path.join(SRC_DIR, 'components', 'workspace', 'WorkspaceShell.tsx');
   const content = fs.readFileSync(shellPath, 'utf-8');
 
-  assert.ok(content.includes('BUG BOUNTY AI'), 'Header must contain BUG BOUNTY AI');
+  assert.ok(content.includes('ULTRON'), 'Header must contain ULTRON');
   assert.ok(
     !content.includes('BUG BOUNTY AI — M13 UNIFIED WORKSPACE'),
     'M13 Unified Workspace tagline must be removed'

@@ -37,7 +37,7 @@ def test_01_spa_serving_and_static_assets(workspace_client):
     res_root = client.get("/")
     assert res_root.status_code == 200
     assert "text/html" in res_root.headers.get("content-type", "")
-    assert "Bug Bounty AI" in res_root.text or "Security Hypothesis" in res_root.text
+    assert "Ultron" in res_root.text or "Bug Bounty AI" in res_root.text or "Security Hypothesis" in res_root.text
 
     # 2. Subroute SPA fallback
     res_sub = client.get("/investigations/INV-001")

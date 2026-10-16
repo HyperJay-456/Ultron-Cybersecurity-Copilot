@@ -1456,7 +1456,7 @@ def create_dashboard_app(
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Bug Bounty AI - General Cybersecurity Copilot & Research Workspace</title>
+    <title>Ultron (formerly Bug Bounty AI) - Cybersecurity Intelligence & Research Workspace</title>
     <style>
         :root {
             --bg: #FBFBF9;

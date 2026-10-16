@@ -49,27 +49,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div
               style={{
-                width: '24px',
-                height: '24px',
+                width: '26px',
+                height: '26px',
                 borderRadius: '6px',
-                backgroundColor: 'var(--accent-primary)',
+                background: 'linear-gradient(135deg, #E50914 0%, #800008 100%)',
+                boxShadow: 'var(--accent-glow-subtle)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#FFF',
-                fontSize: '13px',
-                fontWeight: 600,
+                border: '1px solid rgba(255, 255, 255, 0.2)',
               }}
             >
-              B
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z" />
+                <path d="M12 8v5" stroke="#FFF" strokeWidth="2.5" />
+                <circle cx="12" cy="16" r="1" fill="#FFF" />
+              </svg>
             </div>
-            <span style={{ fontSize: '14.5px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
-              Bug Bounty AI
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.04em' }}>
+                ULTRON
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <span className="ultron-pulse-dot" />
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-surface-muted)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-subtle)', fontWeight: 600, letterSpacing: '0.04em' }}>
+              CORE
             </span>
           </div>
-          <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-surface-muted)', padding: '2px 6px', borderRadius: '4px' }}>
-            Local
-          </span>
         </div>
 
         {/* Workspace Switcher Button */}
@@ -271,13 +280,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span
               style={{
-                width: '6px',
-                height: '6px',
+                width: '7px',
+                height: '7px',
                 borderRadius: '50%',
-                backgroundColor: systemStatusReady ? '#2D6A4F' : '#9A6B1F',
+                backgroundColor: systemStatusReady ? '#34D399' : '#FBBF24',
+                boxShadow: systemStatusReady ? '0 0 6px rgba(52, 211, 153, 0.6)' : 'none',
               }}
             />
-            <span>System status</span>
+            <span style={{ fontWeight: 500 }}>System diagnostics</span>
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>→</span>
         </button>

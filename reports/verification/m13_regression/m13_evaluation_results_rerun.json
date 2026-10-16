@@ -1,14 +1,14 @@
 {
   "benchmark_name": "M13 Full Security Assessment Workspace Benchmark",
-  "timestamp": "2026-10-09T03:27:12.347843+00:00",
+  "timestamp": "2026-10-09T12:50:17.101769+00:00",
   "total_cases": 360,
   "passed_cases": 360,
   "failed_cases": 0,
   "pass_rate": 1.0,
   "pass_rate_percent": "100.00%",
   "hard_invariant_violations": 0,
-  "total_duration_seconds": 0.042,
-  "average_case_latency_ms": 0.117,
+  "total_duration_seconds": 0.043,
+  "average_case_latency_ms": 0.12,
   "categories_evaluated": 24,
   "category_breakdown": {
     "LIFECYCLE": {
@@ -178,7 +178,7 @@
       "category": "LIFECYCLE",
       "title": "Lifecycle: Terminal state ARCHIVED blocks modification",
       "passed": true,
-      "elapsed_ms": 0.053,
+      "elapsed_ms": 0.05,
       "details": {}
     },
     {
@@ -242,7 +242,7 @@
       "category": "LIFECYCLE",
       "title": "Lifecycle: Completed assessment sets read_only flag to True",
       "passed": true,
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -250,7 +250,7 @@
       "category": "LIFECYCLE",
       "title": "Lifecycle: Idempotent state transition leaves state intact",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -290,7 +290,7 @@
       "category": "AUTHORIZATION",
       "title": "Authorization: Revoked authorization immediately suspends actions",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -330,7 +330,7 @@
       "category": "AUTHORIZATION",
       "title": "Authorization: Unsupported engagement type rejected",
       "passed": true,
-      "elapsed_ms": 0.009,
+      "elapsed_ms": 0.008,
       "details": {}
     },
     {
@@ -346,7 +346,7 @@
       "category": "AUTHORIZATION",
       "title": "Authorization: Scope reference binding required in authorization",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -378,7 +378,7 @@
       "category": "SCOPE",
       "title": "Scope: Exact in-scope domain matches",
       "passed": true,
-      "elapsed_ms": 0.383,
+      "elapsed_ms": 0.382,
       "details": {}
     },
     {
@@ -386,7 +386,7 @@
       "category": "SCOPE",
       "title": "Scope: Explicit out-of-scope domain rejected",
       "passed": true,
-      "elapsed_ms": 0.218,
+      "elapsed_ms": 0.224,
       "details": {}
     },
     {
@@ -402,7 +402,7 @@
       "category": "SCOPE",
       "title": "Scope: Wildcard subdomain rule matches child domain",
       "passed": true,
-      "elapsed_ms": 19.035,
+      "elapsed_ms": 19.265,
       "details": {}
     },
     {
@@ -410,7 +410,7 @@
       "category": "SCOPE",
       "title": "Scope: Wildcard subdomain does not match parent without flag",
       "passed": true,
-      "elapsed_ms": 17.292,
+      "elapsed_ms": 18.115,
       "details": {}
     },
     {
@@ -418,7 +418,7 @@
       "category": "SCOPE",
       "title": "Scope: CIDR IP range matches member address",
       "passed": true,
-      "elapsed_ms": 0.396,
+      "elapsed_ms": 0.383,
       "details": {}
     },
     {
@@ -434,7 +434,7 @@
       "category": "SCOPE",
       "title": "Scope: URL target matches host in scope",
       "passed": true,
-      "elapsed_ms": 0.313,
+      "elapsed_ms": 0.29,
       "details": {}
     },
     {
@@ -442,7 +442,7 @@
       "category": "SCOPE",
       "title": "Scope: URL target with out-of-scope host rejected",
       "passed": true,
-      "elapsed_ms": 0.266,
+      "elapsed_ms": 0.263,
       "details": {}
     },
     {
@@ -450,7 +450,7 @@
       "category": "SCOPE",
       "title": "Scope: ScopeGate tester never alters scope policy",
       "passed": true,
-      "elapsed_ms": 0.203,
+      "elapsed_ms": 0.19,
       "details": {}
     },
     {
@@ -466,7 +466,7 @@
       "category": "SCOPE",
       "title": "Scope: Malformed URL fails closed",
       "passed": true,
-      "elapsed_ms": 0.349,
+      "elapsed_ms": 0.332,
       "details": {}
     },
     {
@@ -474,7 +474,7 @@
       "category": "SCOPE",
       "title": "Scope: Port restricted rule requires matching port",
       "passed": true,
-      "elapsed_ms": 0.222,
+      "elapsed_ms": 0.212,
       "details": {}
     },
     {
@@ -482,7 +482,7 @@
       "category": "SCOPE",
       "title": "Scope: Port mismatch rejected",
       "passed": true,
-      "elapsed_ms": 0.274,
+      "elapsed_ms": 0.234,
       "details": {}
     },
     {
@@ -514,7 +514,7 @@
       "category": "ASSET_INVENTORY",
       "title": "Asset: Add URL asset to inventory",
       "passed": true,
-      "elapsed_ms": 0.016,
+      "elapsed_ms": 0.012,
       "details": {}
     },
     {
@@ -522,7 +522,7 @@
       "category": "ASSET_INVENTORY",
       "title": "Asset: Add SERVICE asset to inventory",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -618,7 +618,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Register HAR artifact with SHA-256",
       "passed": true,
-      "elapsed_ms": 0.058,
+      "elapsed_ms": 0.048,
       "details": {}
     },
     {
@@ -626,7 +626,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Register PCAP artifact with SHA-256",
       "passed": true,
-      "elapsed_ms": 0.025,
+      "elapsed_ms": 0.024,
       "details": {}
     },
     {
@@ -634,7 +634,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: New artifact defaults to QUARANTINED until inspected",
       "passed": true,
-      "elapsed_ms": 0.021,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -642,7 +642,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact integrity validation matches payload hash",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -650,7 +650,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Mismatching hash is rejected on registration",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.025,
       "details": {}
     },
     {
@@ -658,7 +658,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact registry isolates across assessments",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.021,
       "details": {}
     },
     {
@@ -666,7 +666,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact count matches overview metrics",
       "passed": true,
-      "elapsed_ms": 0.019,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -674,7 +674,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Quarantined artifact excluded from verified evidence queries",
       "passed": true,
-      "elapsed_ms": 0.016,
+      "elapsed_ms": 0.015,
       "details": {}
     },
     {
@@ -682,7 +682,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Promotion of validated artifact marks VALIDATED",
       "passed": true,
-      "elapsed_ms": 0.015,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -690,7 +690,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact ID substitution attempt is prevented",
       "passed": true,
-      "elapsed_ms": 0.016,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -706,7 +706,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact acquisition timestamp recorded in UTC",
       "passed": true,
-      "elapsed_ms": 0.015,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -714,7 +714,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Artifact audit event emitted upon registration",
       "passed": true,
-      "elapsed_ms": 0.015,
+      "elapsed_ms": 0.013,
       "details": {}
     },
     {
@@ -722,7 +722,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: MIME type correctly classified for HTTP captures",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.018,
       "details": {}
     },
     {
@@ -730,7 +730,7 @@
       "category": "ARTIFACT_REGISTRY",
       "title": "Artifact: Rejection of corrupted archive with quarantine reason",
       "passed": true,
-      "elapsed_ms": 0.016,
+      "elapsed_ms": 0.015,
       "details": {}
     },
     {
@@ -762,7 +762,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Finding links to reproduction experiment in lineage",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -794,7 +794,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Provenance metadata records tool name and parser version",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -810,7 +810,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Immutable lineage prevents retroactive tampering",
       "passed": true,
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -818,7 +818,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Lineage graph multi-tenant namespace isolation",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -826,7 +826,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Contradicting observation recorded in lineage",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -834,7 +834,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Supporting observation recorded in lineage",
       "passed": true,
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -842,7 +842,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Lineage export formatted for audit review",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -850,7 +850,7 @@
       "category": "LINEAGE_PROVENANCE",
       "title": "Lineage: Orphaned hypothesis detection flags evidence gap",
       "passed": true,
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -858,7 +858,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Synthesize BFLA hypothesis on admin interface",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -890,7 +890,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Hypothesis requires negative control definition",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -906,7 +906,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Hypotheses cannot masquerade as findings",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -922,7 +922,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Audit event emitted when hypothesis created",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -938,7 +938,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Hypothesis linked to specific asset IDs",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -962,7 +962,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Multiple hypotheses generated for diverse attack surface",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -970,7 +970,7 @@
       "category": "HYPOTHESIS_MANAGEMENT",
       "title": "Hypothesis: Hypothesis deduplication by deterministic ID",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1002,7 +1002,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Specialized agents analyze specific vulnerability domains",
       "passed": true,
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -1010,7 +1010,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Agent execution respects maximum inference concurrency = 1",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1026,7 +1026,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Agent cannot expand scope boundary",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1034,7 +1034,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Agent telemetry analysis highlights anomalous parameters",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1042,7 +1042,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Agent audit logging captures model prompt and completion ref",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1058,7 +1058,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Analytical agents error handling returns graceful degradation",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1066,7 +1066,7 @@
       "category": "ANALYTICAL_AGENTS",
       "title": "Agents: Agent plan proposal requires researcher review",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1154,7 +1154,7 @@
       "category": "KNOWLEDGE_SEPARATION",
       "title": "Knowledge: External threat intel report marked as UNTRUSTED_EXTERNAL",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1218,7 +1218,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Assessment memory namespace strictly isolated",
       "passed": true,
-      "elapsed_ms": 0.046,
+      "elapsed_ms": 0.044,
       "details": {}
     },
     {
@@ -1226,7 +1226,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Cross-assessment memory query returns empty results",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.018,
       "details": {}
     },
     {
@@ -1234,7 +1234,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Cross-tenant memory leakage rate is exactly 0.0",
       "passed": true,
-      "elapsed_ms": 0.015,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -1258,7 +1258,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Memory supersession invalidates stale memory nodes",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -1266,7 +1266,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Deleted memory never returned in subsequent retrieval",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.012,
       "details": {}
     },
     {
@@ -1274,7 +1274,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Memory search combines keyword FTS5 and dense retrieval",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.015,
       "details": {}
     },
     {
@@ -1282,7 +1282,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Memory item stores epistemic status classification",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -1290,7 +1290,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Secret detection redacts credentials before memory storage",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -1314,7 +1314,7 @@
       "category": "MEMORY_INTEGRATION",
       "title": "Memory: Long-session conversation continuity preserved via session memory",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.01,
       "details": {}
     },
     {
@@ -1346,7 +1346,7 @@
       "category": "CONTROLLED_EXPERIMENT",
       "title": "Experiment: Plane A experiment enforces preflight ScopeGate check",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -1378,7 +1378,7 @@
       "category": "CONTROLLED_EXPERIMENT",
       "title": "Experiment: Experiment requires negative control protocol",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -1482,7 +1482,7 @@
       "category": "MANUAL_PROCEDURES",
       "title": "Manual: Import manual result requires explicit human actor name",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1538,7 +1538,7 @@
       "category": "MANUAL_PROCEDURES",
       "title": "Manual: Audit log tags manual procedure import as HUMAN_EXECUTION",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1562,7 +1562,7 @@
       "category": "MANUAL_PROCEDURES",
       "title": "Manual: Manual procedure copyable payload sanitizes injection tokens",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.0,
       "details": {}
     },
     {
@@ -1578,7 +1578,7 @@
       "category": "HUMAN_REVIEW",
       "title": "Review: 13-point validation checklist fully satisfied",
       "passed": true,
-      "elapsed_ms": 0.007,
+      "elapsed_ms": 0.008,
       "details": {}
     },
     {
@@ -1602,7 +1602,7 @@
       "category": "HUMAN_REVIEW",
       "title": "Review: Checklist failure on automated exploitation blocks confirmation",
       "passed": true,
-      "elapsed_ms": 0.004,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -1650,7 +1650,7 @@
       "category": "HUMAN_REVIEW",
       "title": "Review: Negative control verification required before sign-off",
       "passed": true,
-      "elapsed_ms": 0.003,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -1674,7 +1674,7 @@
       "category": "HUMAN_REVIEW",
       "title": "Review: Human reviewer sign-off recorded in audit ledger",
       "passed": true,
-      "elapsed_ms": 0.003,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -1682,7 +1682,7 @@
       "category": "HUMAN_REVIEW",
       "title": "Review: Unreviewed candidate finding remains UNVERIFIED",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -1698,7 +1698,7 @@
       "category": "FINDING_CONFIRMATION",
       "title": "Finding: Confirmed finding status is strictly HUMAN_VERIFIED",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -1826,7 +1826,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report includes complete authorization details",
       "passed": true,
-      "elapsed_ms": 0.032,
+      "elapsed_ms": 0.031,
       "details": {}
     },
     {
@@ -1834,7 +1834,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report includes defined program scope boundaries",
       "passed": true,
-      "elapsed_ms": 0.024,
+      "elapsed_ms": 0.022,
       "details": {}
     },
     {
@@ -1842,7 +1842,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report includes attack surface summary metrics",
       "passed": true,
-      "elapsed_ms": 0.023,
+      "elapsed_ms": 0.02,
       "details": {}
     },
     {
@@ -1850,7 +1850,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Confirmed findings section includes ONLY HUMAN_VERIFIED items",
       "passed": true,
-      "elapsed_ms": 0.025,
+      "elapsed_ms": 0.02,
       "details": {}
     },
     {
@@ -1866,7 +1866,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Out-of-scope quarantined observations listed in separate section",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -1874,7 +1874,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report generation produces clean GitHub-flavored markdown",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -1898,7 +1898,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report includes human auditor verification signatures",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -1906,7 +1906,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report export audit event emitted",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -1914,7 +1914,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report generation operates safely in read-only audit state",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -1922,7 +1922,7 @@
       "category": "REPORT_GENERATION",
       "title": "Report: Report generation does not alter underlying findings or observations",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -1946,7 +1946,7 @@
       "category": "AUDIT_LOGGING",
       "title": "Audit: Audit events are strictly append-only",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -1986,7 +1986,7 @@
       "category": "AUDIT_LOGGING",
       "title": "Audit: Audit events track component origin",
       "passed": true,
-      "elapsed_ms": 0.001,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -2090,7 +2090,7 @@
       "category": "VIEW_STATE_PERSISTENCE",
       "title": "ViewState: Persist selected finding ID in Findings Review view",
       "passed": true,
-      "elapsed_ms": 0.004,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -2098,7 +2098,7 @@
       "category": "VIEW_STATE_PERSISTENCE",
       "title": "ViewState: Persist selected artifact ID in Artifacts view",
       "passed": true,
-      "elapsed_ms": 0.003,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -2138,7 +2138,7 @@
       "category": "VIEW_STATE_PERSISTENCE",
       "title": "ViewState: View state isolated per assessment container",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -2146,7 +2146,7 @@
       "category": "VIEW_STATE_PERSISTENCE",
       "title": "ViewState: Default view state initializes to OVERVIEW section",
       "passed": true,
-      "elapsed_ms": 0.003,
+      "elapsed_ms": 0.002,
       "details": {}
     },
     {
@@ -2170,7 +2170,7 @@
       "category": "VIEW_STATE_PERSISTENCE",
       "title": "ViewState: UI view state updates do not emit sensitive audit events",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.003,
       "details": {}
     },
     {
@@ -2178,7 +2178,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search matches assessment record by name",
       "passed": true,
-      "elapsed_ms": 0.023,
+      "elapsed_ms": 0.022,
       "details": {}
     },
     {
@@ -2186,7 +2186,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search matches asset record by domain",
       "passed": true,
-      "elapsed_ms": 0.014,
+      "elapsed_ms": 0.013,
       "details": {}
     },
     {
@@ -2202,7 +2202,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search matches hypothesis by title keyword",
       "passed": true,
-      "elapsed_ms": 0.008,
+      "elapsed_ms": 0.009,
       "details": {}
     },
     {
@@ -2218,7 +2218,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search matches finding by CWE or title",
       "passed": true,
-      "elapsed_ms": 0.008,
+      "elapsed_ms": 0.01,
       "details": {}
     },
     {
@@ -2226,7 +2226,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search matches artifact by filename",
       "passed": true,
-      "elapsed_ms": 0.009,
+      "elapsed_ms": 0.008,
       "details": {}
     },
     {
@@ -2242,7 +2242,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Empty search query returns empty list immediately",
       "passed": true,
-      "elapsed_ms": 0.007,
+      "elapsed_ms": 0.008,
       "details": {}
     },
     {
@@ -2250,7 +2250,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Case-insensitive keyword matching",
       "passed": true,
-      "elapsed_ms": 0.007,
+      "elapsed_ms": 0.009,
       "details": {}
     },
     {
@@ -2266,7 +2266,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search results include entity classification badges",
       "passed": true,
-      "elapsed_ms": 0.008,
+      "elapsed_ms": 0.007,
       "details": {}
     },
     {
@@ -2282,7 +2282,7 @@
       "category": "WORKSPACE_SEARCH",
       "title": "Search: Search sanitizes special characters safely",
       "passed": true,
-      "elapsed_ms": 0.008,
+      "elapsed_ms": 0.007,
       "details": {}
     },
     {
@@ -2354,7 +2354,7 @@
       "category": "ERROR_HANDLING",
       "title": "Error: ScopeGate failure defaults strictly to out of scope",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -2394,7 +2394,7 @@
       "category": "ERROR_HANDLING",
       "title": "Error: Graceful error handling preserves audit logging",
       "passed": true,
-      "elapsed_ms": 0.002,
+      "elapsed_ms": 0.001,
       "details": {}
     },
     {
@@ -2418,7 +2418,7 @@
       "category": "MULTI_TENANT_ISOLATION",
       "title": "Isolation: Assessment A asset graph invisible to Assessment B",
       "passed": true,
-      "elapsed_ms": 0.008,
+      "elapsed_ms": 0.007,
       "details": {}
     },
     {
@@ -2490,7 +2490,7 @@
       "category": "MULTI_TENANT_ISOLATION",
       "title": "Isolation: Cross-assessment finding verification bypass rejected",
       "passed": true,
-      "elapsed_ms": 0.005,
+      "elapsed_ms": 0.007,
       "details": {}
     },
     {
@@ -2498,7 +2498,7 @@
       "category": "MULTI_TENANT_ISOLATION",
       "title": "Isolation: Scoped search query strictly limits results to target assessment",
       "passed": true,
-      "elapsed_ms": 0.005,
+      "elapsed_ms": 0.006,
       "details": {}
     },
     {
@@ -2778,7 +2778,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: GET /api/assessments returns 200 with summary list",
       "passed": true,
-      "elapsed_ms": 0.019,
+      "elapsed_ms": 0.02,
       "details": {}
     },
     {
@@ -2786,7 +2786,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: GET /api/assessments/{id}/overview returns 200 with overview",
       "passed": true,
-      "elapsed_ms": 0.015,
+      "elapsed_ms": 0.014,
       "details": {}
     },
     {
@@ -2802,7 +2802,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: GET /api/assessments/{id}/activity returns 200 with timeline",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -2810,7 +2810,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: POST /api/assessments/{id}/view-state updates state with 200",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -2826,7 +2826,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: GET /api/assessments/{id}/artifacts returns 200 with artifacts",
       "passed": true,
-      "elapsed_ms": 0.013,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -2834,7 +2834,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: POST /api/assessments/{id}/artifacts registers with 200",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -2842,7 +2842,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: POST /api/assessments/{id}/reports/export returns 200 with markdown",
       "passed": true,
-      "elapsed_ms": 0.012,
+      "elapsed_ms": 0.011,
       "details": {}
     },
     {
@@ -2874,7 +2874,7 @@
       "category": "API_CORRECTNESS",
       "title": "API: CORS headers correctly configured for frontend client",
       "passed": true,
-      "elapsed_ms": 0.011,
+      "elapsed_ms": 0.01,
       "details": {}
     },
     {
@@ -2898,7 +2898,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Workspace shell renders top header and sidebar navigation",
       "passed": true,
-      "elapsed_ms": 0.03,
+      "elapsed_ms": 0.031,
       "details": {}
     },
     {
@@ -2906,7 +2906,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Sidebar exposes all 12 functional assessment section tabs",
       "passed": true,
-      "elapsed_ms": 0.025,
+      "elapsed_ms": 0.024,
       "details": {}
     },
     {
@@ -2914,7 +2914,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Assessment switcher modal allows rapid search and switching",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -2922,7 +2922,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Create assessment modal provides guided container setup",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -2930,7 +2930,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Global search modal with Ctrl+K shortcut integration",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.018,
       "details": {}
     },
     {
@@ -2938,7 +2938,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Active section highlights correctly in sidebar",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -2946,7 +2946,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Read-only banner displayed when assessment is COMPLETED or ARCHIVED",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -2954,7 +2954,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Warning banner displayed when authorization is missing or invalid",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.017,
       "details": {}
     },
     {
@@ -2962,7 +2962,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Warning banner displayed when scope is unconfigured",
       "passed": true,
-      "elapsed_ms": 0.018,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -2970,7 +2970,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: ScopeGate interactive target tester indicates allowed vs denied",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -2986,7 +2986,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Markdown report tab provides instant preview and copy export",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.019,
       "details": {}
     },
     {
@@ -2994,7 +2994,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Memory & Knowledge tab displays multi-tier memory metrics",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -3002,7 +3002,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Audit activity tab renders chronological event stream",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.016,
       "details": {}
     },
     {
@@ -3010,7 +3010,7 @@
       "category": "UI_CONSISTENCY",
       "title": "UI: Frontend build compiles cleanly without TypeScript errors",
       "passed": true,
-      "elapsed_ms": 0.017,
+      "elapsed_ms": 0.016,
       "details": {}
     }
   ]

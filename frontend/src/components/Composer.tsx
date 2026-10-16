@@ -7,9 +7,9 @@ interface ComposerProps {
 }
 
 const STARTER_PROMPTS = [
-  'Analyze the current evidence.',
-  'Show open evidence gaps.',
-  'Explain the strongest hypothesis.',
+  'Analyze the current target evidence.',
+  'Show open evidence gaps and invariants.',
+  'Synthesize hypotheses and attack vectors.',
 ];
 
 export const Composer: React.FC<ComposerProps> = ({ onSend, loading, hasMessages = false }) => {
@@ -90,7 +90,7 @@ export const Composer: React.FC<ComposerProps> = ({ onSend, loading, hasMessages
           display: 'flex',
           flexDirection: 'column',
           padding: '12px 16px',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
           border: '1px solid var(--border-subtle)',
           boxShadow: 'var(--shadow-subtle)',
@@ -99,7 +99,7 @@ export const Composer: React.FC<ComposerProps> = ({ onSend, loading, hasMessages
         <textarea
           ref={textareaRef}
           rows={2}
-          placeholder="Ask a question or describe target observations..."
+          placeholder="Ask Ultron a security question or describe target observations..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

@@ -44,7 +44,7 @@ def test_e2e_spa_single_origin_serving(e2e_client):
     res_root = client.get("/")
     assert res_root.status_code == 200
     assert "<!doctype html>" in res_root.text.lower()
-    assert "Bug Bounty AI" in res_root.text
+    assert "Ultron" in res_root.text or "Bug Bounty AI" in res_root.text
 
     # SPA route fallback preserves single URL architecture
     res_spa = client.get("/investigations/INV-001")

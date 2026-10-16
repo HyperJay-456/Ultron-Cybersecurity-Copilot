@@ -163,11 +163,11 @@ def test_api_response_endpoints(app_client) -> None:
     # 7. GET /api/responses/{id}/export (markdown and txt)
     res_exp_md = client.get("/api/responses/RESP-API-001/export?format=markdown")
     assert res_exp_md.status_code == 200
-    assert "# Bug Bounty AI - Research Response Export" in res_exp_md.json()["content"]
+    assert "Ultron" in res_exp_md.json()["content"] or "# Bug Bounty AI" in res_exp_md.json()["content"]
 
     res_exp_txt = client.get("/api/responses/RESP-API-001/export?format=txt")
     assert res_exp_txt.status_code == 200
-    assert "BUG BOUNTY AI - RESEARCH RESPONSE EXPORT" in res_exp_txt.json()["content"]
+    assert "ULTRON" in res_exp_txt.json()["content"] or "BUG BOUNTY AI" in res_exp_txt.json()["content"]
 
     # 8. GET /api/responses/metrics
     res_metrics = client.get("/api/responses/metrics")

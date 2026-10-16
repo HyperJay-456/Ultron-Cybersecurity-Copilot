@@ -49,7 +49,7 @@ def main() -> None:
     import uvicorn
 
     print("=" * 40)
-    print("LOCAL BUG BOUNTY AI")
+    print("LOCAL ULTRON - RESEARCH WORKSPACE")
     print("=" * 40)
     print()
     print("Application ready:")

@@ -66,7 +66,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
           maxWidth: '92vw',
           padding: '24px 28px',
           boxShadow: 'var(--shadow-elevated)',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-xl)',
         }}
       >

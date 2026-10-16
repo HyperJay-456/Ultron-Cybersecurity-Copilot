@@ -1,5 +1,5 @@
-# Local AI-Assisted Bug Bounty Research Platform
-### v13.0 Full Security Assessment Workspace
+# Ultron — Autonomous Cybersecurity Intelligence & Investigation Workspace
+### Local AI-Assisted Security Research Platform (Formerly Bug Bounty AI)
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg)](LICENSE)
@@ -265,7 +265,7 @@ Bug Bounty AI/
 ```powershell
 # Clone the repository
 git clone https://github.com/HyperJay-456/Bug-Bounty-AI.git
-cd "Bug Bounty AI"
+cd ultron # or "Bug Bounty AI"
 
 # Create and activate Python virtual environment
 python -m venv .venv

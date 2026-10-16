@@ -38,15 +38,17 @@ export const SystemStatusModal: React.FC<SystemStatusModalProps> = ({ status, on
           display: 'flex',
           flexDirection: 'column',
           padding: '24px 26px',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-elevated)',
           overflow: 'hidden',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            System status
+          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="ultron-pulse-dot" />
+            Ultron System Diagnostics
           </h3>
           <button
             onClick={onClose}

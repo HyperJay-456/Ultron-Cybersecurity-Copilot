@@ -94,7 +94,7 @@ export const AddObservationModal: React.FC<AddObservationModalProps> = ({
     >
       <div
         style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
           width: '100%',
           maxWidth: '620px',
