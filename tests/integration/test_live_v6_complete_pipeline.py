@@ -16,6 +16,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.live_ollama]
+
 from src.database.manager import DatabaseManager
 from src.engine.models import (
     AppModelDelta,

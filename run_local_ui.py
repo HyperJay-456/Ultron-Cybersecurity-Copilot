@@ -45,26 +45,53 @@ def open_browser_delayed(url: str, delay: float = 1.0) -> None:
 def main() -> None:
     verify_frontend_build()
 
+    from src.database.manager import DatabaseManager
     from src.dashboard.app import create_dashboard_app
     import uvicorn
 
-    print("=" * 40)
-    print("LOCAL ULTRON - RESEARCH WORKSPACE")
-    print("=" * 40)
-    print()
-    print("Application ready:")
+    db = DatabaseManager()
+    user_count = db.user_count()
+
+    admin_user = os.environ.get("ULTRON_ADMIN_USERNAME")
+    admin_pass = os.environ.get("ULTRON_ADMIN_PASSWORD")
+
+    # Safe initial bootstrap if environment variables are provided and no accounts exist
+    if user_count == 0 and admin_user and admin_pass:
+        from src.dashboard.auth import hash_password
+        db.create_user(
+            username=admin_user.strip(),
+            password_hash=hash_password(admin_pass),
+            role="admin",
+            is_active=True,
+        )
+        print(f"[Launcher] Initial administrator account '{admin_user.strip()}' provisioned from environment.")
+        user_count = db.user_count()
+
+    print("=" * 60)
+    if user_count == 0:
+        print("LOCAL ULTRON - RESEARCH WORKSPACE [BOOTSTRAP REQUIRED]")
+        print("=" * 60)
+        print("Status: Authentication is ENABLED, but no user accounts exist.")
+        print("Setup needed: Provision an administrator account before logging in:")
+        print("  python -m src.dashboard.bootstrap --username <admin>")
+        print("  or export ULTRON_ADMIN_USERNAME and ULTRON_ADMIN_PASSWORD")
+    else:
+        print("LOCAL ULTRON - RESEARCH WORKSPACE")
+        print("=" * 60)
+        print(f"Status: Authentication ENABLED ({user_count} account(s) registered).")
+        print("Application ready:")
+
     print()
     print(URL)
     print()
     print("Press Ctrl+C to stop.")
-    print()
-    print("=" * 40)
+    print("=" * 60)
 
     # Spawn background thread to open browser
     opener = threading.Thread(target=open_browser_delayed, args=(URL, 1.2), daemon=True)
     opener.start()
 
-    app = create_dashboard_app()
+    app = create_dashboard_app(db_manager=db, require_auth=True)
     uvicorn.run(
         app,
         host=HOST,

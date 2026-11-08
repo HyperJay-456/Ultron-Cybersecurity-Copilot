@@ -487,6 +487,7 @@ def test_18_no_fabricated_ids_introduced():
     assert len(canonical.methodology_references) == len(chunk_ids)
 
 
+@pytest.mark.live_ollama
 @pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_OLLAMA") == "1",
     reason="Live Ollama execution skipped by environment flag",

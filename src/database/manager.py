@@ -22,6 +22,11 @@ class DatabaseManager:
             self.timeout = 30.0
             self.enable_foreign_keys = True
             self.enable_wal = True
+        elif isinstance(config, (Path, str)):
+            self.db_path = Path(config)
+            self.timeout = 30.0
+            self.enable_foreign_keys = True
+            self.enable_wal = True
         elif config:
             self.db_path = Path(config.db_path)
             self.timeout = config.timeout_seconds
@@ -87,6 +92,18 @@ class DatabaseManager:
                     INSERT INTO evidence_fts(rowid, fact_id, statement, source_tool)
                     VALUES(new.rowid, new.fact_id, new.statement, new.source_tool);
                 END;
+            """)
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS dashboard_users (
+                    user_id             TEXT PRIMARY KEY,
+                    username            TEXT UNIQUE NOT NULL,
+                    password_hash       TEXT NOT NULL,
+                    role                TEXT NOT NULL CHECK(role IN ('observer', 'reviewer', 'admin')),
+                    is_active           INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_dashboard_users_username ON dashboard_users(username);
             """)
             try:
                 conn.execute("ALTER TABLE conversation_messages ADD COLUMN response_id TEXT")
@@ -620,8 +637,11 @@ class DatabaseManager:
                         cascade_trace_id, model_name, model_digest, response_id, status, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
+                        content = excluded.content,
                         delivery_status = excluded.delivery_status,
                         structured_data = excluded.structured_data,
+                        model_name = excluded.model_name,
+                        model_digest = excluded.model_digest,
                         response_id = excluded.response_id,
                         status = excluded.status
                     """,
@@ -722,6 +742,74 @@ class DatabaseManager:
                 except Exception:
                     pass
             return d
+
+    def update_message(self, message_id: str, updates: Dict[str, Any]) -> None:
+        """Update fields of an existing conversation message."""
+        if not updates:
+            return
+        set_clauses = []
+        values = []
+        for k, v in updates.items():
+            if k == "structured_data" and v is not None and not isinstance(v, str):
+                v = json.dumps(v)
+            set_clauses.append(f"{k} = ?")
+            values.append(v)
+        values.append(message_id)
+        with self.get_connection() as conn:
+            conn.execute(f"UPDATE conversation_messages SET {', '.join(set_clauses)} WHERE id = ?", tuple(values))
+            conn.commit()
+
+    def get_message_by_response_id(self, response_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a conversation message by associated response_id."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM conversation_messages WHERE response_id = ?", (response_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("structured_data"):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            return d
+
+    def get_paired_assistant_message(self, user_msg_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve assistant message immediately following a user message in sequence."""
+        user_msg = self.get_message(user_msg_id)
+        if not user_msg:
+            return None
+        inv_id = user_msg.get("investigation_id")
+        seq = user_msg.get("sequence_number")
+        if seq is None or not inv_id:
+            return None
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM conversation_messages
+                WHERE investigation_id = ? AND sequence_number > ? AND sender = 'assistant'
+                ORDER BY sequence_number ASC LIMIT 1
+                """,
+                (inv_id, seq),
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("structured_data"):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            return d
+
+    def supersede_messages_after(self, investigation_id: str, sequence_number: int) -> int:
+        """Mark subsequent messages after sequence_number as SUPERSEDED."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE conversation_messages SET status = 'SUPERSEDED' WHERE investigation_id = ? AND sequence_number > ?",
+                (investigation_id, sequence_number),
+            )
+            conn.commit()
+            return cursor.rowcount
 
     def get_message_count(self, investigation_id: str) -> int:
         """Count total messages for an investigation."""
@@ -954,4 +1042,166 @@ class DatabaseManager:
                 (investigation_id,),
             ).fetchone()
             return row["cnt"] if row else 0
+
+    def get_foreign_observation_ids(self, active_investigation_id: str) -> set:
+        """Get observation IDs belonging to all other investigations to prevent cross-assessment leakage."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM investigation_observations WHERE investigation_id != ?",
+                (active_investigation_id,),
+            ).fetchall()
+            return {r["id"] for r in rows}
+
+    def verify_observation_integrity(self, observation_id: str) -> bool:
+        """Verifies canonical content digest of a stored observation to detect tampering."""
+        obs = self.get_investigation_observation(observation_id)
+        if not obs:
+            return False
+        stored_digest = obs.get("transaction_digest")
+        if not stored_digest:
+            return False
+        from src.evidence.ingestion.pipeline import compute_canonical_transaction_digest
+        computed = compute_canonical_transaction_digest(
+            method=obs.get("http_method") or obs.get("method", ""),
+            host=obs.get("host", ""),
+            path=obs.get("raw_path") or obs.get("path", "/"),
+            response_status=int(obs.get("response_status") or obs.get("status_code", 0)),
+            request_body=obs.get("request_body") or "",
+            response_body=obs.get("response_body") or "",
+            request_headers=obs.get("request_headers"),
+            response_headers=obs.get("response_headers"),
+        )
+        return computed == stored_digest
+
+    # -------------------------------------------------------------------------
+    # Dashboard User Management (Batch 1.1)
+    # -------------------------------------------------------------------------
+
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str = "reviewer",
+        is_active: bool = True,
+    ) -> Dict[str, Any]:
+        """Create a new local dashboard user with pre-hashed credentials."""
+        clean_user = username.strip().lower()
+        clean_role = role.strip().lower()
+        if clean_role not in ("observer", "reviewer", "admin"):
+            clean_role = "reviewer"
+        user_id = f"USR-{hashlib.sha256(clean_user.encode()).hexdigest()[:12].upper()}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        with self.get_connection() as conn:
+            self._ensure_user_table(conn)
+            conn.execute(
+                """
+                INSERT INTO dashboard_users (user_id, username, password_hash, role, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, clean_user, password_hash, clean_role, 1 if is_active else 0, now_iso, now_iso),
+            )
+            conn.commit()
+
+        return {
+            "user_id": user_id,
+            "username": clean_user,
+            "role": clean_role,
+            "is_active": is_active,
+            "created_at": now_iso,
+        }
+
+    def _ensure_user_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_users (
+                user_id             TEXT PRIMARY KEY,
+                username            TEXT UNIQUE NOT NULL,
+                password_hash       TEXT NOT NULL,
+                role                TEXT NOT NULL CHECK(role IN ('observer', 'reviewer', 'admin')),
+                is_active           INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dashboard_users_username ON dashboard_users(username)")
+
+    def get_user(self, username: str) -> Optional[Dict[str, Any]]:
+        """Retrieve user record by username."""
+        clean_user = username.strip().lower()
+        with self.get_connection() as conn:
+            self._ensure_user_table(conn)
+            row = conn.execute(
+                "SELECT * FROM dashboard_users WHERE username = ?",
+                (clean_user,),
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["is_active"] = bool(d["is_active"])
+            return d
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """List all users without exposing password hashes."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT user_id, username, role, is_active, created_at, updated_at FROM dashboard_users ORDER BY username"
+            ).fetchall()
+            return [
+                {
+                    "user_id": r["user_id"],
+                    "username": r["username"],
+                    "role": r["role"],
+                    "is_active": bool(r["is_active"]),
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                }
+                for r in rows
+            ]
+
+    def update_user_password(self, username: str, password_hash: str) -> bool:
+        """Update password hash for a user."""
+        clean_user = username.strip().lower()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE dashboard_users SET password_hash = ?, updated_at = ? WHERE username = ?",
+                (password_hash, now_iso, clean_user),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def update_user_role(self, username: str, role: str) -> bool:
+        """Update authoritative role for a user."""
+        clean_user = username.strip().lower()
+        clean_role = role.strip().lower()
+        if clean_role not in ("observer", "reviewer", "admin"):
+            raise ValueError(f"Invalid role: {role}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE dashboard_users SET role = ?, updated_at = ? WHERE username = ?",
+                (clean_role, now_iso, clean_user),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def set_user_active(self, username: str, is_active: bool) -> bool:
+        """Enable or disable a user account."""
+        clean_user = username.strip().lower()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE dashboard_users SET is_active = ?, updated_at = ? WHERE username = ?",
+                (1 if is_active else 0, now_iso, clean_user),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def user_count(self) -> int:
+        """Get total number of provisioned users."""
+        with self.get_connection() as conn:
+            self._ensure_user_table(conn)
+            row = conn.execute("SELECT COUNT(*) as cnt FROM dashboard_users").fetchone()
+            return row["cnt"] if row else 0
+
 

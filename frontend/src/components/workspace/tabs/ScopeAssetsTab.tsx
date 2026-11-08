@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   fetchAssessmentAssets,
   createAssessmentAsset,
@@ -17,6 +17,7 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
 }) => {
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [filterScope, setFilterScope] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -29,26 +30,39 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newIdentifier, setNewIdentifier] = useState('');
   const [newType, setNewType] = useState('DOMAIN');
-  const [newScopeStatus, setNewScopeStatus] = useState('IN_SCOPE');
   const [newTags, setNewTags] = useState('');
   const [savingAsset, setSavingAsset] = useState(false);
   const [assetError, setAssetError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadAssets();
-  }, [assessmentId]);
+  // Stale request guard
+  const activeAssessmentRef = useRef(assessmentId);
 
   const loadAssets = async () => {
+    const currentId = assessmentId;
     setLoading(true);
+    setDataError(null);
     try {
-      const data = await fetchAssessmentAssets(assessmentId);
+      const data = await fetchAssessmentAssets(currentId);
+      if (activeAssessmentRef.current !== currentId) return;
       setAssets(data);
-    } catch (err) {
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
       console.error('Failed to load assets:', err);
+      setDataError(err.message || 'Failed to load assets');
     } finally {
-      setLoading(false);
+      if (activeAssessmentRef.current === currentId) {
+        setLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    setDataError(null);
+    setAssetError(null);
+    setValidationResult(null);
+    loadAssets();
+  }, [assessmentId]);
 
   const handleTestScope = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,7 +89,6 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
       await createAssessmentAsset(assessmentId, {
         canonical_identifier: newIdentifier.trim(),
         asset_type: newType,
-        scope_status: newScopeStatus,
         tags: tagsArray,
       });
       setNewIdentifier('');
@@ -152,27 +165,43 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
           </button>
         </form>
 
-        {validationResult && (
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-md)',
-            background: validationResult.is_in_scope ? 'var(--badge-green-bg)' : 'var(--badge-red-bg)',
-            color: validationResult.is_in_scope ? 'var(--badge-green-text)' : 'var(--badge-red-text)',
-            border: `1px solid ${validationResult.is_in_scope ? 'var(--badge-green-border)' : 'var(--badge-red-border)'}`,
-            fontSize: '13px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontWeight: 600 }}>{validationResult.is_in_scope ? 'IN SCOPE' : 'OUT OF SCOPE'}</span>
-              <span>— {validationResult.evaluation_reason}</span>
+        {validationResult && (() => {
+          const outcome = validationResult.outcome || (validationResult.is_in_scope ? 'IN_SCOPE' : 'OUT_OF_SCOPE');
+          const isSuccess = outcome === 'IN_SCOPE';
+          const isWarning = ['SCOPE_UNVERIFIABLE', 'POLICY_VERSION_MISMATCH', 'AUTHORIZATION_EXPIRED'].includes(outcome);
+          const bg = isSuccess ? 'var(--badge-green-bg)' : isWarning ? 'var(--badge-amber-bg, #2A1F0D)' : 'var(--badge-red-bg)';
+          const text = isSuccess ? 'var(--badge-green-text)' : isWarning ? 'var(--badge-amber-text, #FBBF24)' : 'var(--badge-red-text)';
+          const border = isSuccess ? 'var(--badge-green-border)' : isWarning ? 'var(--badge-amber-border, rgba(245, 158, 11, 0.2))' : 'var(--badge-red-border)';
+
+          return (
+            <div style={{
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md)',
+              background: bg,
+              color: text,
+              border: `1px solid ${border}`,
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontWeight: 600 }}>{outcome.replace(/_/g, ' ')}</span>
+                <span>— {validationResult.evaluation_reason || validationResult.reason}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {validationResult.scope_policy_version && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', opacity: 0.85 }}>
+                    Policy: {validationResult.scope_policy_version}
+                  </span>
+                )}
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  Target: {validationResult.target}
+                </span>
+              </div>
             </div>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-              Target: {validationResult.target}
-            </span>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Asset Inventory Section */}
@@ -221,7 +250,7 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
             {assetError && (
               <div style={{ color: 'var(--badge-red-text)', fontSize: '12px' }}>{assetError}</div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', gap: '10px', alignItems: 'center' }}>
               <input
                 type="text"
                 placeholder="Identifier (e.g., example.com, 192.168.1.1, com.app.target)"
@@ -243,15 +272,21 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
                 <option value="SOURCE_REPO">SOURCE_REPO</option>
                 <option value="BINARY">BINARY</option>
               </select>
-              <select
-                value={newScopeStatus}
-                onChange={(e) => setNewScopeStatus(e.target.value)}
-                style={{ padding: '8px 10px', fontSize: '13px', borderRadius: 'var(--radius-md)', background: 'var(--bg-surface)' }}
-              >
-                <option value="IN_SCOPE">IN_SCOPE</option>
-                <option value="OUT_OF_SCOPE">OUT_OF_SCOPE</option>
-                <option value="UNKNOWN">UNKNOWN</option>
-              </select>
+              <div style={{
+                padding: '8px 12px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-surface)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-primary)' }}></span>
+                Authority: ScopeGate Evaluated
+              </div>
             </div>
             <input
               type="text"
@@ -313,6 +348,40 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
           </select>
         </div>
 
+        {/* Error State */}
+        {dataError && (
+          <div
+            role="alert"
+            style={{
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--badge-red-bg)',
+              border: '1px solid var(--badge-red-border)',
+              color: 'var(--badge-red-text)',
+              fontSize: '13px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <span>Error loading assets: {dataError}</span>
+            <button
+              onClick={() => loadAssets()}
+              style={{
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--badge-red-border)',
+                color: 'var(--badge-red-text)',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Asset Table */}
         {loading ? (
           <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
@@ -320,7 +389,7 @@ export const ScopeAssetsTab: React.FC<ScopeAssetsTabProps> = ({
           </div>
         ) : filteredAssets.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)', fontSize: '13px' }}>
-            No assets match current criteria.
+            {dataError ? 'Unable to display assets due to an error.' : 'No assets match current criteria.'}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>

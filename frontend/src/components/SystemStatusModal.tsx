@@ -31,6 +31,9 @@ export const SystemStatusModal: React.FC<SystemStatusModalProps> = ({ status, on
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="system-status-title"
         style={{
           width: '460px',
           maxWidth: '92vw',
@@ -46,12 +49,13 @@ export const SystemStatusModal: React.FC<SystemStatusModalProps> = ({ status, on
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h3 id="system-status-title" style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="ultron-pulse-dot" />
             Ultron System Diagnostics
           </h3>
           <button
             onClick={onClose}
+            aria-label="Close dialog"
             style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '4px' }}
           >
             ✕

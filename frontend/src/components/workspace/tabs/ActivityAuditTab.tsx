@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchAssessmentActivity } from '../../../api';
 import type { AssessmentActivity } from '../../../types';
 
@@ -9,23 +9,35 @@ interface ActivityAuditTabProps {
 export const ActivityAuditTab: React.FC<ActivityAuditTabProps> = ({ assessmentId }) => {
   const [activities, setActivities] = useState<AssessmentActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [filterType, setFilterType] = useState('ALL');
 
-  useEffect(() => {
-    loadActivity();
+  // Stale request guard
+  const activeAssessmentRef = useRef(assessmentId);
+
+  const loadActivity = React.useCallback(async () => {
+    const currentId = assessmentId;
+    setLoading(true);
+    setDataError(null);
+    try {
+      const data = await fetchAssessmentActivity(currentId, 100);
+      if (activeAssessmentRef.current !== currentId) return;
+      setActivities(data);
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
+      console.error('Failed to load activity timeline:', err);
+      setDataError(err.message || 'Failed to load activity timeline');
+    } finally {
+      if (activeAssessmentRef.current === currentId) {
+        setLoading(false);
+      }
+    }
   }, [assessmentId]);
 
-  const loadActivity = async () => {
-    setLoading(true);
-    try {
-      const data = await fetchAssessmentActivity(assessmentId, 100);
-      setActivities(data);
-    } catch (err) {
-      console.error('Failed to load activity timeline:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    loadActivity();
+  }, [loadActivity, assessmentId]);
 
   const filtered = activities.filter((a) => {
     return filterType === 'ALL' || a.event_type === filterType;
@@ -73,6 +85,40 @@ export const ActivityAuditTab: React.FC<ActivityAuditTabProps> = ({ assessmentId
         </select>
       </div>
 
+      {/* Error state */}
+      {dataError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            border: '1px solid var(--badge-red-border)',
+            color: 'var(--badge-red-text)',
+            fontSize: '13px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>Error loading audit timeline: {dataError}</span>
+          <button
+            onClick={() => loadActivity()}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--badge-red-border)',
+              color: 'var(--badge-red-text)',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
           Loading audit events...
@@ -87,7 +133,7 @@ export const ActivityAuditTab: React.FC<ActivityAuditTabProps> = ({ assessmentId
           color: 'var(--text-muted)',
           fontSize: '13px',
         }}>
-          No audit records matching criteria.
+          {dataError ? 'Unable to display audit records due to an error.' : 'No audit records matching criteria.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

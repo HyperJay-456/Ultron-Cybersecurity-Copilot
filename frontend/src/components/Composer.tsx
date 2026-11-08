@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 
 interface ComposerProps {
   onSend: (message: string) => Promise<void>;
+  onStop?: () => Promise<void>;
   loading: boolean;
   hasMessages?: boolean;
 }
@@ -12,8 +13,9 @@ const STARTER_PROMPTS = [
   'Synthesize hypotheses and attack vectors.',
 ];
 
-export const Composer: React.FC<ComposerProps> = ({ onSend, loading, hasMessages = false }) => {
+export const Composer: React.FC<ComposerProps> = ({ onSend, onStop, loading, hasMessages = false }) => {
   const [input, setInput] = useState('');
+  const [stopping, setStopping] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -123,25 +125,70 @@ export const Composer: React.FC<ComposerProps> = ({ onSend, loading, hasMessages
             Enter to send · Shift+Enter for newline
           </span>
 
-          <button
-            onClick={() => handleSubmit()}
-            disabled={!input.trim() || loading}
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              backgroundColor: input.trim() && !loading ? 'var(--accent-primary)' : 'var(--border-subtle)',
-              color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '14px',
-              cursor: input.trim() && !loading ? 'pointer' : 'default',
-              transition: 'background-color 0.15s ease',
-            }}
-          >
-            ↑
-          </button>
+          {loading && onStop ? (
+            <button
+              type="button"
+              onClick={async () => {
+                if (stopping) return;
+                setStopping(true);
+                try {
+                  await onStop();
+                } finally {
+                  setStopping(false);
+                }
+              }}
+              disabled={stopping}
+              aria-label="Stop generation"
+              title="Stop generation"
+              style={{
+                height: '28px',
+                padding: '0 12px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                color: '#EF4444',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: stopping ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '1px',
+                  backgroundColor: '#EF4444',
+                  display: 'inline-block',
+                }}
+              />
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          ) : (
+            <button
+              onClick={() => handleSubmit()}
+              disabled={!input.trim() || loading}
+              aria-label="Send message"
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                backgroundColor: input.trim() && !loading ? 'var(--accent-primary)' : 'var(--border-subtle)',
+                color: '#FFFFFF',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '14px',
+                cursor: input.trim() && !loading ? 'pointer' : 'default',
+                transition: 'background-color 0.15s ease',
+              }}
+            >
+              ↑
+            </button>
+          )}
         </div>
       </div>
     </div>

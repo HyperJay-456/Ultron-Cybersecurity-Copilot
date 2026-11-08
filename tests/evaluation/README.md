@@ -8,3 +8,15 @@ This directory contains the gold-standard VAPT retrieval evaluation dataset for 
   ```bash
   .venv\Scripts\python.exe -m pytest tests/unit/test_vapt_benchmark_dataset.py
   ```
+
+## Batch 3 AI Evaluation & Test Integrity Benchmark
+- `data/eval/batch3/holdout_dataset_ground_truth.json`: 240 versioned adjudicated cybersecurity evaluation cases across 12 families.
+- `data/eval/batch3/holdout_dataset_blinded.json`: Model-facing holdout dataset strictly stripped of labels and rationales.
+- To run Batch 3 suite:
+  ```bash
+  .venv\Scripts\python.exe -m pytest tests/unit/test_batch3_*.py
+  ```
+- To run the deterministic AI evaluation benchmark:
+  ```bash
+  .venv\Scripts\python.exe -m src.eval.batch3_evaluator
+  ```

@@ -345,7 +345,8 @@ def test_m12_24_import_untrusted_cannot_execute_instructions():
             }
         ]
     }"""
-    parsed_items = export_engine.parse_imported_payload(raw_import_json)
+    receiving_ctx = MemoryAccessContext(user_id="researcher_1", tenant_id="tenant_01", assessment_id="ASM-01")
+    parsed_items = export_engine.parse_imported_payload(raw_import_json, receiving_context=receiving_ctx)
     assert len(parsed_items) == 1
     imported_item = parsed_items[0]
 

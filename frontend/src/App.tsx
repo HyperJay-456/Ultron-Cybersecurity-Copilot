@@ -11,7 +11,11 @@ import {
   rejectExperiment,
   renameInvestigation,
   sendMessage,
+  stopInvestigationGeneration,
+  editAndRegeneratePrompt,
   validateExperiment,
+  fetchCurrentUser,
+  logout,
 } from './api';
 import { Composer } from './components/Composer';
 import { ContextDrawer } from './components/ContextDrawer';
@@ -23,20 +27,25 @@ import { SystemStatusModal } from './components/SystemStatusModal';
 import { ImportTrafficModal } from './components/ImportTrafficModal';
 import { AddObservationModal } from './components/AddObservationModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
-import type { ChatMessage, IngestionResult, InvestigationDetail, InvestigationSummary, SystemStatus } from './types';
+import { MemoryKnowledgeTab } from './components/workspace/tabs/MemoryKnowledgeTab';
+import { LoginScreen } from './components/LoginScreen';
+import type { ChatMessage, IngestionResult, InvestigationDetail, InvestigationSummary, SystemStatus, UserSession } from './types';
 
 export const App: React.FC = () => {
-  const getInitialAppMode = (): 'workspace' | 'copilot' => {
+  const getInitialAppMode = (): 'workspace' | 'copilot' | 'knowledge_lab' => {
     const path = window.location.pathname.toLowerCase();
     const hash = window.location.hash.toLowerCase();
     const search = window.location.search.toLowerCase();
+    if (path.includes('/knowledge') || hash.includes('knowledge') || search.includes('mode=knowledge')) {
+      return 'knowledge_lab';
+    }
     if (path.includes('/workspace') || path.includes('/assessment') || hash.includes('workspace') || search.includes('mode=workspace')) {
       return 'workspace';
     }
     return 'copilot';
   };
 
-  const [appMode, setAppMode] = useState<'workspace' | 'copilot'>(getInitialAppMode);
+  const [appMode, setAppMode] = useState<'workspace' | 'copilot' | 'knowledge_lab'>(getInitialAppMode);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<InvestigationDetail | null>(null);
@@ -51,9 +60,44 @@ export const App: React.FC = () => {
   const [showAddObsModal, setShowAddObsModal] = useState(false);
   const [importSummary, setImportSummary] = useState<IngestionResult | null>(null);
 
+  // Authentication & Session State
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [appNotification, setAppNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Theme Management with Persistent Storage
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const stored = localStorage.getItem('ultron-theme');
+      return stored === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
   useEffect(() => {
-    initWorkspace();
-  }, []);
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem('ultron-theme', theme);
+    } catch {
+      // Ignore localStorage restrictions in sandbox
+    }
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  const selectInvestigation = async (id: string) => {
+    setActiveId(id);
+    setImportSummary(null);
+    try {
+      const data = await fetchInvestigation(id);
+      setDetail(data);
+    } catch (err) {
+      console.error(`Failed to load investigation ${id}:`, err);
+    }
+  };
 
   const initWorkspace = async () => {
     try {
@@ -78,14 +122,41 @@ export const App: React.FC = () => {
     }
   };
 
-  const selectInvestigation = async (id: string) => {
-    setActiveId(id);
-    setImportSummary(null);
+  const checkAuth = React.useCallback(async () => {
+    setAuthLoading(true);
     try {
-      const data = await fetchInvestigation(id);
-      setDetail(data);
-    } catch (err) {
-      console.error(`Failed to load investigation ${id}:`, err);
+      const user = await fetchCurrentUser();
+      setSession(user);
+      await initWorkspace();
+    } catch {
+      setSession(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAuth();
+    const handleAuthExpired = () => {
+      setSession(null);
+      setInvestigations([]);
+      setDetail(null);
+    };
+    window.addEventListener('ultron-auth-expired', handleAuthExpired);
+    return () => {
+      window.removeEventListener('ultron-auth-expired', handleAuthExpired);
+    };
+  }, [checkAuth]);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      // Ignore network errors on logout
+    } finally {
+      setSession(null);
+      setInvestigations([]);
+      setDetail(null);
     }
   };
 
@@ -225,8 +296,10 @@ export const App: React.FC = () => {
       const updated = await renameInvestigation(activeId, newName);
       setInvestigations((prev) => prev.map((inv) => (inv.id === activeId ? updated : inv)));
       setDetail((prev) => (prev ? { ...prev, name: updated.name } : prev));
+      setAppNotification({ type: 'success', message: `Investigation renamed to "${updated.name}".` });
     } catch (err: any) {
-      alert(`Failed to rename investigation: ${err.message}`);
+      console.error('Failed to rename investigation:', err);
+      setAppNotification({ type: 'error', message: `Failed to rename investigation: ${err.message}` });
     }
   };
 
@@ -240,8 +313,10 @@ export const App: React.FC = () => {
       setInvestigations((prev) => prev.filter((inv) => inv.id !== activeId));
       setActiveId(null);
       setDetail(null);
+      setAppNotification({ type: 'success', message: 'Investigation deleted successfully.' });
     } catch (err: any) {
-      alert(`Failed to delete investigation: ${err.message}`);
+      console.error('Failed to delete investigation:', err);
+      setAppNotification({ type: 'error', message: `Failed to delete investigation: ${err.message}` });
     }
   };
 
@@ -257,8 +332,10 @@ export const App: React.FC = () => {
       const updatedList = await fetchInvestigations();
       setInvestigations(updatedList);
       selectInvestigation(demoInv.id);
+      setAppNotification({ type: 'success', message: `Demo fixture loaded: "${demoInv.name}".` });
     } catch (err: any) {
-      alert(`Failed to load demo fixture: ${err.message}`);
+      console.error('Failed to load demo fixture:', err);
+      setAppNotification({ type: 'error', message: `Failed to load demo fixture: ${err.message}` });
     }
   };
 
@@ -322,8 +399,186 @@ export const App: React.FC = () => {
     setDrawerOpen(true);
   };
 
+  const handleUpdateMessageContent = (messageId: string, newContent: string, newStatus?: string) => {
+    setDetail((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.id === messageId ? { ...m, content: newContent, ...(newStatus ? { status: newStatus } : {}) } : m
+        ),
+      };
+    });
+  };
+
+  const handleStopGeneration = async () => {
+    if (!activeId) return;
+    try {
+      await stopInvestigationGeneration(activeId);
+      const updated = await fetchInvestigation(activeId);
+      if (updated) {
+        setDetail((prev) => prev ? { ...prev, messages: updated.messages } : prev);
+      }
+    } catch (err) {
+      console.error('Failed to stop generation:', err);
+    }
+  };
+
+  const handleEditPrompt = async (messageId: string, newContent: string) => {
+    if (!activeId) return;
+    setLoadingMessage(true);
+    try {
+      const updatedMessages = await editAndRegeneratePrompt(activeId, messageId, newContent);
+      setDetail((prev) => prev ? { ...prev, messages: updatedMessages } : prev);
+    } catch (err) {
+      console.error('Failed to edit prompt:', err);
+    } finally {
+      setLoadingMessage(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-app)',
+        color: 'var(--text-secondary)',
+        fontSize: '13px',
+        letterSpacing: '0.02em',
+      }}>
+        Verifying operator session...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <LoginScreen
+        onLoginSuccess={(newSession) => {
+          setSession(newSession);
+          initWorkspace();
+        }}
+      />
+    );
+  }
+
   if (appMode === 'workspace') {
-    return <WorkspaceShell onBackToCopilot={() => setAppMode('copilot')} />;
+    return (
+      <WorkspaceShell
+        onBackToCopilot={() => setAppMode('copilot')}
+        onOpenKnowledgeLab={() => setAppMode('knowledge_lab')}
+        currentUser={session}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  if (appMode === 'knowledge_lab') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          width: '100vw',
+          background: 'var(--bg-app)',
+          color: 'var(--text-primary)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Top Application Bar */}
+        <div
+          style={{
+            padding: '8px 20px',
+            borderBottom: '1px solid var(--border-subtle)',
+            background: 'var(--bg-sidebar)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: 800,
+                letterSpacing: '0.06em',
+                fontSize: '13px',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <span style={{ color: 'var(--accent-primary)', textShadow: 'var(--accent-glow)' }}>//</span>
+              ULTRON
+            </span>
+            <span
+              style={{
+                fontSize: '10px',
+                color: 'var(--badge-blue-text)',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                border: '1px solid rgba(59, 130, 246, 0.25)',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                letterSpacing: '0.04em',
+                fontWeight: 600,
+              }}
+            >
+              KNOWLEDGE LAB
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {session && (
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                Operator: <strong style={{ color: 'var(--text-primary)' }}>{session.username}</strong> ({session.role})
+              </span>
+            )}
+            <button
+              onClick={() => setAppMode('copilot')}
+              data-testid="knowledge-lab-back-copilot"
+              style={{
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              ← Copilot Investigations
+            </button>
+            <button
+              onClick={() => setAppMode('workspace')}
+              data-testid="knowledge-lab-open-workspace"
+              style={{
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(225, 29, 72, 0.1)',
+                border: '1px solid rgba(225, 29, 72, 0.3)',
+                color: 'var(--text-primary)',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Assessment Workspace →
+            </button>
+          </div>
+        </div>
+
+        {/* Knowledge Lab Main Pane */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          <MemoryKnowledgeTab assessmentId="GLOBAL" />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -338,6 +593,11 @@ export const App: React.FC = () => {
         onOpenSystemStatus={() => setShowStatusModal(true)}
         systemStatusReady={status?.local_ai === 'READY'}
         onOpenWorkspace={() => setAppMode('workspace')}
+        onOpenKnowledgeLab={() => setAppMode('knowledge_lab')}
+        currentUser={session}
+        onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* Main Workspace Column */}
@@ -352,6 +612,43 @@ export const App: React.FC = () => {
           position: 'relative',
         }}
       >
+        {appNotification && (
+          <div
+            role={appNotification.type === 'error' ? 'alert' : 'status'}
+            aria-live="polite"
+            data-testid="app-notification-banner"
+            style={{
+              padding: '10px 18px',
+              backgroundColor: appNotification.type === 'error' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+              borderBottom: `1px solid ${appNotification.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+              color: appNotification.type === 'error' ? '#ef4444' : '#10b981',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              zIndex: 30,
+              flexShrink: 0,
+            }}
+          >
+            <span>{appNotification.message}</span>
+            <button
+              onClick={() => setAppNotification(null)}
+              aria-label="Dismiss notification"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'inherit',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '15px',
+                padding: '2px 8px',
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {detail ? (
           <>
             <InvestigationHeader
@@ -386,10 +683,13 @@ export const App: React.FC = () => {
               onExecuteExperiment={handleExecuteExperiment}
               onOpenDrawer={openDrawerWithTab}
               onSendFollowUp={handleSendMessage}
+              onUpdateMessageContent={handleUpdateMessageContent}
+              onEditPrompt={handleEditPrompt}
             />
 
             <Composer
               onSend={handleSendMessage}
+              onStop={handleStopGeneration}
               loading={loadingMessage}
               hasMessages={Boolean(detail.messages && detail.messages.length > 0)}
             />

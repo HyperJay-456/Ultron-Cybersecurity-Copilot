@@ -9,6 +9,8 @@ Validates:
 
 import os
 import pytest
+
+pytestmark = [pytest.mark.live_ollama]
 from src.eval.ablation import AblationFramework
 from src.eval.run_pilot_ablation import get_pilot_scenarios
 from src.eval.scorer import DeterministicScorer

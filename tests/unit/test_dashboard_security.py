@@ -243,7 +243,8 @@ def test_xss_prevention_in_dashboard_ui(dashboard_env):
         assert hyp_id > 0
 
     # Verify JSON API serializes payloads safely as data, not unescaped raw HTML inside index page
-    res_api = client.get("/api/hypotheses")
+    obs_sess = dashboard_env["auth_mgr"].create_session("observer_reader", DashboardRole.OBSERVER)
+    res_api = client.get("/api/hypotheses", headers={"Authorization": f"Bearer {obs_sess.token}"})
     assert res_api.status_code == 200
     items = res_api.json()
     assert any("<script>" in item.get("reasoning_summary", "") for item in items)

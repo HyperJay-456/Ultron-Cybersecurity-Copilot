@@ -245,6 +245,7 @@ def test_invariant_7_insufficient_evidence_when_required_evidence_absent(tmp_pat
     assert "distinct_identity_pair" in result.reason
 
 
+@pytest.mark.live_ollama
 def test_live_ollama_inference(tmp_path: Path):
     """
     Live inference test against locally serving Ollama model.

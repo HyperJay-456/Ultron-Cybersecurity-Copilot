@@ -427,6 +427,7 @@ def test_12_confirmation_authority_remaining_outside_reasoning_engine():
 # Requirement 13: Lightweight Live Ollama Sanity Check
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_ollama
 @pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_OLLAMA") == "1",
     reason="Live Ollama execution skipped by environment flag",

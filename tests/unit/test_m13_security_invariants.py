@@ -530,6 +530,7 @@ def test_m13_21_plane_b_no_autonomous_execution(fresh_workspace):
         falsification_condition="401",
         negative_control="baseline",
     )
+    mgr.approve_experiment(exp.experiment_id, "HUMAN_OPERATOR")
     updated = mgr.import_experiment_result(exp.experiment_id, {"status_code": 200}, executed_by="RESEARCHER_MANUAL")
     assert updated.executed_by == "RESEARCHER_MANUAL"
 

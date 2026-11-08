@@ -202,6 +202,9 @@ def test_m13_workspace_end_to_end_lifecycle(workspace_stack):
     assert exp.experiment_id.startswith("EXP-")
     assert exp.status.value == "PROPOSED"
 
+    # Human approval required before importing results
+    cont.experiment_engine.approve_experiment(exp.experiment_id, approver_name="SECURITY_LEAD")
+
     # Human researcher executes controlled experiment and imports results
     exp_result = mgr.import_experiment_result(
         experiment_id=exp.experiment_id,

@@ -43,7 +43,14 @@ from src.scope.gate import ScopeGate, canonicalize_host
 from src.scope.models import ScopePolicy, ToolPolicy
 
 from src.evidence.ingestion.pipeline import EvidenceIngestionPipeline
+from src.knowledge.canonical_models import AuthorityLevel
+from src.knowledge.ingestion_engine import IngestionStatus, KnowledgeIngestionEngine
 from src.knowledge.knowledge_orchestrator import CybersecurityKnowledgeOrchestrator
+from src.knowledge.store import VaptKnowledgeStore
+from src.knowledge.retriever import OnnxVectorFts5Retriever
+from src.knowledge.knowledge_graph import RelationalKnowledgeGraph
+from src.knowledge.graph_extractor import KnowledgeGraphExtractor
+from src.engine.runner import OllamaRunner
 from src.response.generator import LongResponseEngine
 from src.response.stream import CancellationToken
 from src.response.models import (
@@ -53,6 +60,8 @@ from src.response.models import (
     ResponseVersion,
     ResponseStatus,
 )
+from src.response.citation import CitationContext
+from src.response.routing import TaskType
 from src.dashboard.models import (
     ChatMessage,
     CreateInvestigationRequest,
@@ -239,7 +248,32 @@ class WorkspaceService:
             ollama_client=self.cascade_orchestrator.ollama_client,
         )
         self._active_cancellations: Dict[str, CancellationToken] = {}
-        self.knowledge_orchestrator = CybersecurityKnowledgeOrchestrator()
+        self.knowledge_store = VaptKnowledgeStore(Path("data/knowledge/vapt_knowledge.db"))
+        self.knowledge_ingestion_engine = KnowledgeIngestionEngine(self.knowledge_store)
+        self.knowledge_graph = RelationalKnowledgeGraph(Path("data/knowledge/knowledge_graph.db"))
+        try:
+            self.base_knowledge_retriever = OnnxVectorFts5Retriever(
+                db_path=Path("data/knowledge/vapt_knowledge.db"),
+            )
+        except Exception as e:
+            logger.debug(f"OnnxVectorFts5Retriever init note: {e}")
+            self.base_knowledge_retriever = None
+
+        self.knowledge_orchestrator = CybersecurityKnowledgeOrchestrator(
+            knowledge_store=self.knowledge_store,
+            knowledge_graph=self.knowledge_graph,
+            base_retriever=self.base_knowledge_retriever,
+        )
+        self.knowledge_graph_extractor = KnowledgeGraphExtractor(
+            ollama_runner=OllamaRunner(model_name="qwen2.5-coder:7b"),
+            default_model="qwen2.5-coder:7b",
+            timeout_seconds=120.0,
+        )
+        from src.knowledge.job_manager import IngestionJobManager
+        self.knowledge_job_manager = IngestionJobManager(
+            knowledge_store=self.knowledge_store,
+            ingestion_engine=self.knowledge_ingestion_engine,
+        )
 
         # M12 Security Research Memory Subsystem
         self.memory_persistence = MemoryPersistence(self.db)
@@ -786,11 +820,14 @@ class WorkspaceService:
             updated_at=inv["updated_at"],
         )
 
-    def get_messages(self, inv_id: str, limit: Optional[int] = None) -> List[ChatMessage]:
+    def get_messages(self, inv_id: str, limit: Optional[int] = None, include_superseded: bool = False) -> List[ChatMessage]:
         """Retrieve conversation messages for an investigation."""
         db_msgs = self.db.get_messages(inv_id, limit=limit)
         chat_messages = []
         for m in db_msgs:
+            if not include_superseded and m.get("status") == "SUPERSEDED":
+                continue
+
             stype = StructuredCardType.NONE
             if m.get("structured_type"):
                 try:
@@ -979,7 +1016,12 @@ class WorkspaceService:
         return True
 
     def _handle_conversational_query(
-        self, inv: Dict[str, Any], content: str
+        self,
+        inv: Dict[str, Any],
+        content: str,
+        cancel_token: Optional[CancellationToken] = None,
+        response_id: Optional[str] = None,
+        explicit_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[str, Optional[str], Optional[str], Optional[str], str]:
         """
         Generate conversational AI response using local LLM or authoritative knowledge engine.
@@ -1001,9 +1043,11 @@ class WorkspaceService:
             )
 
         # Retrieve bounded canonical history (last 10 messages)
-        db_messages = self.db.get_messages(inv["id"], limit=10)
+        db_messages = explicit_history if explicit_history is not None else self.db.get_messages(inv["id"], limit=10)
         history_turns = []
         for m in db_messages:
+            if m.get("status") == "SUPERSEDED":
+                continue
             if m["sender"] in ("user", "assistant"):
                 role = "User" if m["sender"] == "user" else "Assistant"
                 if m["sender"] == "user" and m["content"].strip() == content.strip():
@@ -1012,7 +1056,7 @@ class WorkspaceService:
 
         # Conversational memory inquiry check
         if any(phrase in q_lower for phrase in ("what did i ask", "previous question", "what was my last question", "what did i say before")):
-            prior_user_msgs = [m for m in db_messages if m["sender"] == "user" and m["content"].strip() != content.strip()]
+            prior_user_msgs = [m for m in db_messages if m["sender"] == "user" and m["content"].strip() != content.strip() and m.get("status") != "SUPERSEDED"]
             if prior_user_msgs:
                 last_q = prior_user_msgs[-1]["content"]
                 return f"Earlier in this conversation, you asked: \"{last_q}\".", "local_assistant", None, None, "COMPLETED"
@@ -1033,8 +1077,9 @@ class WorkspaceService:
                 "COMPLETED",
             )
 
-        # If Ollama local inference is running, run local LLM generation
-        if self.cascade_orchestrator.ollama_client.is_available():
+        # If Ollama local inference is running or custom LLM caller is registered, run response engine
+        has_custom_llm = bool(getattr(self.response_engine, "custom_llm_caller", None))
+        if self.cascade_orchestrator.ollama_client.is_available() or has_custom_llm:
             try:
                 system_prompt = (
                     "You are Ultron, a rigorous local security research assistant. "
@@ -1051,12 +1096,32 @@ class WorkspaceService:
                 if history_turns:
                     history_context = "Conversation History:\n" + "\n".join(history_turns) + "\n\n"
 
-                # Check if knowledge RAG context can augment the prompt
+                # Check if knowledge RAG context can augment the prompt from user-managed ingested sources (Req 1.3 & 1.4)
                 knowledge_context = ""
+                has_verified_corpus_evidence = False
+                ans = None
                 try:
                     ans = self.knowledge_orchestrator.answer_query(content)
                     if ans and ans.claims:
-                        knowledge_context = "Authoritative Security Knowledge Context:\n" + "\n".join(f"- {c.statement}" for c in ans.claims[:6]) + "\n\n"
+                        # Verify if any citations genuinely resolve to persisted, authorized user-managed sources
+                        verified_citations = []
+                        for cit in (ans.citations or []):
+                            cid = getattr(cit, "chunk_id", None) or (cit.get("chunk_id") if isinstance(cit, dict) else None)
+                            if cid and self.knowledge_store:
+                                chk = self.knowledge_store.get_chunk(cid)
+                                if chk:
+                                    doc_id = getattr(chk, "document_id", "")
+                                    sid = doc_id.replace("DOC-", "")
+                                    src = (
+                                        self.knowledge_store.get_source(sid)
+                                        or self.knowledge_store.get_source(f"SRC-{sid}")
+                                        or self.knowledge_store.get_source(doc_id)
+                                    )
+                                    if src and src.get("status") in ("INDEXED", "PARTIAL", "SUCCESS", "ACTIVE"):
+                                        verified_citations.append(cit)
+                        if verified_citations:
+                            has_verified_corpus_evidence = True
+                            knowledge_context = "Authoritative Ingested Knowledge Context:\n" + "\n".join(f"- {c.text}" for c in ans.claims[:6]) + "\n\n"
                 except Exception as ke:
                     logger.debug(f"Knowledge augmentation note: {ke}")
 
@@ -1066,16 +1131,104 @@ class WorkspaceService:
                 if history_context:
                     policy_context += f"\n\n{history_context}"
 
+                citation_ctx = None
+                try:
+                    obs_list = self.db.get_investigation_observations(inv["id"])
+                    valid_obs = {o["id"] for o in obs_list if "id" in o}
+                    foreign_obs = set()
+                    if hasattr(self.db, "get_foreign_observation_ids"):
+                        foreign_obs = self.db.get_foreign_observation_ids(inv["id"])
+                    citation_ctx = CitationContext(
+                        allowed_observation_ids=valid_obs,
+                        foreign_observation_ids=foreign_obs,
+                        assessment_id=inv.get("assessment_id") or inv["id"],
+                        investigation_id=inv["id"],
+                    )
+                except Exception as ce:
+                    logger.debug(f"Citation context construction note: {ce}")
+
                 session = self.response_engine.generate_response(
                     investigation_id=inv["id"],
                     user_prompt=content,
                     system_policy=policy_context,
                     model_name="qwen2.5-coder:7b",
                     auto_continue=True,
+                    assessment_id=inv.get("assessment_id") or inv["id"],
+                    citation_context=citation_ctx,
+                    task_type=TaskType.CONVERSATIONAL_QA,
+                    cancellation_token=cancel_token,
+                    response_id=response_id,
                 )
                 text = session.final_content.strip()
+                model_used = session.model or "qwen2.5-coder:7b"
+
+                # If this cybersecurity query lacked sufficient corpus evidence and relied on model fallback,
+                # attach the explicit disclaimer banner (Phase B / Phase C requirement)
+                is_cyber_query = (
+                    bool(ans and ans.sufficiency_status != "OUT_OF_DOMAIN")
+                    or any(k in q_lower for k in ("owasp", "oswap", "vulnerability", "cwe-", "cve-", "exploit", "attack", "injection", "idor", "bola", "xss", "ssrf"))
+                )
+                if is_cyber_query and not has_verified_corpus_evidence and text:
+                    fallback_banner = (
+                        "> ⚠️ **General model knowledge — not verified against ingested sources**\n"
+                        "> The local knowledge corpus does not contain sufficient ingested documentation for this topic. "
+                        "The following explanation is generated from general model knowledge and has not been verified against authoritative ingested sources.\n\n"
+                    )
+                    if not text.startswith("> ⚠️ **General model knowledge"):
+                        text = fallback_banner + text
+
+                if text and session.status in (ResponseStatus.COMPLETED, ResponseStatus.MODEL_STOPPED):
+                    stat_val = session.status.value if hasattr(session.status, "value") else str(session.status)
+                    return text, model_used, None, session.response_id, stat_val
+                if session.status == ResponseStatus.USER_STOPPED or session.termination_reason == GenerationTermination.CLIENT_ABORT:
+                    return (
+                        text or "Generation stopped by user.",
+                        model_used,
+                        None,
+                        session.response_id,
+                        "USER_STOPPED",
+                    )
+                if session.status == ResponseStatus.TOKEN_LIMIT:
+                    return (
+                        text,
+                        model_used,
+                        None,
+                        session.response_id,
+                        "TOKEN_LIMIT",
+                    )
+                if session.status == ResponseStatus.SERVICE_UNAVAILABLE or session.termination_reason == GenerationTermination.DAEMON_UNAVAILABLE:
+                    return (
+                        "Local AI model daemon (Ollama) is unavailable or the requested model is not installed. "
+                        "Please verify Ollama is running.",
+                        "local_assistant",
+                        None,
+                        session.response_id,
+                        "SERVICE_UNAVAILABLE",
+                    )
+                if session.status == ResponseStatus.TIMEOUT or session.termination_reason == GenerationTermination.TIMEOUT_ABORT:
+                    return (
+                        "The local model inference request timed out. Local Ollama is running and reachable, "
+                        "but generating this response exceeded the local hardware latency limit. "
+                        "Please re-issue the question or retry.",
+                        "local_assistant",
+                        None,
+                        session.response_id,
+                        "TIMEOUT",
+                    )
+                if session.status == ResponseStatus.VALIDATION_FAILED:
+                    return (
+                        text or "Response validation failed against authoritative citation and safety boundaries.",
+                        model_used,
+                        None,
+                        session.response_id,
+                        "VALIDATION_FAILED",
+                    )
                 if text:
-                    return text, "qwen2.5-coder:7b", None, session.response_id, "COMPLETED"
+                    stat_val = session.status.value if hasattr(session.status, "value") else str(session.status)
+                    return text, model_used, None, session.response_id, stat_val
+            except AttributeError:
+                # Critical Fix A invariant: Do NOT silently catch programming/attribute errors to conceal task-type bugs
+                raise
             except Exception as e:
                 logger.warning(f"Conversational LLM call fallback: {e}")
 
@@ -1465,24 +1618,52 @@ class WorkspaceService:
             }
             self.db.insert_message(user_msg_record)
 
+        # Check for existing assistant message paired with this user message (retry scenario)
+        existing_asst_msg = None
+        if existing_msg:
+            user_seq = existing_msg.get("sequence_number")
+            if user_seq is not None:
+                all_msgs = self.db.get_messages(inv_id)
+                for m in all_msgs:
+                    if m.get("sender") == "assistant" and m.get("sequence_number") == user_seq + 1:
+                        existing_asst_msg = m
+                        break
+
         q_lower = content.lower().strip()
         is_conversational = self._is_conversational_query(q_lower)
 
         if is_conversational:
-            conv_res = self._handle_conversational_query(inv, redacted_user_content)
-            if len(conv_res) == 5:
-                reply_text, model_name, model_digest, response_id, status = conv_res
-            elif len(conv_res) == 4:
-                reply_text, model_name, model_digest, response_id = conv_res
-                status = "COMPLETED"
-            else:
-                reply_text, model_name, model_digest = conv_res
-                response_id = None
-                status = "COMPLETED"
+            cancel_token = CancellationToken()
+            resp_gen_id = f"RESP-{secrets_token_hex()[:6].upper()}"
+            self._active_cancellations[resp_gen_id] = cancel_token
+            self._active_cancellations[inv_id] = cancel_token
+            try:
+                conv_res = self._handle_conversational_query(
+                    inv,
+                    redacted_user_content,
+                    cancel_token=cancel_token,
+                    response_id=resp_gen_id,
+                )
+                if len(conv_res) == 5:
+                    reply_text, model_name, model_digest, response_id, status = conv_res
+                elif len(conv_res) == 4:
+                    reply_text, model_name, model_digest, response_id = conv_res
+                    status = "COMPLETED"
+                else:
+                    reply_text, model_name, model_digest = conv_res
+                    response_id = resp_gen_id
+                    status = "COMPLETED"
+            finally:
+                self._active_cancellations.pop(resp_gen_id, None)
+                self._active_cancellations.pop(inv_id, None)
 
             redacted_reply = self.vault.redact_text(reply_text)
-            resp_id = f"MSG-{secrets_token_hex()[:6].upper()}"
-            asst_seq = self.db.get_next_sequence_number(inv_id)
+            if existing_asst_msg:
+                resp_id = existing_asst_msg["id"]
+                asst_seq = existing_asst_msg["sequence_number"]
+            else:
+                resp_id = f"MSG-{secrets_token_hex()[:6].upper()}"
+                asst_seq = self.db.get_next_sequence_number(inv_id)
             resp_now = datetime_now_iso()
             asst_msg_record = {
                 "id": resp_id,
@@ -1570,6 +1751,14 @@ class WorkspaceService:
             self._investigations[inv_id]["evidence_count"] = self.db.get_observation_count(inv_id)
             self._investigations[inv_id]["updated_at"] = datetime_now_iso()
 
+        self.audit_logger.log_event(
+            event_type="TRAFFIC_IMPORTED",
+            actor="local_researcher",
+            subject_id=inv_id,
+            details={"format": req.format, "investigation_id": inv_id},
+            investigation_id=inv_id,
+        )
+
         return result.model_dump()
 
     def add_manual_observation(self, inv_id: str, req: ManualObservationRequest) -> Dict[str, Any]:
@@ -1589,6 +1778,14 @@ class WorkspaceService:
         if inv_id in self._investigations:
             self._investigations[inv_id]["evidence_count"] = self.db.get_observation_count(inv_id)
             self._investigations[inv_id]["updated_at"] = datetime_now_iso()
+
+        self.audit_logger.log_event(
+            event_type="OBSERVATION_RECORDED",
+            actor="local_researcher",
+            subject_id=inv_id,
+            details={"path": req.path, "status_code": req.status_code, "investigation_id": inv_id},
+            investigation_id=inv_id,
+        )
 
         return result.model_dump()
 
@@ -1793,6 +1990,7 @@ class WorkspaceService:
         exp["approval_id"] = approval_id
         exp["status"] = "APPROVED"
 
+        inv_id = exp["investigation_id"]
         self.audit_logger.log_event(
             event_type="EXPERIMENT_APPROVED",
             actor=req.actor,
@@ -1801,11 +1999,12 @@ class WorkspaceService:
                 "approval_id": approval_id,
                 "descriptor_digest": descriptor_digest,
                 "safety_acknowledged": req.safety_acknowledged,
+                "investigation_id": inv_id,
             },
+            investigation_id=inv_id,
         )
 
         # Append confirmation message to the investigation conversation
-        inv_id = exp["investigation_id"]
         appr_msg = ChatMessage(
             id=f"MSG-{secrets_token_hex()[:6].upper()}",
             investigation_id=inv_id,
@@ -1843,7 +2042,8 @@ class WorkspaceService:
             event_type="EXPERIMENT_REJECTED",
             actor=actor,
             subject_id=exp_id,
-            details={"reason": reason},
+            details={"reason": reason, "investigation_id": inv_id},
+            investigation_id=inv_id,
         )
 
         msg = ChatMessage(
@@ -2035,23 +2235,48 @@ class WorkspaceService:
         """Fetch historical generation versions for a response."""
         return self.response_engine.persistence.get_versions(response_id)
 
-    def stop_generation(self, response_id: str, reason: str = "User stopped generation") -> bool:
-        """Trigger cancellation token to halt in-flight response generation immediately."""
-        token = self._active_cancellations.get(response_id)
+    def stop_generation(self, identifier: str, reason: str = "User stopped generation") -> bool:
+        """Trigger cancellation token to halt in-flight response generation immediately.
+        Accepts either response_id (RESP-...) or investigation_id (INV-...)."""
+        token = self._active_cancellations.get(identifier)
         if token:
             token.cancel(reason=reason)
+            # Synchronize database records if response session exists
+            if identifier.startswith("RESP-"):
+                msg = self.db.get_message_by_response_id(identifier)
+                if msg:
+                    self.db.update_message(msg["id"], {"status": "USER_STOPPED"})
+            else:
+                # If identifier is inv_id, update any in-flight messages
+                all_msgs = self.db.get_messages(identifier)
+                for m in reversed(all_msgs):
+                    if m.get("sender") == "assistant" and m.get("status") in ("GENERATING", "CONTINUING"):
+                        self.db.update_message(m["id"], {"status": "USER_STOPPED"})
+                        break
             return True
-        session = self.response_engine.persistence.get_session(response_id)
-        if session and session.status in (ResponseStatus.GENERATING, ResponseStatus.CONTINUING):
-            self.response_engine.persistence.update_session(
-                response_id=response_id,
-                status=ResponseStatus.USER_STOPPED,
-                final_content=session.final_content,
-                cumulative_tokens=session.cumulative_tokens,
-                termination_reason=GenerationTermination.CLIENT_ABORT,
-                completed_at=datetime_now_iso(),
-            )
-            return True
+
+        if identifier.startswith("RESP-"):
+            session = self.response_engine.persistence.get_session(identifier)
+            if session and session.status in (ResponseStatus.GENERATING, ResponseStatus.CONTINUING):
+                self.response_engine.persistence.update_session(
+                    response_id=identifier,
+                    status=ResponseStatus.USER_STOPPED,
+                    final_content=session.final_content,
+                    cumulative_tokens=session.cumulative_tokens,
+                    termination_reason=GenerationTermination.CLIENT_ABORT,
+                    completed_at=datetime_now_iso(),
+                )
+                msg = self.db.get_message_by_response_id(identifier)
+                if msg:
+                    self.db.update_message(msg["id"], {"status": "USER_STOPPED"})
+                return True
+        else:
+            # Identifier is investigation_id - cancel any in-flight response for this investigation
+            all_msgs = self.db.get_messages(identifier)
+            for m in reversed(all_msgs):
+                resp_id = m.get("response_id")
+                if resp_id and m.get("status") in ("GENERATING", "CONTINUING"):
+                    return self.stop_generation(resp_id, reason=reason)
         return False
 
     def continue_response(self, response_id: str, custom_directive: Optional[str] = None) -> ResponseSession:
@@ -2059,8 +2284,152 @@ class WorkspaceService:
         session = self.response_engine.persistence.get_session(response_id)
         if not session:
             raise ValueError(f"Response session '{response_id}' not found")
-        prompt = custom_directive or "Continue the previous analysis directly from the interruption point."
-        return self.response_engine.continue_response(response_id=response_id, user_prompt=prompt)
+
+        cancel_token = CancellationToken()
+        self._active_cancellations[response_id] = cancel_token
+        inv_id = session.investigation_id
+        if inv_id:
+            self._active_cancellations[inv_id] = cancel_token
+
+        try:
+            prompt = custom_directive or "Continue the previous analysis directly from the interruption point."
+            new_session = self.response_engine.continue_response(
+                response_id=response_id,
+                user_prompt=prompt,
+                cancellation_token=cancel_token,
+            )
+            # Synchronize conversation_messages in SQLite
+            msg = self.db.get_message_by_response_id(response_id)
+            if msg:
+                stat_val = new_session.status.value if hasattr(new_session.status, "value") else str(new_session.status)
+                self.db.update_message(
+                    msg["id"],
+                    {
+                        "content": self.vault.redact_text(new_session.final_content),
+                        "status": stat_val,
+                    },
+                )
+            return new_session
+        finally:
+            self._active_cancellations.pop(response_id, None)
+            if inv_id:
+                self._active_cancellations.pop(inv_id, None)
+
+    def edit_and_regenerate_message(
+        self,
+        inv_id: str,
+        message_id: str,
+        new_content: str,
+    ) -> List[ChatMessage]:
+        """
+        Edit a previously submitted user prompt and regenerate its response.
+        Safely stops any in-flight generation, updates user prompt, supersedes subsequent turns
+        if an earlier turn is edited, and runs generation through the production pipeline.
+        """
+        inv = self.db.get_investigation(inv_id)
+        if not inv:
+            inv = self._investigations.get(inv_id)
+            if not inv:
+                raise ValueError(f"Investigation {inv_id} not found")
+
+        # 1. Verify target message exists and is a user message
+        target_msg = self.db.get_message(message_id)
+        if not target_msg or target_msg.get("sender") != "user":
+            raise ValueError(f"Message {message_id} is not an editable user prompt")
+        if target_msg.get("investigation_id") != inv_id:
+            raise ValueError(f"Message {message_id} does not belong to investigation {inv_id}")
+
+        # 2. Stop any active generation in this investigation before regenerating
+        self.stop_generation(inv_id, reason="Superseded by edited prompt")
+
+        # 3. Redact new content
+        redacted_new_content = self.vault.redact_text(new_content)
+
+        # 4. Update the user message in SQLite with the new content
+        self.db.update_message(message_id, {"content": redacted_new_content})
+
+        user_seq = target_msg.get("sequence_number")
+
+        # 5. Find the paired assistant message immediately following this user message
+        paired_asst = self.db.get_paired_assistant_message(message_id)
+
+        # 6. Check if there are messages AFTER the paired assistant message (i.e. editing an earlier turn)
+        # If earlier turn is edited, mark subsequent turns after the paired assistant message as SUPERSEDED
+        if paired_asst and paired_asst.get("sequence_number") is not None:
+            self.db.supersede_messages_after(inv_id, paired_asst["sequence_number"])
+
+        # 7. Execute production response generation with preceding history up to this turn
+        preceding_messages = []
+        if user_seq is not None:
+            all_msgs = self.db.get_messages(inv_id)
+            preceding_messages = [m for m in all_msgs if (m.get("sequence_number") or 0) < user_seq and m.get("status") != "SUPERSEDED"]
+
+        # Run conversational query with preceding history
+        cancel_token = CancellationToken()
+        new_response_id = f"RESP-{secrets_token_hex()[:6].upper()}"
+        self._active_cancellations[new_response_id] = cancel_token
+        self._active_cancellations[inv_id] = cancel_token
+
+        try:
+            conv_res = self._handle_conversational_query(
+                inv,
+                redacted_new_content,
+                cancel_token=cancel_token,
+                response_id=new_response_id,
+                explicit_history=preceding_messages,
+            )
+            if len(conv_res) == 5:
+                reply_text, model_name, model_digest, actual_resp_id, status = conv_res
+            elif len(conv_res) == 4:
+                reply_text, model_name, model_digest, actual_resp_id = conv_res
+                status = "COMPLETED"
+            else:
+                reply_text, model_name, model_digest = conv_res
+                actual_resp_id = new_response_id
+                status = "COMPLETED"
+
+            redacted_reply = self.vault.redact_text(reply_text)
+            resp_now = datetime_now_iso()
+
+            # 8. Update or create the paired assistant message
+            if paired_asst:
+                asst_id = paired_asst["id"]
+                self.db.update_message(
+                    asst_id,
+                    {
+                        "content": redacted_reply,
+                        "model_name": model_name,
+                        "model_digest": model_digest,
+                        "response_id": actual_resp_id,
+                        "status": status,
+                    },
+                )
+            else:
+                asst_id = f"MSG-{secrets_token_hex()[:6].upper()}"
+                asst_seq = (user_seq or 1) + 1
+                asst_msg_record = {
+                    "id": asst_id,
+                    "investigation_id": inv_id,
+                    "sequence_number": asst_seq,
+                    "sender": "assistant",
+                    "content": redacted_reply,
+                    "structured_type": StructuredCardType.NONE.value,
+                    "structured_data": None,
+                    "delivery_status": "delivered",
+                    "cascade_trace_id": None,
+                    "model_name": model_name,
+                    "model_digest": model_digest,
+                    "response_id": actual_resp_id,
+                    "status": status,
+                    "created_at": resp_now,
+                }
+                self.db.insert_message(asst_msg_record)
+
+            # Return updated active conversation messages
+            return self.get_messages(inv_id)
+        finally:
+            self._active_cancellations.pop(new_response_id, None)
+            self._active_cancellations.pop(inv_id, None)
 
     def regenerate_response(self, response_id: str, temperature: float = 0.7) -> ResponseSession:
         """Regenerate answer from scratch, saving a new version without deleting previous versions."""
@@ -2154,7 +2523,7 @@ class WorkspaceService:
             namespace=MemoryNamespace(request.namespace),
             owner_id=ctx.user_id,
             tenant_id=ctx.tenant_id,
-            assessment_id=request.assessment_id or ctx.assessment_id,
+            assessment_id=ctx.assessment_id or request.assessment_id,
             source_type=MemorySourceType(request.source_type),
             epistemic_status=EpistemicStatus(request.epistemic_status),
             authority_level=MemoryAuthority(request.authority_level),
@@ -2393,6 +2762,531 @@ class WorkspaceService:
     def get_memory_metrics(self) -> Dict[str, Any]:
         """Returns structured memory observability telemetry."""
         return GLOBAL_MEMORY_TELEMETRY.get_metrics_snapshot()
+
+    # -------------------------------------------------------------------------
+    # Knowledge Source Intake & Ingestion Methods
+    # -------------------------------------------------------------------------
+
+    def list_knowledge_sources(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lists registered knowledge sources with processing state and counts."""
+        return self.knowledge_ingestion_engine.list_sources(status=status)
+
+    def get_knowledge_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches details of a registered knowledge source."""
+        return self.knowledge_ingestion_engine.get_source(source_id)
+
+    def import_local_knowledge_source(
+        self,
+        relative_path: str,
+        title: Optional[str] = None,
+        authority_level: str = "USER_OWNED",
+        tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Validates directory containment and ingests a local file from data/knowledge/imports."""
+        auth_level = getattr(AuthorityLevel, authority_level.upper(), AuthorityLevel.USER_OWNED)
+        return self.knowledge_ingestion_engine.import_from_local_path(
+            relative_or_absolute_path=relative_path,
+            title=title,
+            authority_level=auth_level,
+            tags=tags,
+        )
+
+    def ingest_knowledge_bytes(
+        self,
+        content_bytes: bytes,
+        filename: str,
+        title: Optional[str] = None,
+        authority_level: str = "USER_OWNED",
+        tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Ingests raw file bytes (PDF, Markdown, text)."""
+        auth_level = getattr(AuthorityLevel, authority_level.upper(), AuthorityLevel.USER_OWNED)
+        return self.knowledge_ingestion_engine.ingest_bytes(
+            content_bytes=content_bytes,
+            filename=filename,
+            title=title,
+            authority_level=auth_level,
+            tags=tags,
+        )
+
+    def deactivate_knowledge_source(self, source_id: str) -> Dict[str, Any]:
+        """Deactivates a knowledge source and purges its chunks from active retrieval."""
+        return self.knowledge_ingestion_engine.deactivate_source(source_id)
+
+    def retry_knowledge_source(self, source_id: str) -> Dict[str, Any]:
+        """Retries a failed or partial knowledge source ingestion."""
+        source = self.get_knowledge_source(source_id)
+        if not source:
+            raise ValueError(f"Source '{source_id}' not found")
+        filename = source.get("filename", "")
+        import_root = getattr(self.knowledge_ingestion_engine, "import_root", Path("data/knowledge/imports"))
+        import_path = import_root / filename
+        if import_path.exists():
+            doc_id = f"DOC-{source_id}"
+            self.knowledge_ingestion_engine.delete_document(doc_id)
+            return self.knowledge_ingestion_engine.ingest_file(
+                file_path=import_path,
+                source_id=source_id,
+                title=source.get("title"),
+            )
+        else:
+            raise FileNotFoundError(f"Cannot retry source '{source_id}': original file '{filename}' not found in {import_root}")
+
+    def extract_source_knowledge_graph(
+        self,
+        source_id: str,
+        max_chunks: Optional[int] = None,
+        force: bool = False,
+        model_name: Optional[str] = None,
+        target_chunk_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Executes bounded, provenance-preserving knowledge graph extraction
+        for all (or limited / failed) chunks of an ingested knowledge source.
+        Supports bounded per-chunk retries, partial completion, and chat priority yielding.
+        """
+        source = self.get_knowledge_source(source_id)
+        if not source:
+            raise ValueError(f"Knowledge source '{source_id}' not found")
+
+        status = source.get("status", "")
+        if status in ("DEACTIVATED", "FAILED", "QUARANTINED"):
+            raise ValueError(
+                f"Cannot extract knowledge graph for source '{source_id}' with status '{status}'"
+            )
+
+        doc_id = f"DOC-{source_id}"
+        all_chunks = self.knowledge_store.get_chunks_for_document(doc_id)
+        if not all_chunks:
+            return {
+                "status": "EMPTY",
+                "source_id": source_id,
+                "total_chunks": 0,
+                "processed_chunks": 0,
+                "skipped_chunks": 0,
+                "failed_chunks": 0,
+                "entities_persisted": 0,
+                "edges_persisted": 0,
+                "source_supported_count": 0,
+                "inferred_count": 0,
+                "rejected_count": 0,
+                "message": f"No chunks available for document '{doc_id}'",
+            }
+
+        # Filter chunks if target_chunk_ids is supplied (e.g. for retry_failed_knowledge_graph)
+        if target_chunk_ids is not None:
+            target_ids_set = set(target_chunk_ids)
+            chunks = [c for c in all_chunks if c.chunk_id in target_ids_set]
+        else:
+            chunks = all_chunks
+
+        target_chunks = chunks[:max_chunks] if max_chunks is not None else chunks
+
+        processed_count = 0
+        skipped_count = 0
+        failed_count = 0
+        entities_persisted = 0
+        edges_persisted = 0
+        source_supported_count = 0
+        inferred_count = 0
+        rejected_count = 0
+        errors: List[str] = []
+
+        active_model = model_name or self.knowledge_graph_extractor.default_model
+
+        # Fast-fail check: verify local AI availability if using OllamaRunner directly without custom caller
+        runner = getattr(self.knowledge_graph_extractor, "ollama_runner", None)
+        if runner and hasattr(runner, "is_available") and not getattr(self.knowledge_graph_extractor, "llm_caller", None):
+            if not runner.is_available():
+                self.knowledge_graph.upsert_source_graph_job(
+                    source_id,
+                    {
+                        "status": "FAILED",
+                        "total_chunks": len(target_chunks),
+                        "failed_chunks": len(target_chunks),
+                        "active_phase": "Ollama daemon unavailable",
+                        "error_message": "Local AI model daemon (Ollama) is unavailable or not running.",
+                    },
+                )
+                return {
+                    "status": "FAILED",
+                    "source_id": source_id,
+                    "total_chunks": len(target_chunks),
+                    "processed_chunks": 0,
+                    "skipped_chunks": 0,
+                    "failed_chunks": len(target_chunks),
+                    "entities_persisted": 0,
+                    "edges_persisted": 0,
+                    "source_supported_count": 0,
+                    "inferred_count": 0,
+                    "rejected_count": 0,
+                    "model_used": active_model,
+                    "extractor_version": getattr(self.knowledge_graph_extractor, "schema_version", "1.0.0"),
+                    "errors": ["Local AI model daemon (Ollama) is unavailable or not running. Please verify Ollama is running."],
+                }
+
+        now_iso = datetime_now_iso()
+        self.knowledge_graph.upsert_source_graph_job(
+            source_id,
+            {
+                "status": "PROCESSING",
+                "total_chunks": len(target_chunks),
+                "processed_chunks": 0,
+                "failed_chunks": 0,
+                "skipped_chunks": 0,
+                "active_phase": f"Extracting chunk 1/{len(target_chunks)}",
+                "cancellation_requested": 0,
+                "started_at": now_iso,
+            },
+        )
+
+        from src.response.routing import InferenceConcurrencyGate
+        gate = InferenceConcurrencyGate.get_instance()
+
+        for idx, chunk in enumerate(target_chunks, start=1):
+            # 1. Check cancellation before each chunk
+            cur_job = self.knowledge_graph.get_source_graph_job(source_id)
+            if cur_job and cur_job.get("cancellation_requested"):
+                logger.info(f"Graph extraction for source '{source_id}' cancelled at chunk {chunk.chunk_id}")
+                break
+
+            # 2. Check chat priority: yield if interactive chat request is waiting
+            if gate.should_yield_to_interactive():
+                self.knowledge_graph.upsert_source_graph_job(
+                    source_id,
+                    {
+                        "status": "PAUSED_FOR_CHAT",
+                        "active_phase": "Paused — interactive chat has priority",
+                        "current_chunk_id": chunk.chunk_id,
+                        "current_chunk_index": idx,
+                    },
+                )
+                gate.wait_for_interactive_clear()
+                self.knowledge_graph.upsert_source_graph_job(
+                    source_id,
+                    {
+                        "status": "PROCESSING",
+                        "active_phase": f"Resuming extraction (chunk {idx}/{len(target_chunks)})",
+                    },
+                )
+
+            # 3. Check idempotency: skip if already extracted under this schema version unless forced
+            existing_record = self.knowledge_graph.get_extraction_record(chunk.chunk_id)
+            if existing_record and existing_record.get("status") == "SUCCESS" and not force:
+                skipped_count += 1
+                continue
+
+            self.knowledge_graph.upsert_source_graph_job(
+                source_id,
+                {
+                    "current_chunk_id": chunk.chunk_id,
+                    "current_chunk_index": idx,
+                    "active_phase": f"Extracting chunk {idx}/{len(target_chunks)}",
+                },
+            )
+
+            # Acquire inference slot with BACKGROUND priority (120s timeout matching local inference ceiling)
+            with gate.slot(timeout=120.0, priority="BACKGROUND") as acquired:
+                if not acquired:
+                    failed_count += 1
+                    err_msg = f"{chunk.chunk_id}: Timed out waiting for inference slot"
+                    errors.append(err_msg)
+                    self.knowledge_graph.record_chunk_extraction_failure(
+                        chunk_id=chunk.chunk_id,
+                        source_id=source_id,
+                        error_message=err_msg,
+                        model_id=active_model,
+                    )
+                    continue
+
+                try:
+                    result = self.knowledge_graph_extractor.extract_from_chunk(
+                        chunk=chunk,
+                        source_id=source_id,
+                        model_name=active_model,
+                    )
+                    if result.status == "FAILED":
+                        failed_count += 1
+                        if result.error_message:
+                            errors.append(f"{chunk.chunk_id}: {result.error_message}")
+                        self.knowledge_graph.record_chunk_extraction_failure(
+                            chunk_id=chunk.chunk_id,
+                            source_id=source_id,
+                            error_message=result.error_message or "Extraction failed",
+                            model_id=active_model,
+                        )
+                        continue
+
+                    persist_info = self.knowledge_graph.persist_chunk_extraction(result)
+                    processed_count += 1
+                    entities_persisted += persist_info["entities_persisted"]
+                    edges_persisted += persist_info["edges_persisted"]
+                    source_supported_count += persist_info["source_supported"]
+                    inferred_count += persist_info["inferred"]
+                    rejected_count += persist_info["rejected"]
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Error extracting graph for chunk {chunk.chunk_id}: {e}")
+                    errors.append(f"{chunk.chunk_id}: {str(e)}")
+                    self.knowledge_graph.record_chunk_extraction_failure(
+                        chunk_id=chunk.chunk_id,
+                        source_id=source_id,
+                        error_message=str(e),
+                        model_id=active_model,
+                    )
+
+        # Check final status
+        cur_job = self.knowledge_graph.get_source_graph_job(source_id)
+        if cur_job and cur_job.get("cancellation_requested"):
+            overall_status = "CANCELLED"
+            active_phase = "Cancelled by user"
+        elif (processed_count > 0 or skipped_count > 0) and failed_count == 0:
+            overall_status = "COMPLETED"
+            active_phase = f"Completed ({processed_count} extracted, {skipped_count} skipped)"
+        elif (processed_count > 0 or skipped_count > 0) and failed_count > 0:
+            overall_status = "PARTIALLY_COMPLETED"
+            active_phase = f"Partially completed ({processed_count} succeeded, {failed_count} failed)"
+        elif failed_count > 0:
+            overall_status = "FAILED"
+            active_phase = f"Failed ({failed_count} chunk errors)"
+        else:
+            overall_status = "EMPTY"
+            active_phase = "No chunks extracted"
+
+        final_now = datetime_now_iso()
+        self.knowledge_graph.upsert_source_graph_job(
+            source_id,
+            {
+                "status": overall_status,
+                "total_chunks": len(target_chunks),
+                "processed_chunks": processed_count,
+                "skipped_chunks": skipped_count,
+                "failed_chunks": failed_count,
+                "active_phase": active_phase,
+                "error_message": "; ".join(errors[:3]) if errors else None,
+                "completed_at": final_now,
+            },
+        )
+
+        return {
+            "status": overall_status,
+            "source_id": source_id,
+            "total_chunks": len(target_chunks),
+            "processed_chunks": processed_count,
+            "skipped_chunks": skipped_count,
+            "failed_chunks": failed_count,
+            "entities_persisted": entities_persisted,
+            "edges_persisted": edges_persisted,
+            "source_supported_count": source_supported_count,
+            "inferred_count": inferred_count,
+            "rejected_count": rejected_count,
+            "model_used": active_model,
+            "extractor_version": getattr(self.knowledge_graph_extractor, "schema_version", "1.0.0"),
+            "errors": errors if errors else None,
+            "active_phase": active_phase,
+        }
+
+    def retry_failed_knowledge_graph(
+        self,
+        source_id: str,
+        model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Retries graph extraction ONLY for chunks that previously failed (Requirement 4.4).
+        Skips already successful chunks, avoids duplicate nodes/edges, and maintains provenance.
+        """
+        failed_records = self.knowledge_graph.get_failed_chunks_for_source(source_id)
+        if not failed_records:
+            return {
+                "status": "COMPLETED",
+                "source_id": source_id,
+                "message": "No failed chunks found for this source. All eligible chunks are already extracted.",
+                "total_chunks": 0,
+                "processed_chunks": 0,
+                "skipped_chunks": 0,
+                "failed_chunks": 0,
+            }
+        failed_ids = [r["chunk_id"] for r in failed_records]
+        return self.extract_source_knowledge_graph(
+            source_id=source_id,
+            force=True,
+            model_name=model_name,
+            target_chunk_ids=failed_ids,
+        )
+
+    def cancel_knowledge_graph(self, source_id: str) -> Dict[str, Any]:
+        """Cancels an in-flight graph extraction run at the next chunk boundary."""
+        self.knowledge_graph.upsert_source_graph_job(
+            source_id,
+            {
+                "cancellation_requested": 1,
+                "status": "CANCELLED",
+                "active_phase": "Extraction cancelled by user",
+            },
+        )
+        return {"source_id": source_id, "status": "CANCELLED"}
+
+    def get_source_graph_status(self, source_id: str) -> Dict[str, Any]:
+        """Fetches graph extraction records and statistics for a knowledge source."""
+        source = self.get_knowledge_source(source_id)
+        if not source:
+            raise ValueError(f"Knowledge source '{source_id}' not found")
+
+        records = self.knowledge_graph.get_extractions_for_source(source_id)
+        total_entities = sum(r.get("entities_count", 0) for r in records)
+        total_edges = sum(r.get("edges_count", 0) for r in records)
+        supported_edges = sum(r.get("supported_count", 0) for r in records)
+        inferred_edges = sum(r.get("inferred_count", 0) for r in records)
+        rejected_candidates = sum(r.get("rejected_count", 0) for r in records)
+        graph_job = self.knowledge_graph.get_source_graph_job(source_id)
+        failed_records = self.knowledge_graph.get_failed_chunks_for_source(source_id)
+
+        job_status = graph_job.get("status") if graph_job else ("COMPLETED" if records else "NOT_STARTED")
+        active_phase = graph_job.get("active_phase") if graph_job else ("Not started" if not records else "Extraction completed")
+
+        return {
+            "source_id": source_id,
+            "status": job_status,
+            "active_phase": active_phase,
+            "extractions_count": len(records),
+            "total_entities": total_entities,
+            "total_edges": total_edges,
+            "source_supported_edges": supported_edges,
+            "inferred_edges": inferred_edges,
+            "rejected_candidates": rejected_candidates,
+            "failed_chunks_count": len(failed_records),
+            "failed_chunks": [r["chunk_id"] for r in failed_records],
+            "records": records,
+            "job": graph_job,
+        }
+
+    def get_knowledge_graph_stats(self) -> Dict[str, Any]:
+        """Fetches global knowledge graph metrics."""
+        return self.knowledge_graph.get_graph_stats()
+
+    def query_knowledge_graph_rag(
+        self,
+        query: str,
+        force_7b: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Executes graph-assisted retrieval and grounded cybersecurity question answering (Milestone M9 Stage D).
+        Integrates relational graph traversal with authoritative VAPT source chunk recovery.
+        Enforces that only active, persisted user-managed corpus chunks yield citations (Requirements 1.3 & 1.4).
+        """
+        ans = self.knowledge_orchestrator.answer_query(query_text=query, force_7b=force_7b)
+
+        # Verify citations against active, persisted user-managed sources (Req 1.3, 1.4, 7.1)
+        valid_citations = []
+        if self.knowledge_store:
+            for cit in (ans.citations or []):
+                cid = getattr(cit, "chunk_id", None) or (cit.get("chunk_id") if isinstance(cit, dict) else None)
+                if cid:
+                    chk = self.knowledge_store.get_chunk(cid)
+                    if chk:
+                        doc_id = getattr(chk, "document_id", "")
+                        sid = doc_id.replace("DOC-", "")
+                        src = (
+                            self.knowledge_store.get_source(sid)
+                            or self.knowledge_store.get_source(f"SRC-{sid}")
+                            or self.knowledge_store.get_source(doc_id)
+                        )
+                        if src and src.get("status") in ("INDEXED", "PARTIAL", "SUCCESS", "ACTIVE"):
+                            valid_citations.append(cit if isinstance(cit, dict) else cit.model_dump())
+
+        has_corpus_evidence = len(valid_citations) > 0
+        answer_text = ans.answer_text
+        sufficiency_status = ans.sufficiency_status if has_corpus_evidence else "INSUFFICIENT"
+
+        if not has_corpus_evidence:
+            fallback_banner = (
+                "> ⚠️ **General model knowledge — not verified against ingested sources**\n"
+                "> The local knowledge corpus does not contain sufficient ingested documentation for this topic. "
+                "The following explanation is generated from general model knowledge and has not been verified against authoritative ingested sources.\n\n"
+            )
+            if not answer_text.startswith("> ⚠️ **General model knowledge"):
+                answer_text = fallback_banner + answer_text
+            citations_to_return = []
+        else:
+            citations_to_return = valid_citations
+
+        return {
+            "answer_id": ans.answer_id,
+            "query_id": ans.query_id,
+            "answer_text": answer_text,
+            "claims": [c.model_dump() for c in ans.claims] if has_corpus_evidence else [],
+            "citations": citations_to_return,
+            "sufficiency_status": sufficiency_status,
+            "epistemic_tier": ans.epistemic_tier if has_corpus_evidence else "GENERAL_MODEL_FALLBACK",
+            "escalation_level": ans.escalation_level,
+            "graph_metadata": ans.graph_metadata,
+            "timestamp": ans.timestamp,
+        }
+
+    # -------------------------------------------------------------------------
+    # Ingestion Job Queue Delegations
+    # -------------------------------------------------------------------------
+
+    def enqueue_knowledge_bytes(
+        self,
+        content_bytes: bytes,
+        filename: str,
+        title: Optional[str] = None,
+        authority_level: str = "USER_OWNED",
+        tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Enqueues an uploaded file into the durable FIFO ingestion job queue."""
+        job = self.knowledge_job_manager.enqueue_bytes(
+            content_bytes=content_bytes,
+            filename=filename,
+            title=title,
+            authority_level=authority_level,
+            tags=tags,
+        )
+        return job.model_dump()
+
+    def get_ingestion_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch details for a persistent ingestion job."""
+        job = self.knowledge_job_manager.get_job(job_id)
+        return job.model_dump() if job else None
+
+    def list_ingestion_jobs(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List persistent ingestion jobs in FIFO order."""
+        jobs = self.knowledge_job_manager.list_jobs(status=status)
+        return [j.model_dump() for j in jobs]
+
+    def cancel_ingestion_job(self, job_id: str) -> bool:
+        """Cancel an in-flight or queued ingestion job safely."""
+        return self.knowledge_job_manager.cancel_job(job_id)
+
+    def retry_ingestion_job(self, job_id: str) -> Dict[str, Any]:
+        """Retry a failed or cancelled ingestion job."""
+        job = self.knowledge_job_manager.retry_job(job_id)
+        return job.model_dump()
+
+    def audit_knowledge_graph(
+        self,
+        categories: Optional[List[str]] = None,
+        max_records_per_check: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Executes deterministic, read-only integrity auditing on the knowledge graph (Milestone M9 Stage E).
+        Reconciles structural validity, provenance against VaptKnowledgeStore, and source lifecycle state.
+        """
+        from src.knowledge.graph_auditor import GraphIntegrityAuditor
+        auditor = GraphIntegrityAuditor(
+            graph_db_path=self.knowledge_graph.db_path,
+            knowledge_store=self.knowledge_store,
+        )
+        try:
+            result = auditor.run_audit(
+                categories=categories,
+                max_records_per_check=max_records_per_check,
+            )
+            return result.model_dump()
+        finally:
+            auditor.close()
+
 
 
 

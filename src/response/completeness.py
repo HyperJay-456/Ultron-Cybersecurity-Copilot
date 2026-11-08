@@ -56,28 +56,9 @@ class CompletenessDetector:
             return CompletenessEvaluation(
                 state=CompletenessState.INCOMPLETE,
                 confidence=1.0,
-                should_continue=True,
-                rationale="Response text is empty",
+                should_continue=False,
+                rationale="Response text is empty; inference yielded no content",
                 signals={"empty": True},
-            )
-
-        # Check safety caps
-        if chunk_count >= self.max_continuation_chunks:
-            return CompletenessEvaluation(
-                state=CompletenessState.LIKELY_COMPLETE,
-                confidence=0.9,
-                should_continue=False,
-                rationale=f"Hard safety bound reached: max chunks ({self.max_continuation_chunks}) reached",
-                signals={"max_chunks_reached": True},
-            )
-
-        if cumulative_tokens >= self.max_cumulative_tokens:
-            return CompletenessEvaluation(
-                state=CompletenessState.LIKELY_COMPLETE,
-                confidence=0.9,
-                should_continue=False,
-                rationale=f"Hard safety bound reached: max tokens ({self.max_cumulative_tokens}) reached",
-                signals={"max_tokens_reached": True},
             )
 
         signals: Dict[str, Any] = {}
@@ -128,6 +109,46 @@ class CompletenessDetector:
         signals["ends_with_terminal_punct"] = ends_with_terminal_punct
         signals["ends_with_alphanumeric"] = ends_with_alphanumeric
         signals["ends_with_comma_or_dash"] = ends_with_comma_or_dash
+
+        # Check safety caps
+        is_structurally_incomplete = (
+            unclosed_code_fence
+            or dangling_heading
+            or unfinished_list
+            or dangling_colon
+            or incomplete_table
+            or stop_reason == "length"
+            or ends_with_comma_or_dash
+            or (ends_with_alphanumeric and not ends_with_terminal_punct)
+        )
+
+        if chunk_count >= self.max_continuation_chunks:
+            signals["max_chunks_reached"] = True
+            return CompletenessEvaluation(
+                state=CompletenessState.INCOMPLETE if is_structurally_incomplete else CompletenessState.COMPLETE,
+                confidence=0.95,
+                should_continue=False,
+                rationale=(
+                    f"Hard safety bound reached: max chunks ({self.max_continuation_chunks}) reached with incomplete response"
+                    if is_structurally_incomplete
+                    else f"Hard safety bound reached: max chunks ({self.max_continuation_chunks}) reached"
+                ),
+                signals=signals,
+            )
+
+        if cumulative_tokens >= self.max_cumulative_tokens:
+            signals["max_tokens_reached"] = True
+            return CompletenessEvaluation(
+                state=CompletenessState.INCOMPLETE if is_structurally_incomplete else CompletenessState.COMPLETE,
+                confidence=0.95,
+                should_continue=False,
+                rationale=(
+                    f"Hard safety bound reached: max tokens ({self.max_cumulative_tokens}) reached with incomplete response"
+                    if is_structurally_incomplete
+                    else f"Hard safety bound reached: max tokens ({self.max_cumulative_tokens}) reached"
+                ),
+                signals=signals,
+            )
 
         # Decision synthesis
         # Rule A: Unclosed code fence is an unambiguous signal of mid-generation truncation

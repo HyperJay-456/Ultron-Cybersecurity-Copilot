@@ -26,6 +26,8 @@ Validates:
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.live_ollama]
+
 from src.engine.models import (
     I6ExecutionResult,
     PrimaryFailureCategory,

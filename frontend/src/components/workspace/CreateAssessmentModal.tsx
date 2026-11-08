@@ -12,7 +12,6 @@ export const CreateAssessmentModal: React.FC<CreateAssessmentModalProps> = ({
 }) => {
   const [organization, setOrganization] = useState('');
   const [assessmentName, setAssessmentName] = useState('');
-  const [createdBy, setCreatedBy] = useState('HUMAN_OPERATOR');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +25,7 @@ export const CreateAssessmentModal: React.FC<CreateAssessmentModalProps> = ({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await createAssessment(organization.trim(), assessmentName.trim(), createdBy.trim());
+      const res = await createAssessment(organization.trim(), assessmentName.trim());
       if (res.assessment && res.assessment.assessment_id) {
         onCreated(res.assessment.assessment_id);
         onClose();
@@ -53,14 +52,19 @@ export const CreateAssessmentModal: React.FC<CreateAssessmentModalProps> = ({
       justifyContent: 'center',
       zIndex: 1100,
     }}>
-      <div style={{
-        backgroundColor: 'var(--bg-surface)',
-        borderRadius: 'var(--radius-lg)',
-        width: '480px',
-        boxShadow: 'var(--shadow-elevated)',
-        border: '1px solid var(--border-subtle)',
-        overflow: 'hidden',
-      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-assessment-title"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: '480px',
+          boxShadow: 'var(--shadow-elevated)',
+          border: '1px solid var(--border-subtle)',
+          overflow: 'hidden',
+        }}
+      >
         <div style={{
           padding: '16px 20px',
           borderBottom: '1px solid var(--border-subtle)',
@@ -69,12 +73,12 @@ export const CreateAssessmentModal: React.FC<CreateAssessmentModalProps> = ({
           alignItems: 'center',
         }}>
           <div>
-            <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Create Security Assessment</h3>
+            <h3 id="create-assessment-title" style={{ fontSize: '16px', fontWeight: 600 }}>Create Security Assessment</h3>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
               Initialize an isolated assessment container under strict governance
             </p>
           </div>
-          <button onClick={onClose} style={{ fontSize: '18px', color: 'var(--text-muted)' }}>
+          <button onClick={onClose} aria-label="Close dialog" style={{ fontSize: '18px', color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
             ✕
           </button>
         </div>
@@ -121,19 +125,15 @@ export const CreateAssessmentModal: React.FC<CreateAssessmentModalProps> = ({
             />
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Authorized Operator / Researcher ID
-            </label>
-            <input
-              type="text"
-              value={createdBy}
-              onChange={(e) => setCreatedBy(e.target.value)}
-              style={{ padding: '8px 12px', fontSize: '13px' }}
-            />
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              Assessment will be initialized in DRAFT state. Scope and authorization records must be bound before active testing.
-            </span>
+          <div style={{
+            padding: '10px 12px',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-surface-muted)',
+            border: '1px solid var(--border-subtle)',
+            fontSize: '11.5px',
+            color: 'var(--text-secondary)',
+          }}>
+            <strong style={{ color: 'var(--text-primary)' }}>Identity & Audit Governance:</strong> The authenticated session identity is authoritatively recorded as the creator in the immutable audit log. No client-selected actor is permitted.
           </div>
 
           <div style={{

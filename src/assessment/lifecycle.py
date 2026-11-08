@@ -125,8 +125,18 @@ class AssessmentLifecycleEngine:
             is_valid, auth_reason = AuthorizationValidator.validate_authorization(authorization)
             if not is_valid:
                 raise ValueError(f"PRECONDITION_FAILED: Cannot activate assessment with invalid auth ({auth_reason}).")
+            if not authorization.is_currently_valid():
+                raise ValueError("PRECONDITION_FAILED: Cannot activate assessment with expired or revoked authorization.")
             if not scope_defined and not assessment.scope_policy_id:
                 raise ValueError("PRECONDITION_FAILED: ASSESSMENT_ACTIVE requires defined scope.")
+            # Enforce immutable scope policy binding
+            if assessment.scope_policy_hash and authorization.scope_policy_hash:
+                if assessment.scope_policy_hash != authorization.scope_policy_hash:
+                    raise ValueError(
+                        f"PRECONDITION_FAILED: Scope policy hash mismatch. "
+                        f"Authorization authorizes '{authorization.scope_policy_hash}', "
+                        f"but active policy is '{assessment.scope_policy_hash}'."
+                    )
 
         now_iso = datetime.now(timezone.utc).isoformat()
         transition_entry = {
@@ -164,9 +174,14 @@ class AssessmentLifecycleEngine:
         }:
             return False, f"TARGET_ACTION_BLOCKED: Assessment state '{state.value}' forbids target interaction."
 
+        if state == AssessmentLifecycleState.ASSESSMENT_ACTIVE and authorization is None:
+            return False, "TARGET_ACTION_BLOCKED: Active assessment requires authorization record."
+
         if authorization is not None:
             is_valid, auth_reason = AuthorizationValidator.validate_authorization(authorization)
             if not is_valid:
                 return False, f"TARGET_ACTION_BLOCKED: Authorization is invalid ({auth_reason})."
+            if not authorization.is_currently_valid():
+                return False, "TARGET_ACTION_BLOCKED: Authorization is expired or revoked."
 
         return True, "TARGET_ACTION_PERMITTED: Assessment is in an active permitted state."

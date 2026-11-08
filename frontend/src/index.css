@@ -1,53 +1,111 @@
 :root {
-  --bg-app: #090B0E;
-  --bg-sidebar: #060709;
-  --bg-surface: #0E1219;
-  --bg-surface-elevated: #151B24;
-  --bg-surface-muted: #121620;
-  --bg-surface-hover: #19202E;
-  --bg-surface-active: #222B3D;
+  --bg-app: #0B0F17;
+  --bg-sidebar: #080C14;
+  --bg-surface: #0F1622;
+  --bg-surface-elevated: #162030;
+  --bg-surface-muted: #121A26;
+  --bg-surface-hover: #1A2538;
+  --bg-surface-active: #223048;
 
-  --border-subtle: #1C2331;
-  --border-strong: #2B364B;
-  --border-focus: #FF2B43;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-focus: #E11D48;
 
-  --text-primary: #F1F5F9;
+  --text-primary: #F8FAFC;
   --text-secondary: #94A3B8;
   --text-muted: #64748B;
-  --text-inverse: #090B0E;
+  --text-inverse: #0B0F17;
 
-  --accent-primary: #E50914;
-  --accent-primary-hover: #FF1F2F;
-  --accent-glow: 0 0 16px rgba(229, 9, 20, 0.45);
-  --accent-glow-subtle: 0 0 8px rgba(229, 9, 20, 0.2);
+  --accent-primary: #E11D48;
+  --accent-primary-hover: #F43F5E;
+  --accent-glow: 0 0 20px rgba(225, 29, 72, 0.22);
+  --accent-glow-subtle: 0 0 10px rgba(225, 29, 72, 0.12);
 
-  /* Semantic tones with cyber glow */
-  --badge-green-bg: rgba(16, 185, 129, 0.12);
+  /* Semantic tones with calm cyber glow */
+  --badge-green-bg: rgba(16, 185, 129, 0.10);
   --badge-green-text: #34D399;
-  --badge-green-border: rgba(16, 185, 129, 0.28);
+  --badge-green-border: rgba(16, 185, 129, 0.22);
 
-  --badge-amber-bg: rgba(245, 158, 11, 0.12);
+  --badge-amber-bg: rgba(245, 158, 11, 0.10);
   --badge-amber-text: #FBBF24;
-  --badge-amber-border: rgba(245, 158, 11, 0.28);
+  --badge-amber-border: rgba(245, 158, 11, 0.22);
 
-  --badge-red-bg: rgba(239, 68, 68, 0.15);
+  --badge-red-bg: rgba(239, 68, 68, 0.12);
   --badge-red-text: #F87171;
-  --badge-red-border: rgba(239, 68, 68, 0.32);
+  --badge-red-border: rgba(239, 68, 68, 0.25);
 
-  --badge-blue-bg: rgba(59, 130, 246, 0.12);
+  --badge-blue-bg: rgba(59, 130, 246, 0.10);
   --badge-blue-text: #60A5FA;
-  --badge-blue-border: rgba(59, 130, 246, 0.28);
+  --badge-blue-border: rgba(59, 130, 246, 0.22);
 
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
 
-  --shadow-subtle: 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-elevated: 0 6px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(229, 9, 20, 0.15);
+  --shadow-subtle: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 16px 36px -8px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.06);
 
   --font-stack: Inter, ui-sans-serif, -system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* Format Selector High-Contrast Tokens */
+  --segmented-bg: #080C14;
+  --segmented-btn-bg: #0F1622;
+  --segmented-btn-text: #94A3B8;
+  --segmented-btn-active-bg: #1E293B;
+  --segmented-btn-active-text: #F8FAFC;
+  --segmented-btn-active-border: #E11D48;
+}
+
+[data-theme="light"] {
+  --bg-app: #F8FAFC;
+  --bg-sidebar: #F1F5F9;
+  --bg-surface: #FFFFFF;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-surface-muted: #E2E8F0;
+  --bg-surface-hover: #EDF2F7;
+  --bg-surface-active: #E2E8F0;
+
+  --border-subtle: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.24);
+  --border-focus: #E11D48;
+
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
+  --text-inverse: #FFFFFF;
+
+  --accent-primary: #E11D48;
+  --accent-primary-hover: #BE123C;
+  --accent-glow: 0 0 20px rgba(225, 29, 72, 0.15);
+  --accent-glow-subtle: 0 0 10px rgba(225, 29, 72, 0.08);
+
+  --badge-green-bg: #ECFDF5;
+  --badge-green-text: #065F46;
+  --badge-green-border: #A7F3D0;
+
+  --badge-amber-bg: #FFFBEB;
+  --badge-amber-text: #92400E;
+  --badge-amber-border: #FDE68A;
+
+  --badge-red-bg: #FEF2F2;
+  --badge-red-text: #991B1B;
+  --badge-red-border: #FECACA;
+
+  --badge-blue-bg: #EFF6FF;
+  --badge-blue-text: #1E40AF;
+  --badge-blue-border: #BFDBFE;
+
+  --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.10);
+  --shadow-elevated: 0 10px 25px -5px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.05);
+
+  --segmented-bg: #E2E8F0;
+  --segmented-btn-bg: #FFFFFF;
+  --segmented-btn-text: #475569;
+  --segmented-btn-active-bg: #FFE4E6;
+  --segmented-btn-active-text: #9F1239;
+  --segmented-btn-active-border: #E11D48;
 }
 
 * {
@@ -68,6 +126,7 @@ body {
 }
 
 #root {
+  width: 100vw;
   height: 100vh;
   display: flex;
   overflow: hidden;
@@ -272,5 +331,69 @@ input:focus, textarea:focus, select:focus {
 
 .prose li {
   margin-bottom: 0.35em;
+}
+
+/* Format Selector Styles */
+.format-selector-group {
+  display: flex;
+  gap: 8px;
+  background-color: var(--segmented-bg);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.format-selector-btn {
+  flex: 1;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  background-color: var(--segmented-btn-bg);
+  color: var(--segmented-btn-text);
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.format-selector-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.format-selector-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.format-selector-btn[aria-checked="true"],
+.format-selector-btn.active {
+  background-color: var(--segmented-btn-active-bg);
+  color: var(--segmented-btn-active-text);
+  border-color: var(--segmented-btn-active-border);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--segmented-btn-active-border), var(--accent-glow-subtle);
+}
+
+.format-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: inline-block;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.format-selector-btn[aria-checked="true"] .format-radio-dot,
+.format-selector-btn.active .format-radio-dot {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 4px var(--accent-primary);
 }
 

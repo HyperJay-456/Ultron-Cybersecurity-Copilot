@@ -93,6 +93,9 @@ export const AddObservationModal: React.FC<AddObservationModalProps> = ({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-observation-title"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
@@ -109,11 +112,12 @@ export const AddObservationModal: React.FC<AddObservationModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+          <h2 id="add-observation-title" style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
             Add Target Observation
           </h2>
           <button
             onClick={onClose}
+            aria-label="Close dialog"
             style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '4px 8px', borderRadius: '4px' }}
           >
             ✕
@@ -144,15 +148,15 @@ export const AddObservationModal: React.FC<AddObservationModalProps> = ({
                   </div>
                 )}
                 {result.duplicate_count > 0 && (
-                  <div>ℹ Observation was already present in canonical evidence (duplicate skipped)</div>
+                  <div>Observation was already present in canonical evidence (duplicate skipped)</div>
                 )}
                 {result.out_of_scope_count > 0 && (
                   <div style={{ color: 'var(--badge-amber-text)' }}>
-                    ⛔ Target host is outside investigation scope ({targetHost})
+                    Target host is outside investigation scope ({targetHost})
                   </div>
                 )}
                 {result.redacted_secret_count > 0 && (
-                  <div>🔒 <strong>{result.redacted_secret_count}</strong> sensitive values redacted</div>
+                  <div><strong>{result.redacted_secret_count}</strong> sensitive values redacted</div>
                 )}
               </div>
             </div>

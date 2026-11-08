@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices
 
 
 class ResponseStatus(str, Enum):
@@ -18,6 +18,9 @@ class ResponseStatus(str, Enum):
     CONTEXT_LIMIT = "CONTEXT_LIMIT"
     TIMEOUT = "TIMEOUT"
     ERROR = "ERROR"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
 
 
 class GenerationTermination(str, Enum):
@@ -30,6 +33,38 @@ class GenerationTermination(str, Enum):
     ENGINE_ERROR = "ENGINE_ERROR"
     MAX_CHUNKS_REACHED = "MAX_CHUNKS_REACHED"
     SAFETY_BOUND_EXCEEDED = "SAFETY_BOUND_EXCEEDED"
+    DAEMON_UNAVAILABLE = "DAEMON_UNAVAILABLE"
+    MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    EVIDENCE_MISSING = "EVIDENCE_MISSING"
+
+
+class EpistemicStatus(str, Enum):
+    """Epistemic status and grounding classification of an AI response."""
+    DIRECT_OBSERVATION = "DIRECT_OBSERVATION"
+    USER_PROVIDED = "USER_PROVIDED"
+    EVIDENCE_BACKED = "EVIDENCE_BACKED"
+    AUTHORITATIVE_KNOWLEDGE = "AUTHORITATIVE_KNOWLEDGE"
+    EXTERNAL_SOURCE = "EXTERNAL_SOURCE"
+    MODEL_HYPOTHESIS = "MODEL_HYPOTHESIS"
+    MODEL_INFERENCE = "MODEL_INFERENCE"
+    UNVERIFIED_CLAIM = "UNVERIFIED_CLAIM"
+    EVIDENCE_GAP = "EVIDENCE_GAP"
+    HUMAN_VERIFIED = "HUMAN_VERIFIED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
+class RuntimeOutcome(str, Enum):
+    """Execution runtime outcome for model and pipeline dispatch."""
+    SUCCESS = "SUCCESS"
+    PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
+    DAEMON_UNAVAILABLE = "DAEMON_UNAVAILABLE"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    TIMEOUT = "TIMEOUT"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    ENGINE_ERROR = "ENGINE_ERROR"
+    USER_ABORTED = "USER_ABORTED"
+    EVIDENCE_UNAVAILABLE = "EVIDENCE_UNAVAILABLE"
 
 
 class CompletenessState(str, Enum):
@@ -44,6 +79,33 @@ class CompletenessState(str, Enum):
 def compute_content_hash(text: str) -> str:
     """Compute deterministic SHA-256 hash of chunk content."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class CitationReference(BaseModel):
+    """Granular verified citation reference anchored to authoritative evidence or knowledge."""
+    source_id: str
+    source_type: str  # 'TARGET_EVIDENCE', 'AUTHORITATIVE_KNOWLEDGE', 'EXTERNAL_REFERENCE'
+    epistemic_tier: str = "TARGET_EVIDENCE"
+    assessment_id: Optional[str] = None
+    investigation_id: Optional[str] = None
+    title: Optional[str] = None
+    locator: Optional[str] = None
+    quotation: Optional[str] = None
+    verified: bool = False
+    resolution_status: Optional[str] = None
+    provenance: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+
+class ResponseValidationReport(BaseModel):
+    """Validation outcome assessing schema, epistemic constraints, citations, and structural integrity."""
+    passed: bool = True
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    citation_precision: float = 1.0
+    epistemic_status: EpistemicStatus = EpistemicStatus.MODEL_INFERENCE
+    unclosed_code_blocks: int = 0
+    duplicate_sections_detected: int = 0
 
 
 class ResponseChunk(BaseModel):
@@ -91,13 +153,24 @@ class ResponseVersion(BaseModel):
 
 class ResponseSession(BaseModel):
     """
-    First-class response session aggregating multi-chunk long responses,
-    preserving exact chunk provenance and unified user-facing delivery.
+    First-class canonical response session aggregating multi-chunk responses,
+    preserving exact chunk provenance, citations, validation, and unified user-facing delivery.
     """
     response_id: str
     investigation_id: str
+    assessment_id: Optional[str] = None
+    request_id: Optional[str] = None
     parent_message_id: Optional[str] = None
-    model: str = "qwen2.5-coder:7b"
+    model: str = Field(
+        default="qwen2.5-coder:7b",
+        min_length=1,
+        validation_alias=AliasChoices("model", "model_name"),
+    )
+    requested_model: Optional[str] = None
+    fallback_model: Optional[str] = None
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
+    user_prompt: Optional[str] = None
     chunks: List[ResponseChunk] = Field(default_factory=list)
     cumulative_tokens: int = 0
     status: ResponseStatus = ResponseStatus.GENERATING
@@ -107,7 +180,31 @@ class ResponseSession(BaseModel):
     completed_at: Optional[str] = None
     active_version: int = 1
 
+    # Canonical metadata and epistemic contract fields
+    epistemic_status: EpistemicStatus = EpistemicStatus.MODEL_INFERENCE
+    runtime_outcome: RuntimeOutcome = RuntimeOutcome.SUCCESS
+    validation_passed: bool = True
+    validation_errors: List[str] = Field(default_factory=list)
+    validation_warnings: List[str] = Field(default_factory=list)
+    citations: List[CitationReference] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list)
+    continuation_count: int = 0
+    is_truncated: bool = False
+    persisted: bool = False
+    persistence_error: Optional[str] = None
+    total_duration_seconds: float = 0.0
+    model_config_params: Dict[str, Any] = Field(default_factory=dict)
+
     def add_chunk(self, chunk: ResponseChunk) -> None:
         """Append chunk and update cumulative metadata."""
         self.chunks.append(chunk)
         self.cumulative_tokens += chunk.token_count
+
+    @property
+    def model_name(self) -> str:
+        """Backward-compatible property for callers expecting model_name."""
+        return self.model
+
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        self.model = value

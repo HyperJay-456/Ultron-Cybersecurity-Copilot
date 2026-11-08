@@ -85,17 +85,22 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       paddingTop: '80px',
       zIndex: 1200,
     }}>
-      <div style={{
-        backgroundColor: 'var(--bg-surface)',
-        borderRadius: 'var(--radius-lg)',
-        width: '680px',
-        maxHeight: '70vh',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: 'var(--shadow-elevated)',
-        border: '1px solid var(--border-subtle)',
-        overflow: 'hidden',
-      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Global assessment search"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: '680px',
+          maxHeight: '70vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: 'var(--shadow-elevated)',
+          border: '1px solid var(--border-subtle)',
+          overflow: 'hidden',
+        }}
+      >
         {/* Search Input Bar */}
         <div style={{
           padding: '16px 20px',
@@ -122,14 +127,16 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           {query && (
             <button
               onClick={() => setQuery('')}
-              style={{ fontSize: '13px', color: 'var(--text-muted)' }}
+              aria-label="Clear search query"
+              style={{ fontSize: '13px', color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}
             >
               Clear
             </button>
           )}
           <button
             onClick={onClose}
-            style={{ fontSize: '14px', color: 'var(--text-muted)', padding: '2px 6px' }}
+            aria-label="Close dialog"
+            style={{ fontSize: '14px', color: 'var(--text-muted)', padding: '2px 6px', background: 'transparent', border: 'none', cursor: 'pointer' }}
           >
             ESC
           </button>

@@ -294,4 +294,18 @@ CREATE TABLE IF NOT EXISTS investigation_observations (
 CREATE INDEX IF NOT EXISTS idx_obs_inv ON investigation_observations(investigation_id);
 CREATE INDEX IF NOT EXISTS idx_obs_asset ON investigation_observations(asset_id);
 
+-- 15. Dashboard Users & Authentication (Batch 1.1)
+CREATE TABLE IF NOT EXISTS dashboard_users (
+    user_id             TEXT PRIMARY KEY,
+    username            TEXT UNIQUE NOT NULL,
+    password_hash       TEXT NOT NULL,
+    role                TEXT NOT NULL CHECK(role IN ('observer', 'reviewer', 'admin')),
+    is_active           INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_users_username ON dashboard_users(username);
+
+
 

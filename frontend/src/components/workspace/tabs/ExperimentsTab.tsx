@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   fetchAssessmentExperiments,
   fetchAssessmentHypotheses,
   proposeAssessmentExperiment,
+  approveAssessmentExperiment,
+  importAssessmentExperimentResult,
 } from '../../../api';
 import type { ExperimentItem, HypothesisItem } from '../../../types';
 
@@ -18,6 +20,7 @@ export const ExperimentsTab: React.FC<ExperimentsTabProps> = ({
   const [experiments, setExperiments] = useState<ExperimentItem[]>([]);
   const [hypotheses, setHypotheses] = useState<HypothesisItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [showProposeForm, setShowProposeForm] = useState(false);
 
   // Proposal Form State
@@ -33,27 +36,103 @@ export const ExperimentsTab: React.FC<ExperimentsTabProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [assessmentId]);
+  // Approve & Result Import State
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [resultImportExp, setResultImportExp] = useState<ExperimentItem | null>(null);
+  const [resultPayloadText, setResultPayloadText] = useState('{\n  "status_code": 200,\n  "payload_executed": true,\n  "evidence_summary": "Observed state alteration upon probe submission"\n}');
+  const [importingResult, setImportingResult] = useState(false);
+
+  // Stale state protection
+  const activeAssessmentRef = useRef(assessmentId);
 
   const loadData = async () => {
+    const currentId = assessmentId;
     setLoading(true);
+    setDataError(null);
     try {
       const [exps, hyps] = await Promise.all([
-        fetchAssessmentExperiments(assessmentId),
-        fetchAssessmentHypotheses(assessmentId),
+        fetchAssessmentExperiments(currentId),
+        fetchAssessmentHypotheses(currentId),
       ]);
+      if (activeAssessmentRef.current !== currentId) return;
       setExperiments(exps);
       setHypotheses(hyps);
       if (hyps.length > 0 && !hypothesisId) {
         setHypothesisId(hyps[0].hypothesis_id);
         setTargetAsset(hyps[0].target_asset);
       }
-    } catch (err) {
-      console.error('Failed to load experiments:', err);
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
+      setDataError(err.message || 'Failed to load experiments');
     } finally {
-      setLoading(false);
+      if (activeAssessmentRef.current === currentId) {
+        setLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    setDataError(null);
+    setActionError(null);
+    setActionSuccess(null);
+    setResultImportExp(null);
+    setShowProposeForm(false);
+    loadData();
+  }, [assessmentId]);
+
+  const handleApprove = async (expId: string) => {
+    const currentId = assessmentId;
+    setApprovingId(expId);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await approveAssessmentExperiment(currentId, expId);
+      if (activeAssessmentRef.current !== currentId) return;
+      setActionSuccess(`Experiment ${expId} approved by authoritative session.`);
+      await loadData();
+      onRefreshOverview();
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
+      setActionError(err.message || `Approval failed for ${expId}`);
+    } finally {
+      if (activeAssessmentRef.current === currentId) {
+        setApprovingId(null);
+      }
+    }
+  };
+
+  const handleImportResult = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resultImportExp) return;
+
+    let payload: any;
+    try {
+      payload = JSON.parse(resultPayloadText);
+    } catch {
+      setActionError('Result payload must be valid JSON.');
+      return;
+    }
+
+    setImportingResult(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await importAssessmentExperimentResult(resultImportExp.experiment_id, payload);
+      if (activeAssessmentRef.current !== assessmentId) return;
+      setActionSuccess(`Execution result imported for ${resultImportExp.experiment_id}. Status transitioned to EXECUTED.`);
+      setResultImportExp(null);
+      await loadData();
+      onRefreshOverview();
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== assessmentId) return;
+      setActionError(err.message || 'Failed to import experiment result');
+    } finally {
+      if (activeAssessmentRef.current === assessmentId) {
+        setImportingResult(false);
+      }
     }
   };
 
@@ -311,10 +390,73 @@ export const ExperimentsTab: React.FC<ExperimentsTabProps> = ({
         </form>
       )}
 
+      {/* Action Notification Banners */}
+      {actionSuccess && (
+        <div
+          role="status"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-green-bg)',
+            color: 'var(--badge-green-text)',
+            border: '1px solid var(--badge-green-border)',
+            fontSize: '13px',
+          }}
+        >
+          {actionSuccess}
+        </div>
+      )}
+
+      {actionError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            color: 'var(--badge-red-text)',
+            border: '1px solid var(--badge-red-border)',
+            fontSize: '13px',
+          }}
+        >
+          {actionError}
+        </div>
+      )}
+
       {/* Experiment List */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
           Loading experiments...
+        </div>
+      ) : dataError ? (
+        <div
+          role="alert"
+          style={{
+            padding: '20px',
+            background: 'var(--badge-red-bg)',
+            color: 'var(--badge-red-text)',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--badge-red-border)',
+            fontSize: '13px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>Error loading experiments: {dataError}</span>
+          <button
+            onClick={loadData}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
         </div>
       ) : experiments.length === 0 ? (
         <div style={{
@@ -330,62 +472,240 @@ export const ExperimentsTab: React.FC<ExperimentsTabProps> = ({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {experiments.map((exp) => (
-            <div
-              key={exp.experiment_id}
-              style={{
-                padding: '16px 20px',
-                borderRadius: 'var(--radius-lg)',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    background: 'var(--badge-blue-bg)',
-                    color: 'var(--badge-blue-text)',
-                  }}>
-                    {exp.risk_level}
-                  </span>
-                  <span style={{ fontWeight: 600, fontSize: '14px' }}>
-                    {exp.objective}
-                  </span>
+          {experiments.map((exp) => {
+            const isApproved = exp.status === 'APPROVED';
+            const isExecuted = exp.status === 'EXECUTED';
+            const isProposed = exp.status === 'PROPOSED';
+
+            const statusBg = isExecuted
+              ? 'var(--badge-green-bg)'
+              : isApproved
+              ? 'var(--badge-blue-bg)'
+              : 'var(--badge-amber-bg)';
+            const statusColor = isExecuted
+              ? 'var(--badge-green-text)'
+              : isApproved
+              ? 'var(--badge-blue-text)'
+              : 'var(--badge-amber-text)';
+
+            return (
+              <div
+                key={exp.experiment_id}
+                style={{
+                  padding: '16px 20px',
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'var(--bg-surface)',
+                  border: isExecuted
+                    ? '2px solid var(--badge-green-border)'
+                    : '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      background: 'var(--badge-blue-bg)',
+                      color: 'var(--badge-blue-text)',
+                    }}>
+                      {exp.risk_level}
+                    </span>
+                    <span style={{ fontWeight: 600, fontSize: '14px' }}>
+                      {exp.objective}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      background: statusBg,
+                      color: statusColor,
+                    }}>
+                      {exp.status}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {exp.experiment_id}
+                    </span>
+                  </div>
                 </div>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
-                  {exp.experiment_id}
-                </span>
-              </div>
 
-              <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                <span>Target Asset: <strong>{exp.target_asset}</strong></span>
-                <span>Hypothesis: <strong>{exp.hypothesis_id}</strong></span>
-                <span>Status: <strong>{exp.status}</strong></span>
-              </div>
+                <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <span>Target Asset: <strong>{exp.target_asset}</strong></span>
+                  <span>Hypothesis: <strong>{exp.hypothesis_id}</strong></span>
+                </div>
 
-              <div style={{
-                background: 'var(--bg-surface-muted)',
-                padding: '10px 12px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-              }}>
-                <div><strong>Expected Secure:</strong> {exp.expected_secure_result}</div>
-                <div><strong>Expected Vulnerable:</strong> {exp.expected_vulnerable_result}</div>
-                <div><strong>Falsification Condition:</strong> {exp.falsification_condition}</div>
-                <div><strong>Negative Control:</strong> {exp.negative_control}</div>
+                <div style={{
+                  background: 'var(--bg-surface-muted)',
+                  padding: '10px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                }}>
+                  <div><strong>Expected Secure:</strong> {exp.expected_secure_result}</div>
+                  <div><strong>Expected Vulnerable:</strong> {exp.expected_vulnerable_result}</div>
+                  <div><strong>Falsification Condition:</strong> {exp.falsification_condition}</div>
+                  <div><strong>Negative Control:</strong> {exp.negative_control}</div>
+                </div>
+
+                {/* Experiment Action Controls */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+                  {isProposed && (
+                    <button
+                      onClick={() => handleApprove(exp.experiment_id)}
+                      disabled={approvingId === exp.experiment_id}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'var(--accent-primary)',
+                        color: '#fff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: approvingId === exp.experiment_id ? 'not-allowed' : 'pointer',
+                        opacity: approvingId === exp.experiment_id ? 0.7 : 1,
+                      }}
+                    >
+                      {approvingId === exp.experiment_id ? 'Authorizing...' : 'Approve Experiment Execution'}
+                    </button>
+                  )}
+                  {isApproved && (
+                    <button
+                      onClick={() => setResultImportExp(exp)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'var(--badge-blue-text)',
+                        color: '#fff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      + Import Execution Result
+                    </button>
+                  )}
+                  {isExecuted && (
+                    <span style={{ fontSize: '11px', color: 'var(--badge-green-text)', fontWeight: 600 }}>
+                      ✓ Executed & Invariant Validated
+                    </span>
+                  )}
+                </div>
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Result Import Modal */}
+      {resultImportExp && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.45)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1100,
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-surface)',
+            borderRadius: 'var(--radius-lg)',
+            width: '520px',
+            maxWidth: '92vw',
+            boxShadow: 'var(--shadow-elevated)',
+            border: '1px solid var(--border-subtle)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Import Experiment Execution Result</h4>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  Experiment: {resultImportExp.experiment_id} ({resultImportExp.target_asset})
+                </p>
+              </div>
+              <button
+                onClick={() => setResultImportExp(null)}
+                style={{ fontSize: '16px', background: 'none', border: 'none', cursor: 'pointer' }}
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
             </div>
-          ))}
+
+            <form onSubmit={handleImportResult} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-surface-muted)',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '11.5px',
+                color: 'var(--text-secondary)',
+              }}>
+                <strong style={{ color: 'var(--text-primary)' }}>Audit Provenance:</strong> Result execution will be authoritatively attributed to your active authenticated session.
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Structured Execution Result (JSON) *
+                </label>
+                <textarea
+                  rows={6}
+                  value={resultPayloadText}
+                  onChange={(e) => setResultPayloadText(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '12px',
+                    marginTop: '4px',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setResultImportExp(null)}
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={importingResult}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--badge-green-text)',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: importingResult ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {importingResult ? 'Submitting...' : 'Confirm Result Import'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

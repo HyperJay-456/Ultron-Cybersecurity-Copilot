@@ -142,11 +142,13 @@ class ScopeGate:
         db_manager: Optional[DatabaseManager] = None,
         audit_logger: Optional[AuditLogger] = None,
         allow_private_ranges: bool = False,
+        allow_loopback: bool = False,
         dns_resolver=None,
     ) -> None:
         self.db_manager = db_manager
         self.audit_logger = audit_logger
         self.allow_private_ranges = allow_private_ranges
+        self.allow_loopback = allow_loopback
         self.dns_resolver = dns_resolver or self._default_resolve_addresses
 
         # Initialize TLDExtract with offline local cache
@@ -473,7 +475,7 @@ class ScopeGate:
         for ip_str in resolved_ips:
             try:
                 ip_obj = ipaddress.ip_address(ip_str)
-                if ip_obj.is_loopback:
+                if not self.allow_loopback and ip_obj.is_loopback:
                     return self._record_decision(
                         ScopeDecision.DENY,
                         requested_url,
@@ -557,6 +559,7 @@ class ScopeGate:
         out_of_scope_rule: Optional[str] = None,
     ) -> ScopeDecisionObject:
         """Create, audit, and persist the ScopeDecisionObject."""
+        pol_hash = self.policy.policy_hash if hasattr(self.policy, "policy_hash") else None
         obj = ScopeDecisionObject.create(
             decision=decision,
             requested_url=requested_url,
@@ -567,6 +570,7 @@ class ScopeGate:
             matched_rule=matched_rule,
             out_of_scope_rule=out_of_scope_rule,
             scope_policy_version=self.policy.scope_policy_version,
+            scope_policy_hash=pol_hash,
         )
 
         if self.db_manager:
@@ -584,6 +588,7 @@ class ScopeGate:
                         tool_policy=tool_policy,
                         reason=f"Audit database failure on ALLOW decision (fail-closed): {exc}",
                         scope_policy_version=self.policy.scope_policy_version,
+                        scope_policy_hash=pol_hash,
                     )
 
         if self.audit_logger:
@@ -607,6 +612,7 @@ class ScopeGate:
                         tool_policy=tool_policy,
                         reason=f"Audit logger failure on ALLOW decision (fail-closed): {exc}",
                         scope_policy_version=self.policy.scope_policy_version,
+                        scope_policy_hash=pol_hash,
                     )
 
         return obj
@@ -767,6 +773,9 @@ class ScopeGate:
         M6 deterministic scope evaluator returning IN_SCOPE, OUT_OF_SCOPE, or UNKNOWN.
         UNKNOWN is treated as OUT_OF_SCOPE (fail closed).
         """
+        pol_hash = self.policy.policy_hash if hasattr(self.policy, "policy_hash") else None
+        pol_ver = getattr(self.policy, "scope_policy_version", "v6")
+
         if not target_identifier or not str(target_identifier).strip():
             return ExtendedScopeDecisionResult(
                 scope_status=AssessmentScopeStatus.UNKNOWN,
@@ -774,6 +783,8 @@ class ScopeGate:
                 target_identifier=str(target_identifier),
                 asset_type=asset_type,
                 reason="Target identifier is empty or invalid. UNKNOWN treated as OUT_OF_SCOPE.",
+                scope_policy_version=pol_ver,
+                scope_policy_hash=pol_hash,
             )
 
         target_clean = str(target_identifier).strip()
@@ -788,6 +799,8 @@ class ScopeGate:
                     asset_type=asset_type,
                     out_of_scope_rule=out_rule,
                     reason=f"Target explicitly excluded by out-of-scope rule: {out_rule}",
+                    scope_policy_version=pol_ver,
+                    scope_policy_hash=pol_hash,
                 )
 
         # 2. Check in_scope rules
@@ -800,6 +813,8 @@ class ScopeGate:
                     asset_type=asset_type,
                     matched_rule=in_rule,
                     reason=f"Target matches authorized in-scope rule: {in_rule}",
+                    scope_policy_version=pol_ver,
+                    scope_policy_hash=pol_hash,
                 )
 
         # 3. Default fail-closed: UNKNOWN treated as OUT_OF_SCOPE
@@ -809,6 +824,8 @@ class ScopeGate:
             target_identifier=target_clean,
             asset_type=asset_type,
             reason="Target does not match any authorized in-scope rule. UNKNOWN treated as OUT_OF_SCOPE (fail closed).",
+            scope_policy_version=pol_ver,
+            scope_policy_hash=pol_hash,
         )
 
     def recheck_scope(

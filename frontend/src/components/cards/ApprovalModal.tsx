@@ -19,7 +19,6 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
   onApprove,
   onClose,
 }) => {
-  const [actor, setActor] = useState('authorized_security_lead');
   const [acknowledged, setAcknowledged] = useState(false);
   const [notes, setNotes] = useState('Human verified: isolated test account parameter substitution.');
   const [loading, setLoading] = useState(false);
@@ -34,7 +33,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      await onApprove(actor, acknowledged, notes);
+      await onApprove('', acknowledged, notes);
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to register approval');
@@ -108,17 +107,16 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
-              Verifying Security Actor:
-            </label>
-            <input
-              type="text"
-              value={actor}
-              onChange={(e) => setActor(e.target.value)}
-              required
-              style={{ width: '100%', padding: '8px 12px', fontSize: '13px' }}
-            />
+          <div style={{
+            marginBottom: '14px',
+            padding: '10px 12px',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-app)',
+            border: '1px solid var(--border-subtle)',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+          }}>
+            <strong style={{ color: 'var(--text-primary)' }}>Approval Authority:</strong> Cryptographically logged and authoritatively bound to your active authenticated session.
           </div>
 
           <div style={{ marginBottom: '16px' }}>

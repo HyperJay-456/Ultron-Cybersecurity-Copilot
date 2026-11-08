@@ -80,6 +80,9 @@ export const ImportTrafficModal: React.FC<ImportTrafficModalProps> = ({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-traffic-title"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
@@ -96,11 +99,12 @@ export const ImportTrafficModal: React.FC<ImportTrafficModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+          <h2 id="import-traffic-title" style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
             Import Traffic
           </h2>
           <button
             onClick={onClose}
+            aria-label="Close dialog"
             style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '4px 8px', borderRadius: '4px' }}
           >
             ✕
@@ -163,22 +167,22 @@ export const ImportTrafficModal: React.FC<ImportTrafficModalProps> = ({
                   )}
                   {presentation.counts.duplicates > 0 && (
                     <div style={{ color: presentation.counts.added === 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                      ℹ <strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped (already present in evidence)
+                      <strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped (already present in evidence)
                     </div>
                   )}
                   {presentation.counts.outOfScope > 0 && (
                     <div style={{ color: 'var(--badge-amber-text)' }}>
-                      ⛔ <strong>{presentation.counts.outOfScope}</strong> out-of-scope transaction{presentation.counts.outOfScope === 1 ? '' : 's'} excluded (target boundary: {targetHost})
+                      <strong>{presentation.counts.outOfScope}</strong> out-of-scope transaction{presentation.counts.outOfScope === 1 ? '' : 's'} excluded (target boundary: {targetHost})
                     </div>
                   )}
                   {presentation.counts.parseFailures > 0 && (
                     <div style={{ color: 'var(--badge-red-text)' }}>
-                      ⚠ <strong>{presentation.counts.parseFailures}</strong> parsing error{presentation.counts.parseFailures === 1 ? '' : 's'}
+                      <strong>{presentation.counts.parseFailures}</strong> parsing error{presentation.counts.parseFailures === 1 ? '' : 's'}
                     </div>
                   )}
                   {presentation.counts.redactedSecrets > 0 && (
                     <div>
-                      🔒 <strong>{presentation.counts.redactedSecrets}</strong> sensitive token{presentation.counts.redactedSecrets === 1 ? '' : 's'} automatically redacted
+                      <strong>{presentation.counts.redactedSecrets}</strong> sensitive token{presentation.counts.redactedSecrets === 1 ? '' : 's'} automatically redacted
                     </div>
                   )}
                   {presentation.counts.added === 0 && presentation.counts.duplicates === 0 && presentation.counts.outOfScope === 0 && presentation.counts.parseFailures === 0 && (
@@ -329,45 +333,54 @@ export const ImportTrafficModal: React.FC<ImportTrafficModalProps> = ({
 
             {/* Format Selector */}
             <div>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+              <label
+                id="format-selector-label"
+                style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}
+              >
                 FORMAT
               </label>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div
+                role="radiogroup"
+                aria-labelledby="format-selector-label"
+                className="format-selector-group"
+              >
                 <button
                   type="button"
+                  role="radio"
+                  id="format-har-btn"
+                  tabIndex={format === 'har' ? 0 : -1}
+                  aria-checked={format === 'har'}
+                  className={`format-selector-btn ${format === 'har' ? 'active' : ''}`}
                   onClick={() => setFormat('har')}
-                  style={{
-                    flex: 1,
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    border: '1px solid',
-                    borderColor: format === 'har' ? 'var(--text-primary)' : 'var(--border-subtle)',
-                    backgroundColor: format === 'har' ? 'var(--bg-app)' : '#FFFFFF',
-                    color: 'var(--text-primary)',
-                    cursor: 'pointer',
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setFormat('raw_http');
+                      document.getElementById('format-raw-btn')?.focus();
+                    }
                   }}
                 >
-                  HTTP Archive (.har)
+                  <span className="format-radio-dot" aria-hidden="true" />
+                  <span>HTTP Archive (HAR)</span>
                 </button>
                 <button
                   type="button"
+                  role="radio"
+                  id="format-raw-btn"
+                  tabIndex={format === 'raw_http' ? 0 : -1}
+                  aria-checked={format === 'raw_http'}
+                  className={`format-selector-btn ${format === 'raw_http' ? 'active' : ''}`}
                   onClick={() => setFormat('raw_http')}
-                  style={{
-                    flex: 1,
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    border: '1px solid',
-                    borderColor: format === 'raw_http' ? 'var(--text-primary)' : 'var(--border-subtle)',
-                    backgroundColor: format === 'raw_http' ? 'var(--bg-app)' : '#FFFFFF',
-                    color: 'var(--text-primary)',
-                    cursor: 'pointer',
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setFormat('har');
+                      document.getElementById('format-har-btn')?.focus();
+                    }
                   }}
                 >
-                  Raw HTTP Request / Response
+                  <span className="format-radio-dot" aria-hidden="true" />
+                  <span>Raw HTTP Request / Response</span>
                 </button>
               </div>
             </div>

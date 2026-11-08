@@ -56,10 +56,14 @@ class AuthorizationType(str, Enum):
 
 
 class AssessmentScopeStatus(str, Enum):
-    """Status of an asset or action with respect to scope."""
+    """Status of an asset or action with respect to scope and evaluation outcome."""
     IN_SCOPE = "IN_SCOPE"
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
     UNKNOWN = "UNKNOWN"
+    SCOPE_UNVERIFIABLE = "SCOPE_UNVERIFIABLE"
+    AUTHORIZATION_EXPIRED = "AUTHORIZATION_EXPIRED"
+    POLICY_VERSION_MISMATCH = "POLICY_VERSION_MISMATCH"
+    SCOPE_EVALUATION_ERROR = "SCOPE_EVALUATION_ERROR"
 
 
 class EpistemicStatus(str, Enum):
@@ -184,6 +188,8 @@ class ExperimentStatus(str, Enum):
     REJECTED = "REJECTED"
     EXECUTED = "EXECUTED"
     ABORTED = "ABORTED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
 
 
 class FindingSeverity(str, Enum):
@@ -223,6 +229,8 @@ class AuthorizationRecord(BaseModel):
     status: AuthorizationStatus = AuthorizationStatus.PENDING
     evidence: Dict[str, Any] = Field(default_factory=dict)
     provenance: Dict[str, Any] = Field(default_factory=dict)
+    scope_policy_hash: Optional[str] = None
+    scope_policy_version: Optional[str] = None
     content_hash: str = ""
 
     def compute_hash(self) -> str:
@@ -237,6 +245,8 @@ class AuthorizationRecord(BaseModel):
             "scope_reference": self.scope_reference,
             "rules": sorted(self.rules),
             "restrictions": sorted(self.restrictions),
+            "scope_policy_hash": self.scope_policy_hash or "",
+            "scope_policy_version": self.scope_policy_version or "",
         }
         raw = json.dumps(payload, sort_keys=True).encode("utf-8")
         return f"AUTH-{hashlib.sha256(raw).hexdigest()[:16].upper()}"
@@ -263,6 +273,8 @@ class AssessmentRecord(BaseModel):
     created_by: str = "HUMAN_OPERATOR"
     authorization_id: Optional[str] = None
     scope_policy_id: Optional[str] = None
+    scope_policy_hash: Optional[str] = None
+    scope_policy_version: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     state_history: List[Dict[str, Any]] = Field(default_factory=list)
@@ -412,7 +424,10 @@ class AssessmentExperiment(BaseModel):
     risk_level: ExperimentRiskLevel = ExperimentRiskLevel.PASSIVE
     created_by: str = "M6_EXPERIMENT_ENGINE"
     status: ExperimentStatus = ExperimentStatus.PROPOSED
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
     execution_result: Optional[Dict[str, Any]] = None
+    result_payload: Optional[Dict[str, Any]] = None
     executed_at: Optional[str] = None
     executed_by: Optional[str] = None
 

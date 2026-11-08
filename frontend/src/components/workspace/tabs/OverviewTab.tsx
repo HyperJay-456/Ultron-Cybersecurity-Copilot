@@ -1,5 +1,6 @@
-import React from 'react';
-import type { AssessmentOverview } from '../../../types';
+import React, { useState, useEffect } from 'react';
+import type { AssessmentOverview, AssessmentLifecycleState } from '../../../types';
+import { updateAssessment } from '../../../api';
 
 interface OverviewTabProps {
   overview: AssessmentOverview;
@@ -15,6 +16,62 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   onRefresh,
 }) => {
   const wf = overview.workflow_status;
+
+  const [targetState, setTargetState] = useState<AssessmentLifecycleState>(overview.state);
+  const [transitionNotes, setTransitionNotes] = useState('');
+  const [transitioning, setTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
+  const [transitionSuccess, setTransitionSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTargetState(overview.state);
+    setTransitionError(null);
+    setTransitionSuccess(null);
+  }, [overview.assessment_id, overview.state]);
+
+  const handleStateTransition = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (targetState === overview.state) return;
+    setTransitioning(true);
+    setTransitionError(null);
+    setTransitionSuccess(null);
+    try {
+      await updateAssessment(overview.assessment_id, {
+        state: targetState,
+        notes: transitionNotes.trim() || undefined,
+      });
+      setTransitionSuccess(`Lifecycle successfully transitioned to ${targetState}`);
+      setTransitionNotes('');
+      onRefresh();
+    } catch (err: any) {
+      setTransitionError(err.message || `Failed to transition state to ${targetState}`);
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const getStateBadge = (state: string) => {
+    switch (state) {
+      case 'AUTHORIZED':
+      case 'ASSESSMENT_ACTIVE':
+      case 'COMPLETED':
+        return { bg: 'var(--badge-green-bg)', text: 'var(--badge-green-text)', border: 'var(--badge-green-border)' };
+      case 'DRAFT':
+      case 'AUTHORIZATION_PENDING':
+      case 'SCOPE_DEFINED':
+      case 'VALIDATION_PENDING':
+      case 'HUMAN_REVIEW':
+        return { bg: 'var(--badge-amber-bg)', text: 'var(--badge-amber-text)', border: 'var(--badge-amber-border)' };
+      case 'CANCELLED':
+      case 'REVOKED':
+      case 'EXPIRED':
+        return { bg: 'var(--badge-red-bg)', text: 'var(--badge-red-text)', border: 'var(--badge-red-border)' };
+      default:
+        return { bg: 'var(--bg-surface-muted)', text: 'var(--text-secondary)', border: 'var(--border-subtle)' };
+    }
+  };
+
+  const stateBadge = getStateBadge(overview.state);
 
   const checklistItems = [
     { label: 'Authorization Validated', completed: wf.authorization_valid, targetSection: 'overview' },
@@ -35,6 +92,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           {warningBanners.map((warn, i) => (
             <div
               key={i}
+              role="alert"
               style={{
                 padding: '10px 16px',
                 borderRadius: 'var(--radius-md)',
@@ -47,7 +105,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 gap: '8px',
               }}
             >
-              <span>⚠️</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
               <span>{warn}</span>
             </div>
           ))}
@@ -142,7 +204,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       </div>
 
-      {/* Two Column Layout: Workflow Lifecycle Checklist & Assessment Metadata */}
+      {/* Two Column Layout: Workflow Lifecycle Checklist & Assessment Governance */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '20px' }}>
         {/* Workflow Lifecycle Checklist */}
         <div style={{
@@ -205,7 +267,20 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           flexDirection: 'column',
           gap: '14px',
         }}>
-          <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Assessment Governance</h4>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Assessment Governance</h4>
+            <span style={{
+              padding: '3px 8px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '11px',
+              fontWeight: 700,
+              background: stateBadge.bg,
+              color: stateBadge.text,
+              border: `1px solid ${stateBadge.border}`,
+            }}>
+              {overview.state}
+            </span>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -227,11 +302,96 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Auth Status:</span>
+              <strong style={{ fontSize: '12px' }}>{overview.authorization_status}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Scope Policy ID:</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
                 {overview.scope_policy_id || 'NOT DEFINED'}
               </span>
             </div>
+          </div>
+
+          {/* Lifecycle State Transition Engine */}
+          <div style={{
+            borderTop: '1px solid var(--border-subtle)',
+            paddingTop: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              Transition Lifecycle State
+            </label>
+            {transitionError && (
+              <div role="alert" style={{ fontSize: '12px', color: 'var(--badge-red-text)', background: 'var(--badge-red-bg)', padding: '6px 10px', borderRadius: 'var(--radius-sm)' }}>
+                {transitionError}
+              </div>
+            )}
+            {transitionSuccess && (
+              <div role="status" style={{ fontSize: '12px', color: 'var(--badge-green-text)', background: 'var(--badge-green-bg)', padding: '6px 10px', borderRadius: 'var(--radius-sm)' }}>
+                {transitionSuccess}
+              </div>
+            )}
+            <form onSubmit={handleStateTransition} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <select
+                  value={targetState}
+                  onChange={(e) => setTargetState(e.target.value as AssessmentLifecycleState)}
+                  aria-label="Target lifecycle state"
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="AUTHORIZATION_PENDING">AUTHORIZATION_PENDING</option>
+                  <option value="AUTHORIZED">AUTHORIZED</option>
+                  <option value="SCOPE_DEFINED">SCOPE_DEFINED</option>
+                  <option value="ASSESSMENT_ACTIVE">ASSESSMENT_ACTIVE</option>
+                  <option value="VALIDATION_PENDING">VALIDATION_PENDING</option>
+                  <option value="HUMAN_REVIEW">HUMAN_REVIEW</option>
+                  <option value="COMPLETED">COMPLETED</option>
+                  <option value="ARCHIVED">ARCHIVED</option>
+                  <option value="CANCELLED">CANCELLED</option>
+                  <option value="REVOKED">REVOKED</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={transitioning || targetState === overview.state}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: targetState === overview.state ? 'var(--bg-surface-muted)' : 'var(--accent-primary)',
+                    color: targetState === overview.state ? 'var(--text-muted)' : 'var(--text-inverse)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: targetState === overview.state ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {transitioning ? 'Saving...' : 'Apply State'}
+                </button>
+              </div>
+              <input
+                type="text"
+                placeholder="Audit transition reason/notes (optional)..."
+                value={transitionNotes}
+                onChange={(e) => setTransitionNotes(e.target.value)}
+                aria-label="Transition reason notes"
+                style={{
+                  width: '100%',
+                  padding: '6px 10px',
+                  fontSize: '11px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              />
+            </form>
           </div>
 
           <div style={{ marginTop: 'auto', borderTop: '1px solid var(--border-subtle)', paddingTop: '14px', display: 'flex', gap: '10px' }}>
@@ -252,12 +412,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             <button
               onClick={onRefresh}
               title="Refresh overview metrics"
+              aria-label="Refresh overview metrics"
               style={{
                 padding: '8px 12px',
                 borderRadius: 'var(--radius-md)',
                 background: 'var(--bg-surface-muted)',
                 border: '1px solid var(--border-subtle)',
                 fontSize: '12px',
+                cursor: 'pointer',
               }}
             >
               Refresh

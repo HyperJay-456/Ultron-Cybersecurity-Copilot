@@ -130,7 +130,8 @@ class SafeExperimentEngine:
             raise KeyError(f"Experiment {experiment_id} not found.")
         exp = self._experiments[experiment_id]
         exp.status = ExperimentStatus.APPROVED
-        exp.executed_by = approver_name
+        exp.approved_by = approver_name
+        exp.approved_at = datetime.now(timezone.utc).isoformat()
         return exp
 
     def import_human_result(
@@ -141,16 +142,29 @@ class SafeExperimentEngine:
     ) -> AssessmentExperiment:
         """
         Imports the empirical result of an experiment executed by a human researcher.
+        Requires explicit prior human approval (status == APPROVED).
         """
         if experiment_id not in self._experiments:
             raise KeyError(f"Experiment {experiment_id} not found.")
         exp = self._experiments[experiment_id]
-        if exp.status not in (ExperimentStatus.APPROVED, ExperimentStatus.PROPOSED):
-            raise ValueError(f"Cannot import result for experiment in state {exp.status.value}")
+        if exp.status != ExperimentStatus.APPROVED:
+            raise ValueError(
+                f"Cannot import result for experiment '{experiment_id}' in state {exp.status.value}: "
+                f"only 'APPROVED' experiments can receive results. Explicit approval is required before result import."
+            )
+
+        if not executed_by or not str(executed_by).strip():
+            raise ValueError("Executed_by actor identifier is required.")
+        if any(t in str(executed_by).upper() for t in ("LLM", "MODEL", "AI", "AUTO", "BOT", "SYSTEM", "AGENT", "ORCHESTRATOR", "COPILOT")):
+            raise ValueError(f"Automated entity '{executed_by}' cannot submit human experiment results.")
+
+        if not isinstance(result_payload, dict):
+            raise ValueError("Result payload must be a valid dictionary.")
 
         exp.status = ExperimentStatus.EXECUTED
         exp.execution_result = result_payload
-        exp.executed_by = executed_by
+        exp.result_payload = result_payload
+        exp.executed_by = executed_by.strip()
         exp.executed_at = datetime.now(timezone.utc).isoformat()
         return exp
 

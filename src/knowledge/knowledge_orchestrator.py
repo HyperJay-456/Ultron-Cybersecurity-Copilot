@@ -24,6 +24,7 @@ Hard Safety Invariants Enforced:
 
 from datetime import datetime, timezone
 import hashlib
+import logging
 import threading
 import uuid
 from typing import Any, Dict, List, Optional
@@ -40,7 +41,14 @@ from src.knowledge.canonical_models import (
 )
 from src.knowledge.citation_engine import GroundedCitationEngine
 from src.knowledge.claim_extractor import KnowledgeClaimExtractor
+from src.knowledge.graph_retriever import (
+    GraphAssistedRetriever,
+    GraphExpansionEvidence,
+    GraphRetrieverMetadata,
+)
+from src.knowledge.knowledge_graph import RelationalKnowledgeGraph
 from src.knowledge.models import KnowledgeChunk
+from src.knowledge.store import VaptKnowledgeStore
 from src.knowledge.sufficiency_engine import (
     KnowledgeSufficiencyEvaluator,
     KnowledgeSufficiencyState,
@@ -52,6 +60,7 @@ from src.research.conflicts import SourceConflictEngine
 from src.research.research_session import ResearchSessionManager
 from src.retrieval.query_rewriter import CybersecurityQueryRewriter
 
+logger = logging.getLogger("m9.orchestrator")
 
 # Global inference mutex enforcing concurrency = 1 for the 4GB VRAM target
 INFERENCE_LOCK = threading.Lock()
@@ -66,9 +75,28 @@ class KnowledgeEscalationDecision(BaseModel):
 class CybersecurityKnowledgeOrchestrator:
     """Central orchestrator for Cybersecurity Knowledge Q&A, Research, and Code Review."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        knowledge_store: Optional[VaptKnowledgeStore] = None,
+        knowledge_graph: Optional[RelationalKnowledgeGraph] = None,
+        graph_retriever: Optional[GraphAssistedRetriever] = None,
+        base_retriever: Optional[Any] = None,
+    ) -> None:
         self.research_manager = ResearchSessionManager()
         self.corpus_chunks = VaptDomainCorpus.get_all_chunks()
+        self.knowledge_store = knowledge_store
+        self.knowledge_graph = knowledge_graph
+        self.base_retriever = base_retriever
+        if graph_retriever is not None:
+            self.graph_retriever = graph_retriever
+        elif knowledge_graph is not None:
+            self.graph_retriever = GraphAssistedRetriever(
+                knowledge_store=knowledge_store,
+                knowledge_graph=knowledge_graph,
+                base_retriever=base_retriever,
+            )
+        else:
+            self.graph_retriever = None
 
     def evaluate_escalation(
         self,
@@ -144,8 +172,23 @@ class CybersecurityKnowledgeOrchestrator:
             # 1. Query Analysis & Rewriting
             expansion = CybersecurityQueryRewriter.rewrite_query(query_text)
             
-            # 2. Local Retrieval against VAPT Corpus
-            retrieved = self._retrieve_relevant_chunks(expansion.rewritten_query, expansion.extracted_domain)
+            # 2. Local Retrieval against VAPT Corpus & Knowledge Store
+            baseline_retrieved = self._retrieve_relevant_chunks(expansion.rewritten_query, expansion.extracted_domain)
+            graph_evidence_records: List[GraphExpansionEvidence] = []
+            graph_meta: Optional[GraphRetrieverMetadata] = None
+
+            if self.graph_retriever:
+                try:
+                    retrieved, graph_evidence_records, graph_meta = self.graph_retriever.retrieve(
+                        query=expansion.rewritten_query,
+                        baseline_chunks=baseline_retrieved,
+                        top_k=6,
+                    )
+                except Exception as e:
+                    logger.warning(f"Graph-assisted retrieval failed, falling back to baseline: {e}")
+                    retrieved = baseline_retrieved
+            else:
+                retrieved = baseline_retrieved
             
             # 3. Code Security Review if code is provided
             code_report = None
@@ -169,6 +212,7 @@ class CybersecurityKnowledgeOrchestrator:
                     sufficiency_status=sufficiency.state.value,
                     epistemic_tier="GENERAL_VAPT_KNOWLEDGE",
                     escalation_level="3B",
+                    graph_metadata=graph_meta.model_dump() if graph_meta else None,
                 )
 
             # 5. Escalation Decision (3B vs 7B)
@@ -203,6 +247,8 @@ class CybersecurityKnowledgeOrchestrator:
                 citations=citation_res.valid_citations,
                 code_report=code_report,
                 expansion=expansion,
+                graph_meta=graph_meta,
+                graph_evidence=graph_evidence_records,
             )
 
             return KnowledgeAnswer(
@@ -214,6 +260,7 @@ class CybersecurityKnowledgeOrchestrator:
                 sufficiency_status=sufficiency.state.value,
                 epistemic_tier="GENERAL_VAPT_KNOWLEDGE",
                 escalation_level=escalation.model_tier,
+                graph_metadata=graph_meta.model_dump() if graph_meta else None,
             )
 
     def _retrieve_relevant_chunks(self, rewritten_query: str, domain: str) -> List[KnowledgeChunk]:
@@ -242,6 +289,38 @@ class CybersecurityKnowledgeOrchestrator:
                     if cid not in chunk_scores or score > chunk_scores[cid][0]:
                         chunk_scores[cid] = (score, chunk)
 
+        # Query base_retriever (e.g. OnnxVectorFts5Retriever) if configured
+        if self.base_retriever:
+            try:
+                base_items = self.base_retriever.retrieve(rewritten_query, top_k=4)
+                for item in base_items:
+                    chunk = getattr(item, "chunk", None)
+                    if chunk:
+                        cid = chunk.chunk_id
+                        if self.graph_retriever and not self.graph_retriever.is_source_eligible("", chunk.document_id):
+                            continue
+                        fused_score = getattr(item, "fused_score", 0.5)
+                        norm_score = min(1.0, fused_score) if fused_score > 0 else 0.5
+                        if cid not in chunk_scores or norm_score > chunk_scores[cid][0]:
+                            chunk_scores[cid] = (norm_score, chunk)
+            except Exception as e:
+                logger.debug(f"Base retriever query note: {e}")
+
+        # Also query registered knowledge_store if available
+        if self.knowledge_store:
+            try:
+                for form in formulations[:2]:
+                    hits = self.knowledge_store.query_lexical(form, top_k=4)
+                    for chunk, score in hits:
+                        cid = chunk.chunk_id
+                        if self.graph_retriever and not self.graph_retriever.is_source_eligible("", chunk.document_id):
+                            continue
+                        norm_score = min(1.0, score / 10.0) if score > 0 else 0.5
+                        if cid not in chunk_scores or norm_score > chunk_scores[cid][0]:
+                            chunk_scores[cid] = (norm_score, chunk)
+            except Exception as e:
+                logger.debug(f"Knowledge store lexical query note: {e}")
+
         sorted_scored = sorted(chunk_scores.values(), key=lambda x: x[0], reverse=True)
         return [c for score, c in sorted_scored[:4]]
 
@@ -252,6 +331,8 @@ class CybersecurityKnowledgeOrchestrator:
         citations: List[KnowledgeCitation],
         code_report: Optional[Any],
         expansion: Any,
+        graph_meta: Optional[GraphRetrieverMetadata] = None,
+        graph_evidence: Optional[List[GraphExpansionEvidence]] = None,
     ) -> str:
         parts: List[str] = [f"### Cybersecurity Knowledge Synthesis: {query.strip()}"]
 
@@ -259,6 +340,21 @@ class CybersecurityKnowledgeOrchestrator:
             parts.append(f"**Identified Weaknesses**: {', '.join(expansion.identified_cwes)}")
         if expansion.identified_cves:
             parts.append(f"**Referenced Advisories**: {', '.join(expansion.identified_cves)}")
+
+        # Graph-assisted conceptual navigation section (if graph entities/relations matched)
+        if graph_meta and graph_meta.entities_matched:
+            labels = [e["label"] for e in graph_meta.entities_matched if e.get("label")]
+            if labels:
+                parts.append(f"**Graph-Traversed Concepts**: {', '.join(labels)}")
+            if graph_evidence:
+                rel_descs = []
+                for ge in graph_evidence:
+                    if ge.relation_type and ge.relation_type != "NODE_ANCHOR":
+                        tgt = ge.connected_entity_label or ge.connected_entity_id or "connected concept"
+                        rel_descs.append(f"{ge.matched_entity_label} --[{ge.relation_type}]--> {tgt} ({ge.epistemic_status})")
+                if rel_descs:
+                    parts.append(f"**Graph Relationships Explored**: {'; '.join(rel_descs[:3])}")
+            parts.append("> *Notice: Graph concepts and relationships serve as retrieval navigation aids; factual claims are grounded strictly in the source passages below.*")
 
         parts.append("\n#### Technical Explanation")
         for claim in claims[:5]:

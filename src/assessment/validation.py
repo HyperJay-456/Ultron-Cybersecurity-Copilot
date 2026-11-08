@@ -38,7 +38,7 @@ from src.assessment.authorization import AuthorizationValidator
 from src.scope.gate import ScopeGate
 
 
-class FindingValidationError(Exception):
+class FindingValidationError(ValueError):
     """Raised when a candidate finding fails any of the 13 verification checks."""
     pass
 
@@ -179,6 +179,36 @@ class FindingValidator:
 
         is_valid = len(failures) == 0
         return is_valid, failures
+
+    @classmethod
+    def validate_candidate_finding(
+        cls,
+        finding: AssessmentFinding,
+        context: AssessmentValidationContext,
+        candidate_reviewer: str,
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validates all 13 checklist checks for a candidate finding and reviewer
+        WITHOUT mutating or requiring finding to already be in HUMAN_VERIFIED state.
+        """
+        candidate = finding.model_copy(update={
+            "verification_status": FindingVerificationStatus.HUMAN_VERIFIED,
+            "verified_by": candidate_reviewer,
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return cls.validate_finding(candidate, context)
+
+    @classmethod
+    def assert_candidate_valid(
+        cls,
+        finding: AssessmentFinding,
+        context: AssessmentValidationContext,
+        candidate_reviewer: str,
+    ) -> None:
+        """Enforces all 13 checks on candidate finding and raises FindingValidationError on failure."""
+        is_valid, failures = cls.validate_candidate_finding(finding, context, candidate_reviewer)
+        if not is_valid:
+            raise FindingValidationError(f"FINDING VALIDATION FAILED CLOSED: {'; '.join(failures)}")
 
     @classmethod
     def assert_finding_valid(

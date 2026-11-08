@@ -41,6 +41,11 @@ frontend/.oxlint_cache/
 # Local data & databases (except schema fixtures)
 data/*.db
 data/*.sqlite
+data/**/*.db
+data/**/*.sqlite
+data/**/*.jsonl
+data/**/*.log
+data/knowledge/staged/
 data/cache/
 vectorstore/
 scope/.tld_cache/

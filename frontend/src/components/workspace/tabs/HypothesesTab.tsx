@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchAssessmentHypotheses, generateAssessmentHypotheses } from '../../../api';
 import type { HypothesisItem } from '../../../types';
 
@@ -16,31 +16,48 @@ export const HypothesesTab: React.FC<HypothesesTabProps> = ({
   const [hypotheses, setHypotheses] = useState<HypothesisItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadHypotheses();
-  }, [assessmentId]);
+  // Stale request guard
+  const activeAssessmentRef = useRef(assessmentId);
 
   const loadHypotheses = async () => {
+    const currentId = assessmentId;
     setLoading(true);
+    setDataError(null);
     try {
-      const data = await fetchAssessmentHypotheses(assessmentId);
+      const data = await fetchAssessmentHypotheses(currentId);
+      if (activeAssessmentRef.current !== currentId) return;
       setHypotheses(data);
-    } catch (err) {
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
       console.error('Failed to load hypotheses:', err);
+      setDataError(err.message || 'Failed to load hypotheses');
     } finally {
-      setLoading(false);
+      if (activeAssessmentRef.current === currentId) {
+        setLoading(false);
+      }
     }
   };
 
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    setDataError(null);
+    setGenerateError(null);
+    loadHypotheses();
+  }, [assessmentId]);
+
   const handleGenerate = async () => {
     setGenerating(true);
+    setGenerateError(null);
     try {
       await generateAssessmentHypotheses(assessmentId);
       await loadHypotheses();
       onRefreshOverview();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to generate hypotheses:', err);
+      setGenerateError(err.message || 'Failed to generate hypotheses');
     } finally {
       setGenerating(false);
     }
@@ -80,6 +97,56 @@ export const HypothesesTab: React.FC<HypothesesTabProps> = ({
         </button>
       </div>
 
+      {/* Error state */}
+      {dataError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            border: '1px solid var(--badge-red-border)',
+            color: 'var(--badge-red-text)',
+            fontSize: '13px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>Error loading hypotheses: {dataError}</span>
+          <button
+            onClick={() => loadHypotheses()}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--badge-red-border)',
+              color: 'var(--badge-red-text)',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {generateError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            border: '1px solid var(--badge-red-border)',
+            color: 'var(--badge-red-text)',
+            fontSize: '13px',
+          }}
+        >
+          {generateError}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
           Loading hypotheses...
@@ -94,7 +161,7 @@ export const HypothesesTab: React.FC<HypothesesTabProps> = ({
           color: 'var(--text-muted)',
           fontSize: '13px',
         }}>
-          No hypotheses generated yet. Ingest telemetry or click "Generate Hypotheses" above.
+          {dataError ? 'Unable to display hypotheses due to an error.' : 'No hypotheses generated yet. Ingest telemetry or click "Generate Hypotheses" above.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

@@ -11,11 +11,14 @@ from src.core.logging import get_logger
 from src.evidence.vault import RedactionVault
 from src.database.manager import DatabaseManager
 from src.response.models import (
+    CitationReference,
+    EpistemicStatus,
     GenerationTermination,
     ResponseChunk,
     ResponseSession,
     ResponseStatus,
     ResponseVersion,
+    RuntimeOutcome,
 )
 from src.response.errors import PersistenceError
 
@@ -32,6 +35,8 @@ class ResponsePersistence:
     CREATE TABLE IF NOT EXISTS response_sessions (
         response_id         TEXT PRIMARY KEY,
         investigation_id    TEXT NOT NULL,
+        assessment_id       TEXT,
+        request_id          TEXT,
         parent_message_id   TEXT,
         model               TEXT NOT NULL,
         cumulative_tokens   INTEGER DEFAULT 0,
@@ -40,7 +45,18 @@ class ResponsePersistence:
         final_content       TEXT NOT NULL,
         started_at          TEXT NOT NULL,
         completed_at        TEXT,
-        active_version      INTEGER DEFAULT 1
+        active_version      INTEGER DEFAULT 1,
+        epistemic_status    TEXT DEFAULT 'MODEL_INFERENCE',
+        runtime_outcome     TEXT DEFAULT 'SUCCESS',
+        validation_passed   INTEGER DEFAULT 1,
+        validation_errors   TEXT,
+        citations           TEXT,
+        total_duration_seconds REAL DEFAULT 0.0,
+        requested_model     TEXT,
+        fallback_model      TEXT,
+        fallback_used       INTEGER DEFAULT 0,
+        fallback_reason     TEXT,
+        user_prompt         TEXT
     );
 
     CREATE TABLE IF NOT EXISTS response_chunks (
@@ -79,37 +95,86 @@ class ResponsePersistence:
         self._initialize_tables()
 
     def _initialize_tables(self) -> None:
-        """Create tables idempotently."""
+        """Create tables and migrate columns idempotently."""
         with self.db.get_connection() as conn:
             conn.executescript(self.DDL_SCHEMA)
+            # Safe column migration for pre-existing tables
+            existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(response_sessions)").fetchall()}
+            migrations = [
+                ("assessment_id", "TEXT"),
+                ("request_id", "TEXT"),
+                ("epistemic_status", "TEXT DEFAULT 'MODEL_INFERENCE'"),
+                ("runtime_outcome", "TEXT DEFAULT 'SUCCESS'"),
+                ("validation_passed", "INTEGER DEFAULT 1"),
+                ("validation_errors", "TEXT"),
+                ("citations", "TEXT"),
+                ("total_duration_seconds", "REAL DEFAULT 0.0"),
+                ("requested_model", "TEXT"),
+                ("fallback_model", "TEXT"),
+                ("fallback_used", "INTEGER DEFAULT 0"),
+                ("fallback_reason", "TEXT"),
+                ("user_prompt", "TEXT"),
+            ]
+            for col_name, col_type in migrations:
+                if col_name not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE response_sessions ADD COLUMN {col_name} {col_type}")
+                    except sqlite3.OperationalError:
+                        pass
             conn.commit()
 
     def create_session(self, session: ResponseSession) -> None:
-        """Insert new response session."""
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO response_sessions (
-                    response_id, investigation_id, parent_message_id, model,
-                    cumulative_tokens, status, termination_reason, final_content,
-                    started_at, completed_at, active_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session.response_id,
-                    session.investigation_id,
-                    session.parent_message_id,
-                    session.model,
-                    session.cumulative_tokens,
-                    session.status.value,
-                    session.termination_reason.value if session.termination_reason else None,
-                    self.vault.redact_text(session.final_content),
-                    session.started_at,
-                    session.completed_at,
-                    session.active_version,
-                ),
-            )
-            conn.commit()
+        """Insert new response session transactionally."""
+        try:
+            with self.db.get_connection() as conn:
+                citations_json = json.dumps([c.model_dump() for c in session.citations]) if session.citations else None
+                validation_errors_json = json.dumps(session.validation_errors) if session.validation_errors else None
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO response_sessions (
+                        response_id, investigation_id, assessment_id, request_id,
+                        parent_message_id, model, cumulative_tokens, status,
+                        termination_reason, final_content, started_at, completed_at,
+                        active_version, epistemic_status, runtime_outcome,
+                        validation_passed, validation_errors, citations, total_duration_seconds,
+                        requested_model, fallback_model, fallback_used, fallback_reason, user_prompt
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session.response_id,
+                        session.investigation_id,
+                        session.assessment_id,
+                        session.request_id,
+                        session.parent_message_id,
+                        session.model,
+                        session.cumulative_tokens,
+                        session.status.value,
+                        session.termination_reason.value if session.termination_reason else None,
+                        self.vault.redact_text(session.final_content),
+                        session.started_at,
+                        session.completed_at,
+                        session.active_version,
+                        session.epistemic_status.value if hasattr(session.epistemic_status, "value") else str(session.epistemic_status),
+                        session.runtime_outcome.value if hasattr(session.runtime_outcome, "value") else str(session.runtime_outcome),
+                        1 if session.validation_passed else 0,
+                        validation_errors_json,
+                        citations_json,
+                        session.total_duration_seconds,
+                        session.requested_model,
+                        session.fallback_model,
+                        1 if session.fallback_used else 0,
+                        session.fallback_reason,
+                        session.user_prompt,
+                    ),
+                )
+                conn.commit()
+                session.persisted = True
+                session.persistence_error = None
+        except Exception as e:
+            session.persisted = False
+            session.persistence_error = str(e)
+            logger.error(f"Failed to persist response session {session.response_id}: {e}")
+            raise PersistenceError(f"Failed to persist response session {session.response_id}: {e}") from e
 
     def update_session(
         self,
@@ -119,29 +184,53 @@ class ResponsePersistence:
         cumulative_tokens: int,
         termination_reason: Optional[GenerationTermination] = None,
         completed_at: Optional[str] = None,
+        epistemic_status: Optional[str] = None,
+        runtime_outcome: Optional[str] = None,
+        validation_passed: Optional[bool] = None,
+        validation_errors: Optional[List[str]] = None,
+        citations: Optional[List[Any]] = None,
+        total_duration_seconds: Optional[float] = None,
     ) -> None:
         """Update session state upon chunk arrival or completion."""
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE response_sessions
-                SET status = ?,
-                    final_content = ?,
-                    cumulative_tokens = ?,
-                    termination_reason = ?,
-                    completed_at = COALESCE(?, completed_at)
-                WHERE response_id = ?
-                """,
-                (
-                    status.value,
-                    self.vault.redact_text(final_content),
-                    cumulative_tokens,
-                    termination_reason.value if termination_reason else None,
-                    completed_at,
-                    response_id,
-                ),
-            )
-            conn.commit()
+        try:
+            with self.db.get_connection() as conn:
+                citations_json = json.dumps([c.model_dump() if hasattr(c, "model_dump") else c for c in citations]) if citations is not None else None
+                validation_errors_json = json.dumps(validation_errors) if validation_errors is not None else None
+                conn.execute(
+                    """
+                    UPDATE response_sessions
+                    SET status = ?,
+                        final_content = ?,
+                        cumulative_tokens = ?,
+                        termination_reason = ?,
+                        completed_at = COALESCE(?, completed_at),
+                        epistemic_status = COALESCE(?, epistemic_status),
+                        runtime_outcome = COALESCE(?, runtime_outcome),
+                        validation_passed = COALESCE(?, validation_passed),
+                        validation_errors = COALESCE(?, validation_errors),
+                        citations = COALESCE(?, citations),
+                        total_duration_seconds = COALESCE(?, total_duration_seconds)
+                    WHERE response_id = ?
+                    """,
+                    (
+                        status.value,
+                        self.vault.redact_text(final_content),
+                        cumulative_tokens,
+                        termination_reason.value if termination_reason else None,
+                        completed_at,
+                        epistemic_status,
+                        runtime_outcome,
+                        (1 if validation_passed else 0) if validation_passed is not None else None,
+                        validation_errors_json,
+                        citations_json,
+                        total_duration_seconds,
+                        response_id,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to update response session {response_id}: {e}")
+            raise PersistenceError(f"Failed to update response session {response_id}: {e}") from e
 
     def save_chunk(self, response_id: str, chunk: ResponseChunk) -> None:
         """Insert or replace an individual response chunk with cryptographic hash."""
@@ -212,9 +301,40 @@ class ResponsePersistence:
                 else None
             )
 
+            # Parse json-serialized fields
+            citations_raw = session_dict.get("citations")
+            citations_list = []
+            if citations_raw:
+                try:
+                    c_data = json.loads(citations_raw)
+                    citations_list = [CitationReference(**c) for c in c_data]
+                except Exception:
+                    citations_list = []
+
+            val_errs_raw = session_dict.get("validation_errors")
+            val_errs_list = []
+            if val_errs_raw:
+                try:
+                    val_errs_list = json.loads(val_errs_raw)
+                except Exception:
+                    val_errs_list = []
+
+            epistemic = (
+                EpistemicStatus(session_dict["epistemic_status"])
+                if session_dict.get("epistemic_status")
+                else EpistemicStatus.MODEL_INFERENCE
+            )
+            runtime_out = (
+                RuntimeOutcome(session_dict["runtime_outcome"])
+                if session_dict.get("runtime_outcome")
+                else RuntimeOutcome.SUCCESS
+            )
+
             return ResponseSession(
                 response_id=session_dict["response_id"],
                 investigation_id=session_dict["investigation_id"],
+                assessment_id=session_dict.get("assessment_id"),
+                request_id=session_dict.get("request_id"),
                 parent_message_id=session_dict.get("parent_message_id"),
                 model=session_dict["model"],
                 chunks=chunks,
@@ -225,6 +345,22 @@ class ResponsePersistence:
                 started_at=session_dict["started_at"],
                 completed_at=session_dict.get("completed_at"),
                 active_version=session_dict.get("active_version", 1),
+                epistemic_status=epistemic,
+                runtime_outcome=runtime_out,
+                validation_passed=bool(session_dict.get("validation_passed", 1)),
+                validation_errors=val_errs_list,
+                citations=citations_list,
+                sources=[c.source_id for c in citations_list],
+                continuation_count=max(0, len(chunks) - 1),
+                is_truncated=session_dict["status"] in (ResponseStatus.TOKEN_LIMIT.value, ResponseStatus.TIMEOUT.value),
+                persisted=True,
+                persistence_error=None,
+                total_duration_seconds=float(session_dict.get("total_duration_seconds") or 0.0),
+                requested_model=session_dict.get("requested_model"),
+                fallback_model=session_dict.get("fallback_model"),
+                fallback_used=bool(session_dict.get("fallback_used", 0)),
+                fallback_reason=session_dict.get("fallback_reason"),
+                user_prompt=session_dict.get("user_prompt"),
             )
 
     def get_chunks(self, response_id: str) -> List[ResponseChunk]:

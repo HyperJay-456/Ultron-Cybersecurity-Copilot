@@ -20,12 +20,17 @@ def workspace_client(tmp_path: Path):
     audit_file = tmp_path / "test_workspace_audit.log"
     auditor = AuditLogger(audit_file)
 
+    from src.dashboard.auth import DashboardAuthManager, DashboardRole
+    auth_mgr = DashboardAuthManager(db_manager=db)
+    sess = auth_mgr.create_session("workspace_tester", DashboardRole.ADMIN)
+
     app = create_dashboard_app(
         db_manager=db,
         audit_logger=auditor,
+        auth_manager=auth_mgr,
         frontend_dist_dir=Path(__file__).resolve().parent.parent.parent / "frontend" / "dist",
     )
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": f"Bearer {sess.token}"})
     return client, db, auditor
 
 

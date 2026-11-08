@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   fetchAssessmentFindings,
   createAssessmentFinding,
@@ -19,12 +19,12 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
 }) => {
   const [findings, setFindings] = useState<FindingItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [filterSeverity, setFilterSeverity] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
 
   // Verify Modal State
   const [verifyingFinding, setVerifyingFinding] = useState<FindingItem | null>(null);
-  const [reviewerName, setReviewerName] = useState('HUMAN_REVIEWER_LEAD');
   const [justification, setJustification] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
@@ -36,26 +36,42 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
   const [asset, setAsset] = useState('example.com');
   const [description, setDescription] = useState('');
   const [impact, setImpact] = useState('');
+  const [evidenceInput, setEvidenceInput] = useState('');
   const [rootCause, setRootCause] = useState('');
   const [remediation, setRemediation] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadFindings();
-  }, [assessmentId]);
+  // Stale state protection
+  const activeAssessmentRef = useRef(assessmentId);
 
   const loadFindings = async () => {
+    const currentId = assessmentId;
     setLoading(true);
+    setDataError(null);
     try {
-      const data = await fetchAssessmentFindings(assessmentId);
+      const data = await fetchAssessmentFindings(currentId);
+      if (activeAssessmentRef.current !== currentId) return;
       setFindings(data);
-    } catch (err) {
-      console.error('Failed to load findings:', err);
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
+      setDataError(err.message || 'Failed to load findings');
     } finally {
-      setLoading(false);
+      if (activeAssessmentRef.current === currentId) {
+        setLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    setDataError(null);
+    setVerificationError(null);
+    setCreateError(null);
+    setVerifyingFinding(null);
+    setShowCreateForm(false);
+    loadFindings();
+  }, [assessmentId]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +81,6 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
     try {
       await verifyFindingAuthoritative(
         verifyingFinding.finding_id,
-        reviewerName.trim(),
         justification.trim()
       );
       setVerifyingFinding(null);
@@ -85,6 +100,11 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
     setSubmitting(true);
     setCreateError(null);
     try {
+      const evidenceList = evidenceInput
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
       await createAssessmentFinding(assessmentId, {
         title: title.trim(),
         severity,
@@ -92,7 +112,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
         affected_component: 'API Endpoint',
         description: description.trim(),
         impact: impact.trim() || 'Unauthorized data access',
-        evidence: [],
+        evidence: evidenceList,
         reproduction_reference: 'EXP-REF',
         security_invariant: 'INV-AUTH-01',
         root_cause: rootCause.trim() || 'Missing server-side permission check',
@@ -102,6 +122,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
       setShowCreateForm(false);
       setTitle('');
       setDescription('');
+      setEvidenceInput('');
       await loadFindings();
       onRefreshOverview();
     } catch (err: any) {
@@ -204,6 +225,40 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
         </select>
       </div>
 
+      {/* Error state */}
+      {dataError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            border: '1px solid var(--badge-red-border)',
+            color: 'var(--badge-red-text)',
+            fontSize: '13px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>Error loading findings: {dataError}</span>
+          <button
+            onClick={() => loadFindings()}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--badge-red-border)',
+              color: 'var(--badge-red-text)',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Findings List */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
@@ -219,7 +274,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
           color: 'var(--text-muted)',
           fontSize: '13px',
         }}>
-          No findings match the current criteria.
+          {dataError ? 'Unable to display findings due to an error.' : 'No findings match the current criteria.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -354,7 +409,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
                   Finding: {verifyingFinding.title} ({verifyingFinding.finding_id})
                 </p>
               </div>
-              <button onClick={() => setVerifyingFinding(null)} style={{ fontSize: '16px' }}>✕</button>
+              <button onClick={() => setVerifyingFinding(null)} aria-label="Close verification dialog" style={{ fontSize: '16px', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕</button>
             </div>
 
             <form onSubmit={handleVerify} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -370,17 +425,15 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
                 </div>
               )}
 
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                  Human Reviewer Identity *
-                </label>
-                <input
-                  type="text"
-                  value={reviewerName}
-                  onChange={(e) => setReviewerName(e.target.value)}
-                  required
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', marginTop: '4px' }}
-                />
+              <div style={{
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-surface-muted)',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '11.5px',
+                color: 'var(--text-secondary)',
+              }}>
+                <strong style={{ color: 'var(--text-primary)' }}>Reviewer Authority:</strong> Verification is authoritatively bound to your active authenticated session. No client-supplied reviewer identity is accepted.
               </div>
 
               <div>
@@ -465,7 +518,7 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
               alignItems: 'center',
             }}>
               <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Create Candidate Finding</h4>
-              <button onClick={() => setShowCreateForm(false)} style={{ fontSize: '16px' }}>✕</button>
+              <button onClick={() => setShowCreateForm(false)} aria-label="Close create finding dialog" style={{ fontSize: '16px', background: 'transparent', border: 'none', cursor: 'pointer' }}>✕</button>
             </div>
 
             <form onSubmit={handleCreateFinding} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -512,6 +565,19 @@ export const FindingsReviewTab: React.FC<FindingsReviewTabProps> = ({
                 required
                 style={{ padding: '8px 12px', fontSize: '12px' }}
               />
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Associated Evidence (comma-separated, e.g. EVID-001, EVID-002)
+                </label>
+                <input
+                  type="text"
+                  placeholder="EVID-001, EVID-002 (Required for downstream 13-point verification)"
+                  value={evidenceInput}
+                  onChange={(e) => setEvidenceInput(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '13px', marginTop: '4px' }}
+                />
+              </div>
 
               <input
                 type="text"

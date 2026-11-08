@@ -30,8 +30,11 @@ def app_client(tmp_path: Path):
         )
         conn.commit()
 
-    app = create_dashboard_app(db_manager=db)
-    client = TestClient(app)
+    from src.dashboard.auth import DashboardAuthManager, DashboardRole
+    auth_mgr = DashboardAuthManager(db_manager=db)
+    sess = auth_mgr.create_session("memory_tester", DashboardRole.ADMIN)
+    app = create_dashboard_app(db_manager=db, auth_manager=auth_mgr)
+    client = TestClient(app, headers={"Authorization": f"Bearer {sess.token}"})
     return client, db
 
 

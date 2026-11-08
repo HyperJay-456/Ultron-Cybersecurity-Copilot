@@ -94,6 +94,7 @@ class RedactionVault:
         r"""(["']?(?:password|passwd|secret|token|api[_-]?key|auth|access[_-]?token|ssn|credit[_-]?card)["']?\s*[:=]\s*["']?)([^"'\s&,;\}]+)(["']?)""",
         re.IGNORECASE,
     )
+    URI_CREDENTIAL_PATTERN = re.compile(r"(://[^:\s/]+:)([^@\s/]+)(@)")
 
     def __init__(self, audit_logger: Optional[Any] = None) -> None:
         self.audit_logger = audit_logger
@@ -233,6 +234,17 @@ class RedactionVault:
             placeholder = self._get_or_create_placeholder(val, "SECRET")
             return f"{prefix}{placeholder}{suffix}"
         text = self.KEY_VALUE_SECRET_PATTERN.sub(_replace_kv, text)
+
+        # 10. Redact URI Credentials (e.g. proto://user:password@host)
+        def _replace_uri_cred(match: re.Match) -> str:
+            prefix = match.group(1)
+            val = match.group(2)
+            suffix = match.group(3)
+            if val.startswith("[REDACTED_"):
+                return match.group(0)
+            placeholder = self._get_or_create_placeholder(val, "SECRET")
+            return f"{prefix}{placeholder}{suffix}"
+        text = self.URI_CREDENTIAL_PATTERN.sub(_replace_uri_cred, text)
 
         return text
 

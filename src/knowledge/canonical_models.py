@@ -83,6 +83,11 @@ class KnowledgeRelationType(str, Enum):
     MAPS_TO_CAPEC = "MAPS_TO_CAPEC"
     MAPS_TO_ATTACK = "MAPS_TO_ATTACK"
     SUPERSEDES = "SUPERSEDES"
+    EXPLOITS = "EXPLOITS"
+    MITIGATES = "MITIGATES"
+    REQUIRES = "REQUIRES"
+    TARGETS = "TARGETS"
+    SUBCLASS_OF = "SUBCLASS_OF"
 
 
 class KnowledgeSource(BaseModel):
@@ -162,6 +167,11 @@ class KnowledgeClaim(BaseModel):
         description="Chain: [source_id, document_id, version_id, section_id, chunk_id]"
     )
 
+    @property
+    def statement(self) -> str:
+        """Backward-compatible alias for text."""
+        return self.text
+
 
 class KnowledgeReference(BaseModel):
     """Structured taxonomy reference (CVE, CWE, CAPEC, ATT&CK, RFC)."""
@@ -232,6 +242,7 @@ class KnowledgeAnswer(BaseModel):
     epistemic_tier: str = "GENERAL_VAPT_KNOWLEDGE"
     conflicts_detected: List[Dict[str, Any]] = Field(default_factory=list)
     escalation_level: str = "3B"
+    graph_metadata: Optional[Dict[str, Any]] = None
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -255,3 +266,70 @@ class KnowledgeResearchSession(BaseModel):
     updated_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+
+
+# ---------------------------------------------------------------------------
+# Persistent Ingestion Jobs & Graph Extraction Status Models
+# ---------------------------------------------------------------------------
+
+MAX_CHUNK_EXTRACTION_ATTEMPTS: int = 3
+
+
+class IngestionJobStatus(str, Enum):
+    """Lifecycle states for durable textbook ingestion jobs."""
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class IngestionPhase(str, Enum):
+    """Granular stages of textbook parsing, chunking, and search indexing."""
+    QUEUED = "QUEUED"
+    UPLOADING = "UPLOADING"
+    EXTRACTING_PDF_TEXT = "EXTRACTING_PDF_TEXT"
+    PARSING_PAGES = "PARSING_PAGES"
+    CREATING_CHUNKS = "CREATING_CHUNKS"
+    PERSISTING_CHUNKS = "PERSISTING_CHUNKS"
+    BUILDING_INDEX = "BUILDING_INDEX"
+    FINALIZING = "FINALIZING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class GraphExtractionStatus(str, Enum):
+    """Lifecycle states for manual, post-ingestion local-AI graph extraction."""
+    NOT_STARTED = "NOT_STARTED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    PAUSED_FOR_CHAT = "PAUSED_FOR_CHAT"
+
+
+class IngestionJobRecord(BaseModel):
+    """Durable job ledger for background textbook ingestion."""
+    job_id: str
+    source_id: str
+    filename: str
+    title: Optional[str] = None
+    authority_level: str = "USER_OWNED"
+    status: IngestionJobStatus = IngestionJobStatus.QUEUED
+    phase: IngestionPhase = IngestionPhase.QUEUED
+    queue_position: int = 0
+    total_pages: int = 0
+    completed_pages: int = 0
+    total_chunks: int = 0
+    completed_chunks: int = 0
+    checkpoint_json: Dict[str, Any] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    retry_count: int = 0
+    cancellation_requested: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    started_at: Optional[str] = None
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: Optional[str] = None
+

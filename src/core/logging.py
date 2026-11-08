@@ -228,6 +228,7 @@ class AuditLogger:
         new_state: Optional[str] = None,
         evidence_ref: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
+        investigation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Record a chained, tamper-evident audit record to the JSONL log file.
@@ -235,7 +236,15 @@ class AuditLogger:
         atomic appending, and physical disk flush.
         """
         now = datetime.now(timezone.utc).isoformat()
-        payload = details or {}
+        payload = dict(details or {})
+        
+        # Determine and bind investigation_id if applicable
+        bound_inv_id = investigation_id or payload.get("investigation_id")
+        if not bound_inv_id and subject_id and (subject_id.startswith("INV-") or subject_id.startswith("inv-")):
+            bound_inv_id = subject_id
+        if bound_inv_id:
+            payload["investigation_id"] = bound_inv_id
+
         payload_hash = self.compute_canonical_hash(payload)
 
         with self._lock:
@@ -268,6 +277,8 @@ class AuditLogger:
                     "record_hash": record_hash,
                     "details": payload,
                 }
+                if bound_inv_id:
+                    record["investigation_id"] = bound_inv_id
 
                 line = json.dumps(record, sort_keys=True, default=str) + "\n"
                 with open(self.audit_file_path, "a", encoding="utf-8") as f:
@@ -302,6 +313,25 @@ class AuditLogger:
         if limit:
             return records[-limit:]
         return records
+
+    def read_records_for_investigation(
+        self,
+        investigation_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read audit records strictly matching a specific investigation ID."""
+        all_records = self.read_records()
+        target_inv = str(investigation_id).strip()
+        filtered = [
+            r for r in all_records
+            if r.get("investigation_id") == target_inv
+            or r.get("details", {}).get("investigation_id") == target_inv
+            or r.get("subject_id") == target_inv
+        ]
+        if limit:
+            return filtered[-limit:]
+        return filtered
+
 
 
 def verify_audit_log(audit_file_path: Path) -> AuditLogVerificationResult:

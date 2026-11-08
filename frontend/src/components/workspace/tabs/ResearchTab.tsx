@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { generateAssessmentHypotheses } from '../../../api';
 
 interface ResearchTabProps {
@@ -15,6 +15,14 @@ export const ResearchTab: React.FC<ResearchTabProps> = ({
   const [activeAgent, setActiveAgent] = useState<string>('AppSec Analyst');
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisOutput, setAnalysisOutput] = useState<string | null>(null);
+
+  // Stale request guard
+  const activeAssessmentRef = useRef(assessmentId);
+
+  useEffect(() => {
+    activeAssessmentRef.current = assessmentId;
+    setAnalysisOutput(null);
+  }, [assessmentId]);
 
   const specializedAgents = [
     {
@@ -77,7 +85,7 @@ export const ResearchTab: React.FC<ResearchTabProps> = ({
         <div>
           <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Integrated Security Research</h4>
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            Specialized analytical agents and cybersecurity knowledge retrieval (M9 RAG & M12 Memory)
+            Specialized analytical agents and cybersecurity knowledge retrieval
           </p>
         </div>
         <div style={{

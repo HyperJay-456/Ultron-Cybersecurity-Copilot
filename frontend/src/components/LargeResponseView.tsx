@@ -98,7 +98,10 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
     if (!responseId) return;
     try {
       setLoadingAction('stop');
-      await stopResponseGeneration(responseId);
+      const res = await stopResponseGeneration(responseId);
+      if (res.stopped && onUpdateMessageContent) {
+        onUpdateMessageContent(message.id, message.content);
+      }
       setStatusMessage('Generation stopped');
     } catch (err: any) {
       setStatusMessage(`Stop failed: ${err.message}`);
@@ -185,7 +188,7 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
 
   const renderInlineTokens = (text: string): React.ReactNode => {
     const tokens: React.ReactNode[] = [];
-    const regex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
+    const regex = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[((?:OBS|FACT-OBS|CHK|HYP|EXP|FND)-[A-Za-z0-9\-_]+)\]|\[((?:CVE-\d{4}-\d+|CWE-\d+))\]|\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
@@ -193,14 +196,89 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
       if (match.index > lastIndex) {
         tokens.push(text.slice(lastIndex, match.index));
       }
-      const token = match[0];
-      if (token.startsWith('**') && token.endsWith('**')) {
+      const fullMatch = match[0];
+      const linkText = match[2];
+      const linkUrl = match[3];
+      const citationId = match[4];
+      const standardId = match[5];
+
+      if (linkText && linkUrl) {
+        tokens.push(
+          <a
+            key={`a-${match.index}`}
+            href={linkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: 'var(--accent-primary, #3B82F6)',
+              textDecoration: 'underline',
+              wordBreak: 'break-all',
+            }}
+          >
+            {linkText}
+          </a>
+        );
+      } else if (citationId) {
+        const isObs = citationId.startsWith('OBS') || citationId.startsWith('FACT-OBS');
+        const badgeColor = isObs ? '#3B82F6' : '#10B981';
+        const badgeBg = isObs ? 'rgba(59, 130, 246, 0.12)' : 'rgba(16, 185, 129, 0.12)';
+        const badgeBorder = isObs ? 'rgba(59, 130, 246, 0.3)' : 'rgba(16, 185, 129, 0.3)';
+        tokens.push(
+          <span
+            key={`cit-${match.index}`}
+            className="citation-badge"
+            data-citation-id={citationId}
+            title={isObs ? `Target Observation Evidence: ${citationId}` : `Security Artifact: ${citationId}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '1px 6px',
+              margin: '0 2px',
+              borderRadius: '4px',
+              fontSize: '11.5px',
+              fontFamily: '"JetBrains Mono", Consolas, Menlo, monospace',
+              fontWeight: 600,
+              backgroundColor: badgeBg,
+              color: badgeColor,
+              border: `1px solid ${badgeBorder}`,
+              verticalAlign: 'baseline',
+            }}
+          >
+            {citationId}
+          </span>
+        );
+      } else if (standardId) {
+        tokens.push(
+          <span
+            key={`std-${match.index}`}
+            className="citation-badge citation-standard"
+            data-standard-id={standardId}
+            title={`Security Knowledge Standard: ${standardId}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '1px 6px',
+              margin: '0 2px',
+              borderRadius: '4px',
+              fontSize: '11.5px',
+              fontFamily: '"JetBrains Mono", Consolas, Menlo, monospace',
+              fontWeight: 600,
+              backgroundColor: 'rgba(139, 92, 246, 0.12)',
+              color: '#8B5CF6',
+              border: '1px solid rgba(139, 92, 246, 0.3)',
+              verticalAlign: 'baseline',
+            }}
+          >
+            {standardId}
+          </span>
+        );
+      } else if (fullMatch.startsWith('**') && fullMatch.endsWith('**')) {
         tokens.push(
           <strong key={`b-${match.index}`} style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-            {token.slice(2, -2)}
+            {fullMatch.slice(2, -2)}
           </strong>
         );
-      } else if (token.startsWith('`') && token.endsWith('`')) {
+      } else if (fullMatch.startsWith('`') && fullMatch.endsWith('`')) {
         tokens.push(
           <code
             key={`c-${match.index}`}
@@ -214,11 +292,11 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
               border: '1px solid var(--border-subtle)',
             }}
           >
-            {token.slice(1, -1)}
+            {fullMatch.slice(1, -1)}
           </code>
         );
-      } else if (token.startsWith('*') && token.endsWith('*')) {
-        tokens.push(<em key={`i-${match.index}`}>{token.slice(1, -1)}</em>);
+      } else if (fullMatch.startsWith('*') && fullMatch.endsWith('*')) {
+        tokens.push(<em key={`i-${match.index}`}>{fullMatch.slice(1, -1)}</em>);
       }
       lastIndex = regex.lastIndex;
     }
@@ -237,15 +315,101 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
     let codeLines: string[] = [];
     let tableLines: string[] = [];
     let listItems: { ordered: boolean; num?: string; text: string }[] = [];
+    let blockquoteLines: string[] = [];
+
+    const flushBlockquote = (key: string) => {
+      if (blockquoteLines.length === 0) return;
+      const fullQuote = blockquoteLines.join('\n');
+      const isUnverifiedDisclaimer =
+        fullQuote.includes('General model knowledge') ||
+        fullQuote.includes('not verified against ingested sources');
+
+      if (isUnverifiedDisclaimer) {
+        blocks.push(
+          <div
+            key={key}
+            data-testid="general-model-knowledge-disclaimer"
+            style={{
+              margin: '16px 0',
+              padding: '12px 16px',
+              backgroundColor: 'rgba(225, 29, 72, 0.08)',
+              borderLeft: '4px solid var(--accent-primary)',
+              borderRadius: '0 var(--radius-md) var(--radius-md) 0',
+              color: 'var(--text-primary)',
+              boxShadow: 'var(--shadow-subtle)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <span style={{ fontSize: '14px' }}>⚠️</span>
+              <span
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  color: 'var(--accent-primary)',
+                }}
+              >
+                General Model Knowledge — Not Verified Against Ingested Sources
+              </span>
+            </div>
+            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              {blockquoteLines.map((bLine, bIdx) => {
+                const clean = bLine
+                  .replace(/^>\s*/, '')
+                  .replace(/^⚠️\s*\*\*General model knowledge[^*]*\*\*\s*/i, '')
+                  .trim();
+                return clean ? (
+                  <p key={bIdx} style={{ margin: '4px 0' }}>
+                    {renderInlineMarkdown(clean)}
+                  </p>
+                ) : null;
+              })}
+            </div>
+          </div>
+        );
+      } else {
+        blocks.push(
+          <blockquote
+            key={key}
+            style={{
+              margin: '12px 0',
+              padding: '8px 16px',
+              borderLeft: '3px solid var(--border-strong)',
+              backgroundColor: 'var(--bg-surface-muted)',
+              color: 'var(--text-secondary)',
+              fontStyle: 'italic',
+              borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
+            }}
+          >
+            {blockquoteLines.map((bLine, bIdx) => (
+              <p key={bIdx} style={{ margin: '4px 0' }}>
+                {renderInlineMarkdown(bLine.replace(/^>\s*/, ''))}
+              </p>
+            ))}
+          </blockquote>
+        );
+      }
+      blockquoteLines = [];
+    };
 
     const flushList = (key: string) => {
       if (listItems.length === 0) return;
       const isOrdered = listItems[0].ordered;
+      const startNum = listItems[0].num ? parseInt(listItems[0].num, 10) : 1;
       blocks.push(
         isOrdered ? (
-          <ol key={key} style={{ margin: '8px 0 12px 22px', padding: 0, lineHeight: 1.6 }}>
+          <ol
+            key={key}
+            start={startNum}
+            style={{ margin: '8px 0 12px 22px', padding: 0, lineHeight: 1.6 }}
+          >
             {listItems.map((item, idx) => (
-              <li key={idx} style={{ marginBottom: '6px' }}>
+              <li
+                key={idx}
+                value={item.num ? parseInt(item.num, 10) : undefined}
+                style={{ marginBottom: '6px' }}
+              >
                 {renderInlineMarkdown(item.text)}
               </li>
             ))}
@@ -306,6 +470,7 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
       if (line.trim().startsWith('```')) {
         flushList(`list-${i}`);
         flushTable(`tbl-${i}`);
+        flushBlockquote(`quote-${i}`);
         if (!inCode) {
           inCode = true;
           codeLang = line.trim().replace('```', '').trim() || 'plaintext';
@@ -376,6 +541,16 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
         continue;
       }
 
+      // Blockquotes (> ...)
+      if (line.trim().startsWith('>')) {
+        flushList(`list-${i}`);
+        flushTable(`tbl-${i}`);
+        blockquoteLines.push(line.trim());
+        continue;
+      } else if (blockquoteLines.length > 0) {
+        flushBlockquote(`quote-${i}`);
+      }
+
       // Tables
       if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
         flushList(`list-${i}`);
@@ -397,6 +572,24 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
         if (listItems.length > 0 && listItems[0].ordered) flushList(`list-${i}`);
         listItems.push({ ordered: false, text: unorderedMatch[1] });
         continue;
+      } else if (line.trim().length === 0 && listItems.length > 0) {
+        // Check if the list continues after this blank line (loose list handling)
+        let continuesList = false;
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextTrim = lines[j].trim();
+          if (nextTrim.length === 0) continue;
+          if (listItems[0].ordered && nextTrim.match(/^\d+\.\s+/)) {
+            continuesList = true;
+          } else if (!listItems[0].ordered && nextTrim.match(/^[-*]\s+/)) {
+            continuesList = true;
+          }
+          break;
+        }
+        if (continuesList) {
+          continue;
+        } else {
+          flushList(`list-${i}`);
+        }
       } else {
         flushList(`list-${i}`);
       }
@@ -444,6 +637,7 @@ export const LargeResponseView: React.FC<LargeResponseViewProps> = ({
 
     flushList('list-end');
     flushTable('tbl-end');
+    flushBlockquote('quote-end');
 
     if (inCode && codeLines.length > 0) {
       blocks.push(

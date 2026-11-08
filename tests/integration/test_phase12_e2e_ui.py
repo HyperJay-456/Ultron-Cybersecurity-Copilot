@@ -27,12 +27,17 @@ def e2e_client():
         db_manager.initialize_schema()
         audit_logger = AuditLogger(audit_file_path=audit_path)
 
+        from src.dashboard.auth import DashboardAuthManager, DashboardRole
+        auth_mgr = DashboardAuthManager(db_manager=db_manager)
+        sess = auth_mgr.create_session("e2e_admin", DashboardRole.ADMIN)
+
         app = create_dashboard_app(
             db_manager=db_manager,
             audit_logger=audit_logger,
+            auth_manager=auth_mgr,
             frontend_dist_dir=Path("frontend/dist"),
         )
-        client = TestClient(app)
+        client = TestClient(app, headers={"Authorization": f"Bearer {sess.token}"})
         yield client, db_manager, audit_logger
 
 

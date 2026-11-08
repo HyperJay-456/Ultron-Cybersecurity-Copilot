@@ -97,6 +97,7 @@ def make_phase8_synthetic_scenario(
 # 1. Addendum E: Model Digest Consistency Check Against Phase 0
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_ollama
 def test_phase8_digest_consistency_against_phase0():
     """Verify currently loaded model digests match Phase 0 recorded digests exactly."""
     import urllib.request
@@ -272,6 +273,7 @@ def test_phase8_grounding_validation_rejects_unsupported_ids():
 # 6. Complete Live Cascade Sweep Across All Required Conditions
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_ollama
 def test_phase8_live_cascade_full_suite():
     """
     Execute full live Mode 1 Batch-Sequential cascade against local Ollama.

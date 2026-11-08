@@ -8,6 +8,7 @@ Implements M3.5 per M3 Plan v2.3.8:
 - Read-only connection mode for production runtime
 """
 
+from datetime import datetime, timezone
 import json
 import logging
 import re
@@ -55,7 +56,7 @@ class VaptKnowledgeStore:
 
         if not self.read_only:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(str(self.db_path))
+            self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._init_schema()
         else:
             if not self.db_path.exists():
@@ -65,7 +66,7 @@ class VaptKnowledgeStore:
                 )
             # Open in read-only URI mode to prevent accidental runtime mutation
             uri = f"file:{self.db_path.resolve().as_posix()}?mode=ro"
-            self.conn = sqlite3.connect(uri, uri=True)
+            self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
 
         self.conn.row_factory = sqlite3.Row
 
@@ -113,6 +114,65 @@ class VaptKnowledgeStore:
                     category_tags,
                     tokenize = 'porter unicode61'
                 )
+            """)
+
+            # Persistent source registry for user-controlled textbooks and documents
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS knowledge_sources (
+                    source_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    authority_level TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    format TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    original_checksum TEXT NOT NULL,
+                    page_count INTEGER DEFAULT 0,
+                    chunk_count INTEGER DEFAULT 0,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ksource_hash ON knowledge_sources(content_hash)
+            """)
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ksource_status ON knowledge_sources(status)
+            """)
+
+            # Persistent ingestion job queue and checkpoint store
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    title TEXT,
+                    authority_level TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    queue_position INTEGER DEFAULT 0,
+                    total_pages INTEGER DEFAULT 0,
+                    completed_pages INTEGER DEFAULT 0,
+                    total_chunks INTEGER DEFAULT 0,
+                    completed_chunks INTEGER DEFAULT 0,
+                    checkpoint_json TEXT NOT NULL DEFAULT '{}',
+                    error_message TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    cancellation_requested INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                )
+            """)
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ijob_status ON ingestion_jobs(status)
+            """)
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ijob_source ON ingestion_jobs(source_id)
             """)
 
     def insert_document(
@@ -320,6 +380,297 @@ class VaptKnowledgeStore:
             content_hash=row["content_hash"],
             trust_tier=row["trust_tier"],
         )
+
+    def insert_source(
+        self,
+        source_id: str,
+        title: str,
+        source_type: str,
+        authority_level: str,
+        filename: str,
+        format: str,
+        content_hash: str,
+        original_checksum: str,
+        page_count: int = 0,
+        chunk_count: int = 0,
+        status: str = "REGISTERED",
+        error_message: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a registered knowledge source record."""
+        if self.read_only:
+            raise VaptStoreError("READ_ONLY_VIOLATION", "Cannot insert into read-only store")
+
+        now = json.dumps(metadata or {})
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat()
+
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO knowledge_sources (
+                    source_id, title, source_type, authority_level,
+                    filename, format, content_hash, original_checksum,
+                    page_count, chunk_count, status, error_message,
+                    metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id, title, source_type, authority_level,
+                    filename, format, content_hash, original_checksum,
+                    page_count, chunk_count, status, error_message,
+                    now, ts, ts
+                ),
+            )
+
+    def update_source_status(
+        self,
+        source_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+        chunk_count: Optional[int] = None,
+        page_count: Optional[int] = None,
+    ) -> None:
+        """Atomically update processing state of a registered source."""
+        if self.read_only:
+            raise VaptStoreError("READ_ONLY_VIOLATION", "Cannot update read-only store")
+
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat()
+
+        with self.conn:
+            if chunk_count is not None and page_count is not None:
+                self.conn.execute(
+                    """
+                    UPDATE knowledge_sources
+                    SET status = ?, error_message = ?, chunk_count = ?, page_count = ?, updated_at = ?
+                    WHERE source_id = ?
+                    """,
+                    (status, error_message, chunk_count, page_count, ts, source_id),
+                )
+            elif chunk_count is not None:
+                self.conn.execute(
+                    """
+                    UPDATE knowledge_sources
+                    SET status = ?, error_message = ?, chunk_count = ?, updated_at = ?
+                    WHERE source_id = ?
+                    """,
+                    (status, error_message, chunk_count, ts, source_id),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE knowledge_sources
+                    SET status = ?, error_message = ?, updated_at = ?
+                    WHERE source_id = ?
+                    """,
+                    (status, error_message, ts, source_id),
+                )
+
+    def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch registered source details by ID."""
+        cursor = self.conn.execute(
+            "SELECT * FROM knowledge_sources WHERE source_id = ?",
+            (source_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_source_by_hash(self, content_hash: str) -> Optional[Dict[str, Any]]:
+        """Fetch active source by content hash to enforce deduplication."""
+        cursor = self.conn.execute(
+            "SELECT * FROM knowledge_sources WHERE content_hash = ? AND status != 'DEACTIVATED'",
+            (content_hash,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def list_sources(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List registered sources ordered by creation time DESC."""
+        if status:
+            cursor = self.conn.execute(
+                "SELECT * FROM knowledge_sources WHERE status = ? ORDER BY created_at DESC",
+                (status,),
+            )
+        else:
+            cursor = self.conn.execute(
+                "SELECT * FROM knowledge_sources ORDER BY created_at DESC"
+            )
+        return [dict(r) for r in cursor.fetchall()]
+
+    def deactivate_source(self, source_id: str) -> bool:
+        """Deactivate a source and remove its chunks from current retrieval."""
+        if self.read_only:
+            raise VaptStoreError("READ_ONLY_VIOLATION", "Cannot deactivate in read-only store")
+
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat()
+
+        with self.conn:
+            # Update status in sources registry
+            cursor = self.conn.execute(
+                "UPDATE knowledge_sources SET status = 'DEACTIVATED', updated_at = ? WHERE source_id = ?",
+                (ts, source_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+
+            # Remove associated chunks from FTS5 index to prevent retrieval contamination
+            self.conn.execute(
+                """
+                DELETE FROM fts_chunks
+                WHERE chunk_id IN (
+                    SELECT chunk_id FROM chunks WHERE document_id = ?
+                )
+                """,
+                (f"DOC-{source_id}",),
+            )
+        return True
+
+    def delete_source(self, source_id: str) -> bool:
+        """Atomically delete source, documents, and chunks."""
+        if self.read_only:
+            raise VaptStoreError("READ_ONLY_VIOLATION", "Cannot delete from read-only store")
+
+        doc_id = f"DOC-{source_id}"
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM fts_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = ?)",
+                (doc_id,),
+            )
+            self.conn.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+            self.conn.execute("DELETE FROM documents WHERE document_id = ?", (doc_id,))
+            cursor = self.conn.execute("DELETE FROM knowledge_sources WHERE source_id = ?", (source_id,))
+            return cursor.rowcount > 0
+
+    def get_chunks_for_document(self, document_id: str) -> List[KnowledgeChunk]:
+        """Fetch all chunks associated with a specific document ID."""
+        cursor = self.conn.execute(
+            """
+            SELECT chunk_id, document_id, source_type, knowledge_type,
+                   category_tags, title, section_heading, content,
+                   token_estimate, content_hash, trust_tier
+            FROM chunks WHERE document_id = ? ORDER BY chunk_id ASC
+            """,
+            (document_id,),
+        )
+        return [self._row_to_chunk(row) for row in cursor.fetchall()]
+
+    # -------------------------------------------------------------------------
+    # Ingestion Job Queue & Persistence
+    # -------------------------------------------------------------------------
+
+    def insert_ingestion_job(self, job_dict: Dict[str, Any]) -> None:
+        """Insert or replace an ingestion job record."""
+        now = datetime.now(timezone.utc).isoformat()
+        checkpoint = job_dict.get("checkpoint_json")
+        if isinstance(checkpoint, dict):
+            checkpoint = json.dumps(checkpoint)
+        elif not checkpoint:
+            checkpoint = "{}"
+
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO ingestion_jobs (
+                    job_id, source_id, filename, title, authority_level,
+                    status, phase, queue_position, total_pages, completed_pages,
+                    total_chunks, completed_chunks, checkpoint_json, error_message,
+                    retry_count, cancellation_requested, created_at, started_at,
+                    updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_dict["job_id"],
+                    job_dict["source_id"],
+                    job_dict["filename"],
+                    job_dict.get("title"),
+                    job_dict.get("authority_level", "USER_OWNED"),
+                    job_dict.get("status", "QUEUED"),
+                    job_dict.get("phase", "QUEUED"),
+                    job_dict.get("queue_position", 0),
+                    job_dict.get("total_pages", 0),
+                    job_dict.get("completed_pages", 0),
+                    job_dict.get("total_chunks", 0),
+                    job_dict.get("completed_chunks", 0),
+                    checkpoint,
+                    job_dict.get("error_message"),
+                    job_dict.get("retry_count", 0),
+                    1 if job_dict.get("cancellation_requested") else 0,
+                    job_dict.get("created_at", now),
+                    job_dict.get("started_at"),
+                    job_dict.get("updated_at", now),
+                    job_dict.get("completed_at"),
+                ),
+            )
+
+    def update_ingestion_job(self, job_id: str, updates: Dict[str, Any]) -> bool:
+        """Update fields on an ingestion job record."""
+        if not updates:
+            return True
+        now = datetime.now(timezone.utc).isoformat()
+        set_clauses: List[str] = ["updated_at = ?"]
+        params: List[Any] = [now]
+
+        for k, v in updates.items():
+            if k in ("job_id", "updated_at"):
+                continue
+            if k == "checkpoint_json" and isinstance(v, dict):
+                v = json.dumps(v)
+            elif k == "cancellation_requested":
+                v = 1 if v else 0
+            set_clauses.append(f"{k} = ?")
+            params.append(v)
+
+        params.append(job_id)
+        sql = f"UPDATE ingestion_jobs SET {', '.join(set_clauses)} WHERE job_id = ?"
+        with self.conn:
+            cursor = self.conn.execute(sql, tuple(params))
+            return cursor.rowcount > 0
+
+    def get_ingestion_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single ingestion job record."""
+        cursor = self.conn.execute("SELECT * FROM ingestion_jobs WHERE job_id = ?", (job_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        if isinstance(res.get("checkpoint_json"), str):
+            try:
+                res["checkpoint_json"] = json.loads(res["checkpoint_json"])
+            except Exception:
+                res["checkpoint_json"] = {}
+        res["cancellation_requested"] = bool(res.get("cancellation_requested", 0))
+        return res
+
+    def list_ingestion_jobs(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List ingestion jobs ordered by created_at ASC (FIFO)."""
+        if status:
+            cursor = self.conn.execute(
+                "SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY queue_position ASC, created_at ASC",
+                (status,),
+            )
+        else:
+            cursor = self.conn.execute(
+                "SELECT * FROM ingestion_jobs ORDER BY queue_position ASC, created_at ASC"
+            )
+        jobs: List[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            res = dict(row)
+            if isinstance(res.get("checkpoint_json"), str):
+                try:
+                    res["checkpoint_json"] = json.loads(res["checkpoint_json"])
+                except Exception:
+                    res["checkpoint_json"] = {}
+            res["cancellation_requested"] = bool(res.get("cancellation_requested", 0))
+            jobs.append(res)
+        return jobs
+
+    def delete_ingestion_job(self, job_id: str) -> bool:
+        """Remove a job record."""
+        with self.conn:
+            cursor = self.conn.execute("DELETE FROM ingestion_jobs WHERE job_id = ?", (job_id,))
+            return cursor.rowcount > 0
 
     def close(self) -> None:
         """Close SQLite database connection."""

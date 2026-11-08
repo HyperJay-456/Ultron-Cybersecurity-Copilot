@@ -318,19 +318,20 @@ def test_11_lab_target_local_fixture_ingestion_succeeds(workspace_service: Works
     # Ingest through workspace_service (which was failing with 500 sqlite3.OperationalError)
     result_dict = workspace_service.ingest_traffic(inv_id, req)
 
-    # 16 total transactions: 15 distinct observations + 1 duplicate (Finding 8B cache leakage test)
+    # 16 total transactions: Previously 15 distinct observations + 1 duplicate (Finding 8B had identical body/URL but distinct headers).
+    # With canonical header integrity included in the evidence digest, all 16 transactions are recognized as distinct observations.
     assert result_dict["imported_count"] == 16
-    assert result_dict["accepted_count"] == 15
-    assert result_dict["observations_added"] == 15
-    assert result_dict["duplicate_count"] == 1
-    assert result_dict["duplicates"] == 1
+    assert result_dict["accepted_count"] == 16
+    assert result_dict["observations_added"] == 16
+    assert result_dict["duplicate_count"] == 0
+    assert result_dict["duplicates"] == 0
     assert result_dict["out_of_scope_count"] == 0
     assert len(result_dict["out_of_scope"]) == 0
     assert result_dict["parsing_failures"] == 0
 
     # Verify observations in database
     obs = temp_db.get_investigation_observations(inv_id)
-    assert len(obs) == 15
+    assert len(obs) == 16
     assert all(o["host"] == "lab.target.local" for o in obs)
 
 

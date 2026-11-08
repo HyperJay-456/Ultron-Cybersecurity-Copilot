@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchAssessmentAssets, fetchAssessmentObservations } from '../../../api';
 import type { AssetItem } from '../../../types';
 
@@ -10,25 +10,39 @@ export const AttackSurfaceTab: React.FC<AttackSurfaceTabProps> = ({ assessmentId
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [observations, setObservations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  // Stale request guard
+  const activeAssessmentRef = useRef(assessmentId);
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const [a, o] = await Promise.all([
-          fetchAssessmentAssets(assessmentId),
-          fetchAssessmentObservations(assessmentId),
-        ]);
-        setAssets(a);
-        setObservations(o);
-      } catch (err) {
-        console.error('Failed to load attack surface data:', err);
-      } finally {
+    activeAssessmentRef.current = assessmentId;
+    setDataError(null);
+    loadData();
+  }, [assessmentId]);
+
+  async function loadData() {
+    const currentId = assessmentId;
+    setLoading(true);
+    setDataError(null);
+    try {
+      const [a, o] = await Promise.all([
+        fetchAssessmentAssets(currentId),
+        fetchAssessmentObservations(currentId),
+      ]);
+      if (activeAssessmentRef.current !== currentId) return;
+      setAssets(a);
+      setObservations(o);
+    } catch (err: any) {
+      if (activeAssessmentRef.current !== currentId) return;
+      console.error('Failed to load attack surface data:', err);
+      setDataError(err.message || 'Failed to load attack surface data');
+    } finally {
+      if (activeAssessmentRef.current === currentId) {
         setLoading(false);
       }
     }
-    loadData();
-  }, [assessmentId]);
+  }
 
   // Aggregate endpoints from observations
   const endpoints = observations
@@ -74,6 +88,40 @@ export const AttackSurfaceTab: React.FC<AttackSurfaceTabProps> = ({ assessmentId
           Epistemic Rule: Observation-backed routes
         </div>
       </div>
+
+      {/* Error state */}
+      {dataError && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--badge-red-bg)',
+            border: '1px solid var(--badge-red-border)',
+            color: 'var(--badge-red-text)',
+            fontSize: '13px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>Error loading attack surface: {dataError}</span>
+          <button
+            onClick={() => loadData()}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--badge-red-border)',
+              color: 'var(--badge-red-text)',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>

@@ -39,7 +39,7 @@ def dashboard_client(tmp_path: Path):
         "state": "New",
     })
 
-    app = create_dashboard_app(db_manager=db, audit_logger=auditor)
+    app = create_dashboard_app(db_manager=db, audit_logger=auditor, require_auth=False)
     client = TestClient(app)
     return client, hyp_id
 

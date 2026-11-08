@@ -547,6 +547,7 @@ def test_18_baseline_prompt_remains_available_for_clean_comparison():
     assert "COUNTERFACTUAL REASONING INSTRUCTIONS" in ctx_i3.prompt
 
 
+@pytest.mark.live_ollama
 @pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_OLLAMA") == "1",
     reason="Live Ollama execution skipped by environment flag",

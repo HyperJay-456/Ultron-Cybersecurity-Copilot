@@ -121,20 +121,29 @@ class OllamaRunner(BaseLLMRunner):
         self.num_predict = num_predict
         self.seed = seed
         self.keep_alive = keep_alive
+        self._availability_cache: Optional[Tuple[float, bool]] = None
 
-    def is_available(self) -> bool:
-        """Check if Ollama server is responsive."""
+    def is_available(self, max_cache_age: float = 3.0) -> bool:
+        """Check if Ollama server is responsive with short TTL caching."""
+        now = time.monotonic()
+        if self._availability_cache is not None:
+            cached_time, cached_val = self._availability_cache
+            if now - cached_time < max_cache_age:
+                return cached_val
         try:
             with httpx.Client(timeout=2.0) as client:
                 res = client.get(f"{self.base_url}/api/tags")
-                return res.status_code == 200
+                is_ok = (res.status_code == 200)
+                self._availability_cache = (now, is_ok)
+                return is_ok
         except Exception:
+            self._availability_cache = (now, False)
             return False
 
     def list_models(self) -> List[Dict[str, Any]]:
         """List currently installed models."""
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=3.0) as client:
                 res = client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
                     return res.json().get("models", [])
@@ -151,6 +160,7 @@ class OllamaRunner(BaseLLMRunner):
         num_ctx: Optional[int] = None,
         keep_alive: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        cancellation_token: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Execute raw Ollama inference via /api/generate with native format schema decoding.
@@ -163,6 +173,9 @@ class OllamaRunner(BaseLLMRunner):
         ctx = num_ctx if num_ctx is not None else self.num_ctx
         alive = keep_alive or self.keep_alive
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
+
+        if cancellation_token and getattr(cancellation_token, "is_cancelled", False):
+            return {"response": "", "done_reason": "abort", "eval_count": 0}
 
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -191,9 +204,16 @@ class OllamaRunner(BaseLLMRunner):
 
         transport = httpx.HTTPTransport(retries=0)
         client = httpx.Client(timeout=http_timeout, transport=transport)
+        unregister_cb = None
+        if cancellation_token and hasattr(cancellation_token, "register_callback"):
+            unregister_cb = cancellation_token.register_callback(lambda: client.close())
+
         try:
             if time.perf_counter() >= deadline:
                 raise TimeoutError(f"Hard runtime ceiling exceeded before request dispatch ({effective_timeout}s ceiling)")
+
+            if cancellation_token and getattr(cancellation_token, "is_cancelled", False):
+                return {"response": "", "done_reason": "abort", "eval_count": 0}
 
             res = client.post(url, json=payload)
 
@@ -214,10 +234,18 @@ class OllamaRunner(BaseLLMRunner):
             except Exception:
                 pass
 
+            if cancellation_token and getattr(cancellation_token, "is_cancelled", False):
+                return {"response": "", "done_reason": "abort", "eval_count": 0}
+
             if isinstance(exc, (httpx.TimeoutException, TimeoutError)) or "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower():
                 raise TimeoutError(f"Hard runtime ceiling exceeded ({effective_timeout}s): {exc}") from exc
             raise
         finally:
+            if unregister_cb:
+                try:
+                    unregister_cb()
+                except Exception:
+                    pass
             try:
                 client.close()
             except Exception:
@@ -229,10 +257,16 @@ class OllamaRunner(BaseLLMRunner):
         user_prompt: str,
         schema: Dict[str, Any],
         temperature: Optional[float] = None,
+        num_predict: Optional[int] = None,
+        timeout_seconds: Optional[float] = None,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute structured JSON inference via /api/chat with format parameter."""
         url = f"{self.base_url}/api/chat"
+        target_model = model_name or self.model_name
         temp = temperature if temperature is not None else self.temperature
+        pred = num_predict if num_predict is not None else self.num_predict
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
 
         messages: List[Dict[str, str]] = []
         if system_prompt:
@@ -240,20 +274,20 @@ class OllamaRunner(BaseLLMRunner):
         messages.append({"role": "user", "content": user_prompt})
 
         payload = {
-            "model": self.model_name,
+            "model": target_model,
             "messages": messages,
             "format": schema,
             "options": {
                 "temperature": temp,
                 "num_ctx": self.num_ctx,
-                "num_predict": self.num_predict,
+                "num_predict": pred,
                 "seed": self.seed,
             },
             "stream": False,
             "keep_alive": self.keep_alive,
         }
 
-        with httpx.Client(timeout=self.timeout_seconds) as client:
+        with httpx.Client(timeout=effective_timeout) as client:
             res = client.post(url, json=payload)
             if res.status_code != 200:
                 raise RuntimeError(

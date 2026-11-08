@@ -297,12 +297,13 @@ export type AssessmentLifecycleState =
   | 'AUTHORIZED'
   | 'SCOPE_DEFINED'
   | 'ASSESSMENT_ACTIVE'
-  | 'ASSESSMENT_PAUSED'
-  | 'REMEDIAL_HOLD'
-  | 'REPORTING'
+  | 'VALIDATION_PENDING'
+  | 'HUMAN_REVIEW'
   | 'COMPLETED'
   | 'ARCHIVED'
-  | 'REJECTED';
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'REVOKED';
 
 export interface AssessmentWorkflowStatus {
   authorization_valid: boolean;
@@ -471,8 +472,201 @@ export interface ArtifactItem {
   sha256: string;
   byte_size: number;
   artifact_type: string;
-  quarantine_status: 'CLEARED' | 'QUARANTINED' | 'PENDING';
+  quarantine_status: 'QUARANTINED' | 'VALIDATED' | 'PENDING' | 'CLEARED' | 'REJECTED';
   created_at?: string;
+  trust_status?: string;
+  quarantine_reason?: string;
 }
+
+export interface UserSession {
+  authenticated: boolean;
+  username: string;
+  role: 'observer' | 'reviewer' | 'admin';
+  expires_at?: number;
+}
+
+export interface InvestigationAuditResponse {
+  investigation_id: string;
+  chain_integrity: 'VERIFIED' | 'FAILED';
+  total_records: number;
+  records: AuditRecord[];
+}
+
+export interface KnowledgeSource {
+  source_id: string;
+  title: string;
+  source_type: 'RFC' | 'OWASP' | 'PORT_SWIGGER' | 'DISCLOSURE' | 'SECURITY_GUIDE' | 'DOCUMENTATION' | 'CUSTOM';
+  format: 'PDF' | 'MARKDOWN' | 'TEXT' | 'HTML' | 'STRUCTURED';
+  authority_level: KnowledgeAuthorityLevel;
+  sha256: string;
+  byte_size: number;
+  chunk_count: number;
+  /** Ingestion lifecycle status (not graph extraction execution status) */
+  status: 'PENDING' | 'EXTRACTING' | 'CHUNKING' | 'INDEXED' | 'PARTIAL' | 'SUCCESS' | 'FAILED' | 'DEACTIVATED';
+  error_message?: string;
+  source_metadata?: {
+    tags?: string[];
+    author?: string;
+    publication_date?: string;
+    filename?: string;
+    [key: string]: any;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export type KnowledgeAuthorityLevel = 'STANDARD' | 'VENDOR_OFFICIAL' | 'RESEARCH_COMMUNITY' | 'USER_OWNED';
+
+export interface KnowledgeChunk {
+  chunk_id: string;
+  source_id: string;
+  source_title: string;
+  chunk_index: number;
+  content: string;
+  char_count: number;
+  token_estimate: number;
+  heading_path: string[];
+  authority_level: KnowledgeAuthorityLevel;
+  chunk_metadata: Record<string, any>;
+  created_at: string;
+}
+
+/** Local-AI Knowledge Graph Extraction Execution Outcome */
+export interface GraphExtractionResponse {
+  status: 'COMPLETED' | 'FAILED' | 'EMPTY' | 'PARTIALLY_COMPLETED' | 'CANCELLED' | 'IN_PROGRESS';
+  source_id: string;
+  total_chunks: number;
+  processed_chunks: number;
+  skipped_chunks: number;
+  failed_chunks: number;
+  entities_persisted: number;
+  edges_persisted: number;
+  source_supported_count: number;
+  inferred_count: number;
+  rejected_count: number;
+  model_used?: string;
+  extractor_version: string;
+  errors?: string[] | null;
+  message?: string;
+  active_phase?: string;
+}
+
+export type IngestionJobStatus = 'QUEUED' | 'STAGED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export type IngestionPhase =
+  | 'ENQUEUED'
+  | 'EXTRACTING_PDF_TEXT'
+  | 'PARSING_MARKDOWN'
+  | 'PARSING_TEXT'
+  | 'CHUNKING'
+  | 'STORING_CHUNKS'
+  | 'UPDATING_INDEX'
+  | 'FINALIZING'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'FAILED';
+
+export interface IngestionJob {
+  job_id: string;
+  source_id: string;
+  filename: string;
+  file_type: string;
+  status: IngestionJobStatus;
+  phase: IngestionPhase;
+  queue_position: number;
+  total_pages: number;
+  completed_pages: number;
+  total_chunks: number;
+  completed_chunks: number;
+  error_message?: string | null;
+  cancellation_requested: boolean;
+  staged_file_path?: string | null;
+  checkpoint_json?: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+/** Knowledge Graph Status for a specific source */
+export interface SourceGraphStatusResponse {
+  source_id: string;
+  extractions_count: number;
+  total_entities: number;
+  total_edges: number;
+  source_supported_edges: number;
+  inferred_edges: number;
+  rejected_candidates: number;
+  records: Array<{
+    chunk_id: string;
+    source_id: string;
+    model_name: string;
+    entities_count: number;
+    edges_count: number;
+    supported_count: number;
+    inferred_count: number;
+    rejected_count: number;
+    extracted_at: string;
+    schema_version: string;
+  }>;
+  status?: string;
+  active_phase?: string;
+  failed_chunks_count?: number;
+  failed_chunks?: string[];
+  job?: any;
+}
+
+/** Global Knowledge Graph Metrics */
+export interface KnowledgeGraphStatsResponse {
+  total_nodes: number;
+  total_edges: number;
+  total_extractions: number;
+  source_supported_edges: number;
+  inferred_edges: number;
+  rejected_candidates: number;
+}
+
+/** Milestone M9 Stage E Knowledge Graph Integrity Audit Models */
+export type GraphIssueSeverity = 'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO';
+export type GraphIssueCategory = 'STRUCTURAL' | 'PROVENANCE' | 'LIFECYCLE' | 'CANONICALIZATION' | 'EPISTEMIC';
+
+export interface GraphIntegrityIssue {
+  issue_id: string;
+  category: GraphIssueCategory;
+  severity: GraphIssueSeverity;
+  check_code: string;
+  record_type: string;
+  record_id: string;
+  description: string;
+  evidence_context: Record<string, any>;
+  resolution_hint: string;
+}
+
+export interface GraphAuditSummary {
+  nodes_examined: number;
+  edges_examined: number;
+  extractions_examined: number;
+  provenance_citations_examined: number;
+  total_issues: number;
+  critical_count: number;
+  error_count: number;
+  warning_count: number;
+  info_count: number;
+  issues_by_category: Record<string, number>;
+  issues_by_severity: Record<string, number>;
+  status: 'CLEAN' | 'WARNINGS_FOUND' | 'ERRORS_FOUND' | 'CRITICAL_FOUND';
+}
+
+export interface GraphAuditResponse {
+  audit_id: string;
+  schema_version: string;
+  audit_timestamp: string;
+  summary: GraphAuditSummary;
+  issues: GraphIntegrityIssue[];
+  limitations: string[];
+  read_only_guarantee: boolean;
+}
+
+
 
 

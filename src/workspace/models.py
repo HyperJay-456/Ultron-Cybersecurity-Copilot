@@ -79,6 +79,8 @@ class AssessmentOverview(BaseModel):
     valid_from: Optional[str] = None
     valid_until: Optional[str] = None
     scope_policy_id: Optional[str] = None
+    scope_policy_version: Optional[str] = None
+    scope_policy_hash: Optional[str] = None
     in_scope_count: int = 0
     out_of_scope_count: int = 0
     asset_count: int = 0

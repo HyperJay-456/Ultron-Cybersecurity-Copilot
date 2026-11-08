@@ -41,17 +41,22 @@ export const AssessmentSwitcherModal: React.FC<AssessmentSwitcherModalProps> = (
       justifyContent: 'center',
       zIndex: 1000,
     }}>
-      <div style={{
-        backgroundColor: 'var(--bg-surface)',
-        borderRadius: 'var(--radius-lg)',
-        width: '640px',
-        maxHeight: '80vh',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: 'var(--shadow-elevated)',
-        border: '1px solid var(--border-subtle)',
-        overflow: 'hidden',
-      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="switch-assessment-title"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: '640px',
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: 'var(--shadow-elevated)',
+          border: '1px solid var(--border-subtle)',
+          overflow: 'hidden',
+        }}
+      >
         {/* Header */}
         <div style={{
           padding: '16px 20px',
@@ -61,14 +66,15 @@ export const AssessmentSwitcherModal: React.FC<AssessmentSwitcherModalProps> = (
           alignItems: 'center',
         }}>
           <div>
-            <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Switch Security Assessment</h3>
+            <h3 id="switch-assessment-title" style={{ fontSize: '16px', fontWeight: 600 }}>Switch Security Assessment</h3>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
               Select an authorized assessment workspace or initiate a new program
             </p>
           </div>
           <button
             onClick={onClose}
-            style={{ fontSize: '18px', color: 'var(--text-muted)', padding: '4px' }}
+            aria-label="Close dialog"
+            style={{ fontSize: '18px', color: 'var(--text-muted)', padding: '4px', background: 'transparent', border: 'none', cursor: 'pointer' }}
           >
             ✕
           </button>

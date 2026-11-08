@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-09T02:53:33.643066+00:00",
+  "timestamp": "2026-10-17T12:59:02.327208+00:00",
   "target_hardware": {
     "cpu": "AMD Ryzen 5 5600H",
     "ram": "24 GB",
@@ -17,8 +17,8 @@
     "retrieval_recall_at_5": 0.9808,
     "retrieval_recall_at_10": 1.0,
     "precision_at_5": 0.9808,
-    "mrr": 0.937,
-    "ndcg_at_5": 0.9524,
+    "mrr": 0.9274,
+    "ndcg_at_5": 0.9453,
     "negative_control_retrieval_recall": 1.0,
     "namespace_isolation_accuracy": 1.0,
     "cross_assessment_leakage_rate": 0.0,
@@ -35,8 +35,8 @@
     "verified_finding_pointer_integrity": 1.0,
     "context_relevance": 0.942,
     "escalation_3b_to_7b_accuracy": 0.965,
-    "avg_retrieval_latency_ms": 96.9,
-    "avg_indexing_latency_ms": 47.45,
+    "avg_retrieval_latency_ms": 104.42,
+    "avg_indexing_latency_ms": 53.23,
     "hard_invariant_violations": 0
   },
   "ablation_tracks": {

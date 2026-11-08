@@ -23,7 +23,104 @@ from src.evidence.vault import RedactionVault
 from src.scope.gate import ScopeGate, canonicalize_host
 from src.scope.models import ScopePolicy, ScopeDecision
 
+import json
+
 logger = get_logger("EvidenceIngestionPipeline")
+
+
+def canonicalize_headers(headers: Optional[Any]) -> List[List[str]]:
+    """Deterministically normalizes HTTP headers for canonical evidence digest.
+    Converts keys to lowercase, trims whitespace, and sorts alphabetically by header name.
+    Preserves multiple headers deterministically. Returns a sorted list of [key, value] pairs.
+    """
+    if not headers:
+        return []
+    if isinstance(headers, str):
+        try:
+            parsed = json.loads(headers)
+            if isinstance(parsed, dict):
+                headers = parsed
+            elif isinstance(parsed, list):
+                headers = parsed
+            else:
+                return []
+        except Exception:
+            return []
+
+    normalized_pairs: List[List[str]] = []
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            clean_k = str(k).strip().lower()
+            clean_v = str(v).strip() if v is not None else ""
+            normalized_pairs.append([clean_k, clean_v])
+    elif isinstance(headers, list):
+        for item in headers:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                clean_k = str(item[0]).strip().lower()
+                clean_v = str(item[1]).strip() if item[1] is not None else ""
+                normalized_pairs.append([clean_k, clean_v])
+            elif isinstance(item, dict) and "name" in item and "value" in item:
+                clean_k = str(item["name"]).strip().lower()
+                clean_v = str(item["value"]).strip() if item["value"] is not None else ""
+                normalized_pairs.append([clean_k, clean_v])
+
+    # Sort deterministically by header name, then value
+    normalized_pairs.sort(key=lambda pair: (pair[0], pair[1]))
+    return normalized_pairs
+
+
+def compute_canonical_transaction_digest(
+    method: str,
+    host: str,
+    path: str,
+    response_status: int,
+    request_body: str = "",
+    response_body: str = "",
+    request_headers: Optional[Any] = None,
+    response_headers: Optional[Any] = None,
+) -> str:
+    """Computes deterministic canonical SHA-256 digest over semantically relevant observation fields.
+    Guarantees tamper-evidence: any modification to method, host, path, status, headers, or payload yields a distinct digest.
+    """
+    req_b_hash = hashlib.sha256((request_body or "").encode("utf-8")).hexdigest()
+    resp_b_hash = hashlib.sha256((response_body or "").encode("utf-8")).hexdigest()
+    req_h_hash = hashlib.sha256(
+        json.dumps(canonicalize_headers(request_headers), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    resp_h_hash = hashlib.sha256(
+        json.dumps(canonicalize_headers(response_headers), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    canonical_payload = {
+        "host": (host or "").lower().strip(),
+        "method": (method or "").upper().strip(),
+        "path": (path or "/").strip(),
+        "request_body_sha256": req_b_hash,
+        "request_headers_sha256": req_h_hash,
+        "response_body_sha256": resp_b_hash,
+        "response_headers_sha256": resp_h_hash,
+        "response_status": int(response_status),
+    }
+    raw = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
+
+
+def verify_observation_digest(observation: Dict[str, Any]) -> bool:
+    """Deterministic verification of observation integrity. Detects in-place tampering."""
+    expected = observation.get("transaction_digest")
+    if not expected:
+        return False
+    computed = compute_canonical_transaction_digest(
+        method=observation.get("http_method") or observation.get("method", ""),
+        host=observation.get("host", ""),
+        path=observation.get("raw_path") or observation.get("path", "/"),
+        response_status=int(observation.get("response_status") or observation.get("status_code", 0)),
+        request_body=observation.get("request_body") or "",
+        response_body=observation.get("response_body") or "",
+        request_headers=observation.get("request_headers"),
+        response_headers=observation.get("response_headers"),
+    )
+    return computed == expected
 
 
 class EvidenceIngestionPipeline:
@@ -231,12 +328,17 @@ class EvidenceIngestionPipeline:
                 total_redacted = secrets_req_h + secrets_resp_h + secrets_req_b + secrets_resp_b
                 result.redacted_secret_count += total_redacted
 
-                # 4. Duplicate Detection
-                # Distinct transactions have distinct (method, host, path, status, req_body_hash, resp_body_hash)
-                req_hash = hashlib.sha256(redacted_req_body.encode("utf-8")).hexdigest()[:16]
-                resp_hash = hashlib.sha256(redacted_resp_body.encode("utf-8")).hexdigest()[:16]
-                tx_key = f"{method}:{tx_host}:{raw_path}:{record.response_status}:{req_hash}:{resp_hash}"
-                tx_digest = f"sha256:{hashlib.sha256(tx_key.encode('utf-8')).hexdigest()}"
+                # 4. Duplicate Detection & Canonical Tamper-Evident Digest Construction
+                tx_digest = compute_canonical_transaction_digest(
+                    method=method,
+                    host=tx_host,
+                    path=raw_path,
+                    response_status=record.response_status,
+                    request_body=redacted_req_body,
+                    response_body=redacted_resp_body,
+                    request_headers=redacted_req_headers,
+                    response_headers=redacted_resp_headers,
+                )
 
                 # Check for duplicates against existing DB records and current batch
                 if self.db.has_observation_digest(investigation_id, tx_digest) or tx_digest in batch_digests:

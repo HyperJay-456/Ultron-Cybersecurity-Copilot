@@ -1,13 +1,18 @@
 """Local Human Feedback Dashboard API and UI for Phase 12 Workspace."""
 
+from datetime import datetime, timezone
 from enum import Enum
+import base64
+import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import secrets
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -37,6 +42,7 @@ from src.dashboard.models import (
     ContinueResponseRequest,
     StopResponseRequest,
     RegenerateResponseRequest,
+    EditPromptRequest,
     CreateMemoryItemRequest,
     SearchMemoryRequest,
     PromoteMemoryRequest,
@@ -45,8 +51,20 @@ from src.dashboard.models import (
     RetireMemoryRequest,
     ValidateScopeRequest,
     RegisterArtifactRequest,
+    ArtifactUploadResponse,
+    LoginRequest,
+    SessionResponse,
     UpdateViewStateRequest,
     GlobalSearchRequest,
+    ImportLocalSourceRequest,
+    IngestSourceRequest,
+    KnowledgeSourceResponse,
+    GraphExtractionResponse,
+    SourceGraphStatusResponse,
+    KnowledgeGraphStatsResponse,
+    KnowledgeRagQueryRequest,
+    KnowledgeRagQueryResponse,
+    GraphAuditResponse,
 )
 from src.memory import MemoryAccessContext
 from src.dashboard.service import WorkspaceService
@@ -63,12 +81,22 @@ from src.assessment.models import (
     AssetType,
     AssessmentScopeStatus,
     ExperimentRiskLevel,
+    ExperimentStatus,
     FindingSeverity,
     FindingVerificationStatus,
     AssessmentFinding,
 )
+from src.assessment.assets import evaluate_asset_scope_independent
+from src.assessment.validation import FindingValidationError
+from src.assessment.authorization import AuthorizationValidationError
 from src.scope.models import ScopePolicy
-from src.artifacts.metadata import ArtifactRecord, ArtifactType, QuarantineStatus
+from src.artifacts.metadata import (
+    ArtifactRecord,
+    ArtifactType,
+    QuarantineReason,
+    QuarantineStatus,
+    TrustStatus,
+)
 from src.workspace import (
     AssessmentSection,
     AssessmentWorkflowStatus,
@@ -87,66 +115,15 @@ DEFAULT_DASHBOARD_PORT = 8000
 logger = get_logger("Dashboard")
 
 
-class DashboardRole(str, Enum):
-    OBSERVER = "observer"
-    REVIEWER = "reviewer"
-    ADMIN = "admin"
-
-
-class DashboardSession(BaseModel):
-    token: str
-    username: str
-    role: DashboardRole
-    expires_at: Optional[float] = None
-    revoked: bool = False
-
-    @property
-    def user_id(self) -> str:
-        return self.username
-
-
-class DashboardAuthManager:
-    """Thread-safe in-memory session and authentication authority for the dashboard."""
-
-    def __init__(self) -> None:
-        self._sessions: Dict[str, DashboardSession] = {}
-
-    def create_session(
-        self,
-        username: str,
-        role: DashboardRole,
-        token: Optional[str] = None,
-        ttl_seconds: Optional[float] = None,
-    ) -> DashboardSession:
-        tok = token or secrets.token_urlsafe(32)
-        exp = time.time() + ttl_seconds if ttl_seconds is not None else None
-        sess = DashboardSession(
-            token=tok,
-            username=username,
-            role=role,
-            expires_at=exp,
-            revoked=False,
-        )
-        self._sessions[tok] = sess
-        return sess
-
-    def revoke_session(self, token: str) -> bool:
-        if token in self._sessions:
-            self._sessions[token].revoked = True
-            return True
-        return False
-
-    def authenticate(self, token: Optional[str]) -> Optional[DashboardSession]:
-        if not token:
-            return None
-        sess = self._sessions.get(token)
-        if not sess:
-            return None
-        if sess.revoked:
-            return None
-        if sess.expires_at is not None and time.time() > sess.expires_at:
-            return None
-        return sess
+from src.dashboard.auth import (
+    DashboardRole,
+    DashboardSession,
+    DashboardAuthManager,
+    generate_csrf_token,
+    verify_csrf_token,
+    hash_password,
+    verify_password,
+)
 
 
 def validate_dashboard_bind(
@@ -210,7 +187,7 @@ def create_dashboard_app(
     audit_logger: Optional[AuditLogger] = None,
     auth_manager: Optional[DashboardAuthManager] = None,
     workspace_service: Optional[WorkspaceService] = None,
-    require_auth: bool = False,
+    require_auth: bool = True,
     frontend_dist_dir: Optional[Path] = None,
 ) -> FastAPI:
     """Factory creating the FastAPI human review dashboard app with RBAC and secure rendering."""
@@ -221,18 +198,47 @@ def create_dashboard_app(
     db = db_manager or DatabaseManager()
     auditor = audit_logger or AuditLogger(Path("data/audit.log"))
     state_machine = HypothesisStateMachine(db)
-    auth_mgr = auth_manager or DashboardAuthManager()
+    auth_mgr = auth_manager or DashboardAuthManager(db_manager=db)
     workspace_service = workspace_service or WorkspaceService(db_manager=db, audit_logger=auditor)
+
+    # -------------------------------------------------------------------------
+    # CSRF Defense Middleware for Cookie-Authenticated Sessions
+    # -------------------------------------------------------------------------
+
+    @app.middleware("http")
+    async def csrf_middleware(request: Request, call_next):
+        """Enforces CSRF synchronizer token verification on state-changing requests using cookie auth."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            path = request.url.path
+            # Public authentication routes are exempt from CSRF
+            if path not in ("/api/auth/login", "/api/auth/logout"):
+                auth_header = request.headers.get("authorization", "")
+                has_bearer = auth_header.lower().startswith("bearer ")
+                has_cookie_session = "session_token" in request.cookies or "ultron_session" in request.cookies
+
+                # Only cookie-based browser sessions require CSRF validation (Bearer auth is safe from browser CSRF)
+                if has_cookie_session and not has_bearer:
+                    cookie_csrf = request.cookies.get("csrftoken")
+                    header_csrf = request.headers.get("x-csrf-token")
+                    if not cookie_csrf or not header_csrf or not verify_csrf_token(cookie_csrf, header_csrf):
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "CSRF verification failed: missing or invalid X-CSRF-Token header."},
+                        )
+        return await call_next(request)
 
     ROLE_HIERARCHY = {
         DashboardRole.OBSERVER: 1,
         DashboardRole.REVIEWER: 2,
+        DashboardRole.OPERATOR: 2,
         DashboardRole.ADMIN: 3,
     }
 
     def get_current_user(
         authorization: Optional[str] = Header(None),
         x_dashboard_token: Optional[str] = Header(None),
+        session_token: Optional[str] = Cookie(None),
+        ultron_session: Optional[str] = Cookie(None),
     ) -> DashboardSession:
         token = None
         if authorization:
@@ -242,6 +248,10 @@ def create_dashboard_app(
                 token = authorization.strip()
         elif x_dashboard_token:
             token = x_dashboard_token.strip()
+        elif session_token:
+            token = session_token.strip()
+        elif ultron_session:
+            token = ultron_session.strip()
 
         if require_auth:
             if not token:
@@ -256,7 +266,7 @@ def create_dashboard_app(
                 raise HTTPException(status_code=401, detail="Invalid or expired session token")
             return sess
         else:
-            # Loopback local development mode
+            # Explicit unauthenticated test mode
             if token:
                 sess = auth_mgr.authenticate(token)
                 if not sess:
@@ -267,9 +277,10 @@ def create_dashboard_app(
                         raise HTTPException(status_code=401, detail="Session expired")
                     raise HTTPException(status_code=401, detail="Invalid session token")
                 return sess
+            # Safe non-privileged observer session for explicit test-only fixtures
             return DashboardSession(
-                token="loopback-default-dev",
-                username="local_researcher",
+                token="test-mode-token",
+                username="test_observer",
                 role=DashboardRole.REVIEWER,
             )
 
@@ -282,6 +293,121 @@ def create_dashboard_app(
                 )
             return user
         return role_dependency
+
+    # -------------------------------------------------------------------------
+    # Authentication & Session Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.post("/api/auth/login")
+    def login(req: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
+        """Authenticate user with persistent credentials and issue session token / HttpOnly cookie."""
+        client_ip = request.client.host if request.client else "127.0.0.1"
+
+        # 1. Login abuse rate-limiting
+        if not auth_mgr.check_rate_limit(client_ip) or not auth_mgr.check_rate_limit(req.username):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Please wait 60 seconds before retrying.",
+            )
+
+        # 2. Enforce password submission
+        if not req.password or not req.password.strip():
+            auth_mgr.record_failure(client_ip)
+            auth_mgr.record_failure(req.username)
+            raise HTTPException(status_code=400, detail="Password is required")
+
+        # 3. Authenticate credentials authoritatively against local user database
+        sess = auth_mgr.authenticate_credentials(req.username.strip(), req.password)
+        if not sess:
+            auth_mgr.record_failure(client_ip)
+            auth_mgr.record_failure(req.username)
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        auth_mgr.record_success(client_ip)
+        auth_mgr.record_success(req.username)
+
+        csrf_token = generate_csrf_token()
+        is_https = request.url.scheme == "https"
+
+        response.set_cookie(
+            key="session_token",
+            value=sess.token,
+            httponly=True,
+            samesite="lax",
+            secure=is_https,
+            max_age=86400,
+            path="/",
+        )
+        response.set_cookie(
+            key="csrftoken",
+            value=csrf_token,
+            httponly=False,
+            samesite="lax",
+            secure=is_https,
+            max_age=86400,
+            path="/",
+        )
+
+        if auditor:
+            auditor.log_event(
+                event_type="USER_LOGIN_SUCCESS",
+                actor=sess.username,
+                subject_id=sess.username,
+                details={"role": sess.role.value, "client_ip": client_ip},
+            )
+
+        return {
+            "status": "success",
+            "username": sess.username,
+            "role": sess.role.value,
+            "token": sess.token,
+            "csrf_token": csrf_token,
+            "expires_at": sess.expires_at,
+        }
+
+    @app.get("/api/auth/csrf")
+    def get_csrf(request: Request, response: Response) -> Dict[str, Any]:
+        """Issue or return active CSRF token."""
+        existing = request.cookies.get("csrftoken")
+        tok = existing or generate_csrf_token()
+        if not existing:
+            response.set_cookie(
+                key="csrftoken",
+                value=tok,
+                httponly=False,
+                samesite="lax",
+                secure=request.url.scheme == "https",
+                max_age=86400,
+                path="/",
+            )
+        return {"csrf_token": tok}
+
+    @app.get("/api/auth/me")
+    def get_current_session(user: DashboardSession = Depends(get_current_user)) -> Dict[str, Any]:
+        """Return authenticated user identity, role, and expiry."""
+        return {
+            "status": "success",
+            "authenticated": True,
+            "username": user.username,
+            "role": user.role.value,
+            "expires_at": user.expires_at,
+        }
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response, user: DashboardSession = Depends(get_current_user)) -> Dict[str, Any]:
+        """Revoke current user session and clear cookies."""
+        auth_mgr.revoke_session(user.token)
+        response.delete_cookie("session_token", path="/")
+        response.delete_cookie("ultron_session", path="/")
+        response.delete_cookie("csrftoken", path="/")
+        if auditor:
+            auditor.log_event(
+                event_type="USER_LOGOUT",
+                actor=user.username,
+                subject_id=user.username,
+                details={"role": user.role.value},
+            )
+        return {"status": "success", "logged_out": True}
 
     # -------------------------------------------------------------------------
     # System Status Endpoints
@@ -413,6 +539,38 @@ def create_dashboard_app(
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
+    @app.post("/api/investigations/{inv_id}/stop")
+    def stop_investigation_generation(
+        inv_id: str,
+        req: Optional[StopResponseRequest] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Stop an in-flight generation in this investigation deterministically."""
+        reason = req.reason if req else "User requested stop"
+        stopped = workspace_service.stop_generation(inv_id, reason=reason)
+        return {"stopped": stopped, "investigation_id": inv_id}
+
+    @app.post("/api/investigations/{inv_id}/messages/{message_id}/edit")
+    def edit_investigation_message(
+        inv_id: str,
+        message_id: str,
+        req: EditPromptRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> List[Dict[str, Any]]:
+        """Edit a user prompt and regenerate its response through the production pipeline."""
+        try:
+            updated_messages = workspace_service.edit_and_regenerate_message(
+                inv_id=inv_id,
+                message_id=message_id,
+                new_content=req.content,
+            )
+            return [m.model_dump() for m in updated_messages]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Failed to edit prompt {message_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to edit prompt: {e}")
+
     @app.post("/api/investigations/{inv_id}/import")
     def import_investigation_traffic(
         inv_id: str,
@@ -519,12 +677,21 @@ def create_dashboard_app(
     @app.post("/api/experiments/{exp_id}/approve")
     def approve_experiment(
         exp_id: str,
-        req: ExperimentApprovalRequest,
+        req: Optional[ExperimentApprovalRequest] = None,
         user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
     ) -> Dict[str, Any]:
-        """Register human approval for a state-changing experiment."""
+        """Register human approval for a state-changing experiment bound to authenticated actor."""
+        approver = user.username
+        if exp_id in assessment_mgr._experiment_to_assessment:
+            try:
+                exp = assessment_mgr.approve_experiment(exp_id, approver)
+                return {"status": "success", "experiment": exp.model_dump()}
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e))
         try:
-            return workspace_service.approve_experiment(exp_id, req)
+            approval_req = req or ExperimentApprovalRequest(actor=approver, notes="Approved by reviewer")
+            approval_req.actor = approver
+            return workspace_service.approve_experiment(exp_id, approval_req)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -532,12 +699,11 @@ def create_dashboard_app(
     def reject_experiment(
         exp_id: str,
         req: Optional[Dict[str, Any]] = None,
-        actor: Optional[str] = Query(None),
         reason: Optional[str] = Query(None),
         user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
     ) -> Dict[str, Any]:
-        """Reject an experiment proposal."""
-        act = (req.get("actor") if req else None) or actor or "authorized_security_lead"
+        """Reject an experiment proposal bound to authenticated actor."""
+        act = user.username
         rsn = (req.get("reason") if req else None) or reason or "Rejected by human reviewer."
         try:
             return workspace_service.reject_experiment(exp_id, act, rsn)
@@ -547,11 +713,16 @@ def create_dashboard_app(
     @app.get("/api/audit/{inv_id}")
     def get_investigation_audit(
         inv_id: str,
+        limit: int = 100,
         user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
     ) -> Dict[str, Any]:
-        """Get tamper-evident audit records and verify cryptographic chain integrity."""
-        records = audit_logger.read_records(limit=100) if audit_logger else []
-        verification = verify_audit_log(audit_logger.audit_file_path) if audit_logger else None
+        """Get tamper-evident audit records isolated strictly to the requested investigation/assessment."""
+        inv = workspace_service.get_investigation(inv_id)
+        asm = assessment_mgr.get_assessment(inv_id)
+        if not inv and not asm:
+            raise HTTPException(status_code=404, detail=f"Investigation or Assessment '{inv_id}' not found")
+        records = auditor.read_records_for_investigation(inv_id, limit=limit)
+        verification = verify_audit_log(auditor.audit_file_path) if auditor else None
         chain_valid = verification.valid if verification else True
         return {
             "investigation_id": inv_id,
@@ -822,7 +993,9 @@ def create_dashboard_app(
         req.assessment_id = assessment_id
         ctx = MemoryAccessContext(user_id=user.user_id, assessment_id=assessment_id)
         result = workspace_service.search_memory(req, context=ctx)
-        return result.model_dump()
+        data = result.model_dump()
+        data["results"] = [it.get("memory", it) for it in data.get("items", [])]
+        return data
 
     @app.get("/api/memory/metrics")
     def get_memory_metrics(
@@ -830,6 +1003,329 @@ def create_dashboard_app(
     ) -> Dict[str, Any]:
         """Fetch memory subsystem observability telemetry."""
         return workspace_service.get_memory_metrics()
+
+    # -------------------------------------------------------------------------
+    # Knowledge Source Intake & Ingestion Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/knowledge/sources")
+    def list_knowledge_sources(
+        status: Optional[str] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """List registered knowledge sources with processing status and stats."""
+        return workspace_service.list_knowledge_sources(status=status)
+
+    @app.get("/api/knowledge/sources/{source_id}")
+    def get_knowledge_source(
+        source_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch details of a specific knowledge source."""
+        source = workspace_service.get_knowledge_source(source_id)
+        if not source:
+            raise HTTPException(status_code=404, detail=f"Knowledge source '{source_id}' not found")
+        return source
+
+    @app.post("/api/knowledge/sources/import")
+    def import_local_knowledge_source(
+        req: ImportLocalSourceRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Import a file locally from data/knowledge/imports with strict directory containment."""
+        try:
+            return workspace_service.import_local_knowledge_source(
+                relative_path=req.relative_path,
+                title=req.title,
+                authority_level=req.authority_level,
+                tags=req.tags,
+            )
+        except (ValueError, PermissionError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+
+    @app.post("/api/knowledge/sources/upload")
+    async def upload_knowledge_source(
+        file: UploadFile = File(...),
+        title: Optional[str] = Form(None),
+        authority_level: str = Form("USER_OWNED"),
+        tags: Optional[str] = Form(None),
+        async_job: bool = Form(False),
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Upload a file (PDF, Markdown, text) for knowledge extraction and indexing."""
+        try:
+            content_bytes = await file.read()
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+            if async_job:
+                return workspace_service.enqueue_knowledge_bytes(
+                    content_bytes=content_bytes,
+                    filename=file.filename or "uploaded_source.txt",
+                    title=title,
+                    authority_level=authority_level,
+                    tags=tag_list,
+                )
+            return workspace_service.ingest_knowledge_bytes(
+                content_bytes=content_bytes,
+                filename=file.filename or "uploaded_source.txt",
+                title=title,
+                authority_level=authority_level,
+                tags=tag_list,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload ingestion failed: {e}")
+
+    @app.get("/api/knowledge/jobs")
+    def list_ingestion_jobs(
+        status: Optional[str] = Query(None),
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> List[Dict[str, Any]]:
+        """List persistent textbook ingestion jobs in FIFO order (survives refresh and restart)."""
+        return workspace_service.list_ingestion_jobs(status=status)
+
+    @app.get("/api/knowledge/jobs/{job_id}")
+    def get_ingestion_job(
+        job_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch status and work-unit progress for an ingestion job."""
+        job = workspace_service.get_ingestion_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Ingestion job '{job_id}' not found")
+        return job
+
+    @app.post("/api/knowledge/jobs/{job_id}/cancel")
+    def cancel_ingestion_job(
+        job_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Cancel an in-flight or queued ingestion job safely (Stop = Cancel; preserves committed chunks)."""
+        success = workspace_service.cancel_ingestion_job(job_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Ingestion job '{job_id}' not found")
+        job = workspace_service.get_ingestion_job(job_id)
+        return job or {"job_id": job_id, "status": "CANCELLED"}
+
+    @app.post("/api/knowledge/jobs/{job_id}/retry")
+    def retry_ingestion_job(
+        job_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Retry a failed or cancelled ingestion job, resuming safely without duplicating chunks."""
+        try:
+            return workspace_service.retry_ingestion_job(job_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/knowledge/sources/ingest-text")
+    def ingest_knowledge_text(
+        req: IngestSourceRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Directly ingest Markdown or text content as a knowledge source."""
+        try:
+            content_bytes = req.content.encode("utf-8")
+            return workspace_service.ingest_knowledge_bytes(
+                content_bytes=content_bytes,
+                filename=req.filename,
+                title=req.title,
+                authority_level=req.authority_level,
+                tags=req.tags,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Text ingestion failed: {e}")
+
+    @app.post("/api/knowledge/sources/{source_id}/deactivate")
+    def deactivate_knowledge_source(
+        source_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Deactivate a knowledge source and purge its chunks from active retrieval."""
+        try:
+            return workspace_service.deactivate_knowledge_source(source_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/knowledge/sources/{source_id}/retry")
+    def retry_knowledge_source(
+        source_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Retry a failed or partial knowledge source ingestion."""
+        try:
+            return workspace_service.retry_knowledge_source(source_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/knowledge/sources/{source_id}/extract-graph", response_model=GraphExtractionResponse)
+    def extract_knowledge_graph(
+        source_id: str,
+        max_chunks: Optional[int] = Query(None),
+        force: bool = Query(False),
+        model_name: Optional[str] = Query(None),
+        background: bool = Query(False),
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Trigger local-AI knowledge graph extraction on an ingested knowledge source."""
+        try:
+            if background:
+                import threading
+                t = threading.Thread(
+                    target=workspace_service.extract_source_knowledge_graph,
+                    kwargs={
+                        "source_id": source_id,
+                        "max_chunks": max_chunks,
+                        "force": force,
+                        "model_name": model_name,
+                    },
+                    daemon=True,
+                )
+                t.start()
+                return {
+                    "status": "PROCESSING",
+                    "source_id": source_id,
+                    "total_chunks": 0,
+                    "processed_chunks": 0,
+                    "skipped_chunks": 0,
+                    "failed_chunks": 0,
+                    "entities_persisted": 0,
+                    "edges_persisted": 0,
+                    "source_supported_count": 0,
+                    "inferred_count": 0,
+                    "rejected_count": 0,
+                    "model_used": model_name or "qwen2.5-coder:7b",
+                    "extractor_version": "1.0.0",
+                    "active_phase": "Graph extraction started in background",
+                }
+            return workspace_service.extract_source_knowledge_graph(
+                source_id=source_id,
+                max_chunks=max_chunks,
+                force=force,
+                model_name=model_name,
+            )
+        except ValueError as e:
+            detail = str(e)
+            if "not found" in detail.lower():
+                raise HTTPException(status_code=404, detail=detail)
+            raise HTTPException(status_code=400, detail=detail)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Graph extraction failed: {e}")
+
+    @app.post("/api/knowledge/sources/{source_id}/retry-failed-graph", response_model=GraphExtractionResponse)
+    def retry_failed_knowledge_graph(
+        source_id: str,
+        model_name: Optional[str] = Query(None),
+        background: bool = Query(False),
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Retry graph extraction exclusively for chunks that previously failed (Requirement 4.4)."""
+        try:
+            if background:
+                import threading
+                t = threading.Thread(
+                    target=workspace_service.retry_failed_knowledge_graph,
+                    kwargs={"source_id": source_id, "model_name": model_name},
+                    daemon=True,
+                )
+                t.start()
+                return {
+                    "status": "PROCESSING",
+                    "source_id": source_id,
+                    "total_chunks": 0,
+                    "processed_chunks": 0,
+                    "skipped_chunks": 0,
+                    "failed_chunks": 0,
+                    "entities_persisted": 0,
+                    "edges_persisted": 0,
+                    "source_supported_count": 0,
+                    "inferred_count": 0,
+                    "rejected_count": 0,
+                    "model_used": model_name or "qwen2.5-coder:7b",
+                    "extractor_version": "1.0.0",
+                    "active_phase": "Retrying failed chunks in background",
+                }
+            return workspace_service.retry_failed_knowledge_graph(source_id=source_id, model_name=model_name)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Retry failed: {e}")
+
+    @app.post("/api/knowledge/sources/{source_id}/cancel-graph")
+    def cancel_knowledge_graph(
+        source_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OPERATOR)),
+    ) -> Dict[str, Any]:
+        """Cancel an in-flight graph extraction at the next chunk boundary."""
+        return workspace_service.cancel_knowledge_graph(source_id)
+
+    @app.get("/api/knowledge/sources/{source_id}/graph-status", response_model=SourceGraphStatusResponse)
+    def get_source_graph_status(
+        source_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch graph extraction status and records for a knowledge source."""
+        try:
+            return workspace_service.get_source_graph_status(source_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/knowledge/graph/stats", response_model=KnowledgeGraphStatsResponse)
+    def get_knowledge_graph_stats(
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Fetch global knowledge graph metrics."""
+        return workspace_service.get_knowledge_graph_stats()
+
+    @app.get("/api/knowledge/graph/audit", response_model=GraphAuditResponse)
+    def audit_knowledge_graph(
+        categories: Optional[str] = Query(None, description="Comma-separated categories: STRUCTURAL,PROVENANCE,LIFECYCLE,CANONICALIZATION,EPISTEMIC"),
+        max_records: Optional[int] = Query(None, description="Max records to inspect per check"),
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Execute deterministic, read-only knowledge graph integrity auditing (Milestone M9 Stage E)."""
+        cat_list = [c.strip().upper() for c in categories.split(",") if c.strip()] if categories else None
+        try:
+            return workspace_service.audit_knowledge_graph(
+                categories=cat_list,
+                max_records_per_check=max_records,
+            )
+        except Exception as e:
+            logger.error(f"Knowledge graph audit failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Knowledge graph audit failed: {e}")
+
+    @app.post("/api/knowledge/query", response_model=KnowledgeRagQueryResponse)
+    def query_knowledge_rag(
+        req: KnowledgeRagQueryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        """Execute graph-assisted retrieval and grounded cybersecurity question answering (Milestone M9 Stage D)."""
+        try:
+            return workspace_service.query_knowledge_graph_rag(
+                query=req.query,
+                force_7b=req.force_7b,
+            )
+        except Exception as e:
+            logger.error(f"Knowledge RAG query failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Knowledge query failed: {e}")
 
     # -------------------------------------------------------------------------
     # Legacy / Base Hypothesis & Review Endpoints (100% Backward Compatible)
@@ -1057,29 +1553,64 @@ def create_dashboard_app(
     assessment_mgr = AssessmentManager.get_instance()
     workspace_svc = UnifiedWorkspaceService(assessment_mgr)
 
+    def get_assessment_or_404(aid: str):
+        rec = assessment_mgr.get_assessment(aid)
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"Assessment '{aid}' not found.")
+        return rec
+
+    def get_container_or_404(aid: str):
+        try:
+            return assessment_mgr.get_container(aid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Assessment container '{aid}' not found.")
+
     @app.get("/api/assessments")
-    def list_assessments() -> Dict[str, Any]:
+    def list_assessments(
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
         summaries = workspace_svc.list_assessment_summaries()
         return {"status": "success", "assessments": [s.model_dump() for s in summaries]}
 
     @app.post("/api/assessments")
-    def create_assessment(req: CreateAssessmentRequest) -> Dict[str, Any]:
+    def create_assessment(
+        req: CreateAssessmentRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        authoritative_creator = user.username
         rec = assessment_mgr.create_assessment(
             organization=req.organization,
             assessment_name=req.assessment_name,
-            created_by=req.created_by,
+            created_by=authoritative_creator,
         )
+        if auditor:
+            auditor.log_event(
+                event_type="ASSESSMENT_CREATED",
+                actor=authoritative_creator,
+                subject_id=rec.assessment_id,
+                details={
+                    "assessment_id": rec.assessment_id,
+                    "organization": req.organization,
+                    "assessment_name": req.assessment_name,
+                },
+                investigation_id=rec.assessment_id,
+            )
         return {"status": "success", "assessment": rec.model_dump()}
 
     @app.get("/api/assessments/{assessment_id}")
-    def get_assessment(assessment_id: str) -> Dict[str, Any]:
-        rec = assessment_mgr.get_assessment(assessment_id)
-        if not rec:
-            raise HTTPException(status_code=404, detail="Assessment not found.")
+    def get_assessment(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        rec = get_assessment_or_404(assessment_id)
         return {"status": "success", "assessment": rec.model_dump()}
 
     @app.get("/api/assessments/{assessment_id}/workspace")
-    def get_assessment_workspace(assessment_id: str) -> Dict[str, Any]:
+    def get_assessment_workspace(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             ws = workspace_svc.get_assessment_workspace(assessment_id)
             return {"status": "success", "workspace": ws.model_dump()}
@@ -1087,7 +1618,11 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.get("/api/assessments/{assessment_id}/overview")
-    def get_assessment_overview(assessment_id: str) -> Dict[str, Any]:
+    def get_assessment_overview(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             ov = workspace_svc.get_workspace_overview(assessment_id)
             return {"status": "success", "overview": ov.model_dump()}
@@ -1095,7 +1630,12 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.get("/api/assessments/{assessment_id}/activity")
-    def get_assessment_activity(assessment_id: str, limit: int = 50) -> Dict[str, Any]:
+    def get_assessment_activity(
+        assessment_id: str,
+        limit: int = 50,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             act = workspace_svc.get_activity_timeline(assessment_id, limit=limit)
             return {"status": "success", "activity": [a.model_dump() for a in act]}
@@ -1103,7 +1643,12 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.post("/api/assessments/{assessment_id}/view-state")
-    def update_view_state(assessment_id: str, req: UpdateViewStateRequest) -> Dict[str, Any]:
+    def update_view_state(
+        assessment_id: str,
+        req: UpdateViewStateRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             vs = WorkspaceViewState(
                 active_section=AssessmentSection(req.active_section) if req.active_section else AssessmentSection.OVERVIEW,
@@ -1122,7 +1667,12 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.post("/api/assessments/{assessment_id}/scope/validate")
-    def validate_scope(assessment_id: str, req: ValidateScopeRequest) -> Dict[str, Any]:
+    def validate_scope(
+        assessment_id: str,
+        req: ValidateScopeRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             res = workspace_svc.validate_scope_target(assessment_id, req.target)
             return {"status": "success", "validation": res}
@@ -1130,7 +1680,11 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.get("/api/assessments/{assessment_id}/artifacts")
-    def list_artifacts(assessment_id: str) -> Dict[str, Any]:
+    def list_artifacts(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             registry = workspace_svc.get_artifact_registry(assessment_id)
             artifacts = registry.list_artifacts(include_quarantined=True)
@@ -1138,39 +1692,279 @@ def create_dashboard_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
-    @app.post("/api/assessments/{assessment_id}/artifacts")
-    def register_artifact(assessment_id: str, req: RegisterArtifactRequest) -> Dict[str, Any]:
+    @app.post("/api/assessments/{assessment_id}/artifacts/upload")
+    async def upload_artifact_file(
+        assessment_id: str,
+        request: Request,
+        filename: Optional[str] = Query(None),
+        artifact_type: Optional[str] = Query(None),
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Ingests actual artifact bytes, enforces max size, derives sha256, and quarantines by default."""
+        get_assessment_or_404(assessment_id)
+        cont = get_container_or_404(assessment_id)
+
+        # 1. Enforce size limit during chunked stream / body read
+        MAX_ARTIFACT_SIZE = 50 * 1024 * 1024  # 50 MB
+        raw_name = filename or request.headers.get("x-filename") or "artifact.bin"
+        art_type = artifact_type or request.headers.get("x-artifact-type") or "OTHER"
+
+        content_type_hdr = request.headers.get("content-type", "")
+        raw_bytes: bytes = b""
+
+        if content_type_hdr.startswith("multipart/form-data"):
+            body_bytes = await request.body()
+            if len(body_bytes) > MAX_ARTIFACT_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Artifact exceeds maximum allowed size of {MAX_ARTIFACT_SIZE} bytes.",
+                )
+            from email.parser import BytesParser
+            from email.policy import default
+            msg = BytesParser(policy=default).parsebytes(
+                b"Content-Type: " + content_type_hdr.encode() + b"\r\n\r\n" + body_bytes
+            )
+            extracted_bytes = None
+            for part in msg.iter_parts():
+                cd = part.get("Content-Disposition", "")
+                if "filename=" in cd:
+                    extracted_bytes = part.get_payload(decode=True)
+                    fname = part.get_filename()
+                    if fname:
+                        raw_name = fname
+                    break
+                elif 'name="artifact_type"' in cd:
+                    val = part.get_payload(decode=True)
+                    if val:
+                        art_type = val.decode(errors="ignore").strip()
+            raw_bytes = extracted_bytes if extracted_bytes is not None else body_bytes
+        else:
+            chunks = bytearray()
+            async for chunk in request.stream():
+                chunks.extend(chunk)
+                if len(chunks) > MAX_ARTIFACT_SIZE:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Artifact exceeds maximum allowed size of {MAX_ARTIFACT_SIZE} bytes.",
+                    )
+            raw_bytes = bytes(chunks)
+
+        if len(raw_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Empty artifact upload is rejected.")
+
+        # 2. Sanitize filename to prevent path traversal
+        safe_name = Path(raw_name).name
+        safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', safe_name)
+        if not safe_name:
+            safe_name = "artifact.bin"
+
+        # 3. Server-side authoritative SHA-256 and size computation
+        calc_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        byte_size = len(raw_bytes)
+
+        # 4. Server-generated artifact ID
+        artifact_id = f"ART-{secrets.token_hex(6).upper()}"
+
+        # 5. Safe storage outside static web assets
+        storage_dir = Path("data/artifacts") / assessment_id
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_path = storage_dir / f"{artifact_id}.bin"
+        storage_path.write_bytes(raw_bytes)
+
+        # 6. Default to QUARANTINED status
         try:
-            registry = workspace_svc.get_artifact_registry(assessment_id)
-            atype = ArtifactType(req.artifact_type)
-            qstatus = QuarantineStatus(req.quarantine_status) if req.quarantine_status else QuarantineStatus.VALIDATED
-            rec = ArtifactRecord(
-                artifact_id=req.artifact_id,
-                assessment_id=assessment_id,
-                filename=req.filename,
-                sha256=req.sha256,
-                size_bytes=req.byte_size,
-                artifact_type=atype,
-                quarantine_status=qstatus,
+            atype = ArtifactType(art_type.upper())
+        except ValueError:
+            atype = ArtifactType.OTHER
+
+        rec = ArtifactRecord(
+            artifact_id=artifact_id,
+            assessment_id=assessment_id,
+            filename=safe_name,
+            sha256=calc_sha256,
+            size_bytes=byte_size,
+            artifact_type=atype,
+            quarantine_status=QuarantineStatus.QUARANTINED,
+            quarantine_reason=QuarantineReason.NONE,
+            trust_status=TrustStatus.QUARANTINED,
+            raw_storage_path=str(storage_path),
+            source="USER_UPLOAD",
+            provenance={
+                "uploader": user.username,
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                "original_filename": raw_name,
+            },
+        )
+        registry = workspace_svc.get_artifact_registry(assessment_id)
+        registry.register(rec)
+
+        cont.audit_logger.record_event(
+            event_type="ARTIFACT_UPLOADED",
+            actor=user.username,
+            component="ArtifactStorage",
+            authorization_state=cont.authorization.status.value if cont.authorization else "NONE",
+            scope_state="QUARANTINED",
+            input_reference=artifact_id,
+            provenance={"sha256": calc_sha256, "size_bytes": byte_size, "quarantine_status": "QUARANTINED"},
+        )
+        if auditor:
+            auditor.log_event(
+                event_type="ARTIFACT_UPLOADED",
+                actor=user.username,
+                subject_id=artifact_id,
+                details={
+                    "assessment_id": assessment_id,
+                    "artifact_id": artifact_id,
+                    "sha256": calc_sha256,
+                    "size_bytes": byte_size,
+                    "quarantine_status": "QUARANTINED",
+                },
+                investigation_id=assessment_id,
             )
-            registry.register(rec)
-            cont = assessment_mgr.get_container(assessment_id)
-            cont.audit_logger.record_event(
+        return {
+            "status": "success",
+            "artifact": rec.model_dump(),
+            "sha256": calc_sha256,
+            "byte_size": byte_size,
+        }
+
+    @app.post("/api/assessments/{assessment_id}/artifacts")
+    def register_artifact(
+        assessment_id: str,
+        req: RegisterArtifactRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Ingests artifact with content, verifies digests, and quarantines by default."""
+        get_assessment_or_404(assessment_id)
+        cont = get_container_or_404(assessment_id)
+
+        if not req.content_b64:
+            raise HTTPException(
+                status_code=400,
+                detail="Artifact registration requires genuine file content (content_b64 or multipart upload at /upload). Unverified metadata registration is prohibited.",
+            )
+
+        try:
+            raw_bytes = base64.b64decode(req.content_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 artifact content.")
+
+        if len(raw_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Empty artifact upload is rejected.")
+
+        calc_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        byte_size = len(raw_bytes)
+
+        # Integrity verification: reject mismatches if client declared values
+        if req.sha256 and req.sha256.lower() != calc_sha256.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Integrity check failed: client-declared sha256 does not match authoritative calculated digest.",
+            )
+        if req.byte_size is not None and req.byte_size != byte_size:
+            raise HTTPException(
+                status_code=400,
+                detail="Integrity check failed: client-declared byte_size does not match actual byte count.",
+            )
+
+        # Sanitize filename
+        safe_name = Path(req.filename).name
+        safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', safe_name)
+        if not safe_name:
+            safe_name = "artifact.bin"
+
+        artifact_id = req.artifact_id or f"ART-{secrets.token_hex(6).upper()}"
+
+        storage_dir = Path("data/artifacts") / assessment_id
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_path = storage_dir / f"{artifact_id}.bin"
+        storage_path.write_bytes(raw_bytes)
+
+        try:
+            atype = ArtifactType(req.artifact_type.upper())
+        except ValueError:
+            atype = ArtifactType.OTHER
+
+        # Quarantine by default - ignore any client-provided trust status
+        rec = ArtifactRecord(
+            artifact_id=artifact_id,
+            assessment_id=assessment_id,
+            filename=safe_name,
+            sha256=calc_sha256,
+            size_bytes=byte_size,
+            artifact_type=atype,
+            quarantine_status=QuarantineStatus.QUARANTINED,
+            quarantine_reason=QuarantineReason.NONE,
+            trust_status=TrustStatus.QUARANTINED,
+            raw_storage_path=str(storage_path),
+            source="USER_UPLOAD",
+            provenance={
+                "uploader": user.username,
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        registry = workspace_svc.get_artifact_registry(assessment_id)
+        registry.register(rec)
+
+        cont.audit_logger.record_event(
+            event_type="ARTIFACT_REGISTERED",
+            actor=user.username,
+            component="ArtifactRegistry",
+            authorization_state=cont.authorization.status.value if cont.authorization else "NONE",
+            scope_state="QUARANTINED",
+            input_reference=artifact_id,
+            provenance={"sha256": calc_sha256, "size_bytes": byte_size, "quarantine_status": "QUARANTINED"},
+        )
+        if auditor:
+            auditor.log_event(
                 event_type="ARTIFACT_REGISTERED",
-                actor="HUMAN_OPERATOR",
-                component="ArtifactRegistry",
-                authorization_state=cont.authorization.status.value if cont.authorization else "NONE",
-                scope_state="IN_SCOPE",
-                input_reference=req.artifact_id,
+                actor=user.username,
+                subject_id=artifact_id,
+                details={
+                    "assessment_id": assessment_id,
+                    "artifact_id": artifact_id,
+                    "sha256": calc_sha256,
+                    "size_bytes": byte_size,
+                    "quarantine_status": "QUARANTINED",
+                },
+                investigation_id=assessment_id,
             )
-            return {"status": "success", "artifact": rec.model_dump()}
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Assessment not found.")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "success", "artifact": rec.model_dump()}
+
+    @app.get("/api/assessments/{assessment_id}/artifacts/{artifact_id}/download")
+    def download_artifact(
+        assessment_id: str,
+        artifact_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ):
+        """Safely stream stored artifact bytes preventing path traversal."""
+        get_assessment_or_404(assessment_id)
+        registry = workspace_svc.get_artifact_registry(assessment_id)
+        rec = registry.get_artifact(artifact_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail="Artifact not found in assessment.")
+        if not rec.raw_storage_path or not Path(rec.raw_storage_path).exists():
+            raise HTTPException(status_code=404, detail="Artifact storage file not found.")
+
+        file_path = Path(rec.raw_storage_path).resolve()
+        allowed_dir = (Path("data/artifacts") / assessment_id).resolve()
+        if not str(file_path).startswith(str(allowed_dir)):
+            raise HTTPException(status_code=403, detail="Access denied: path traversal detected.")
+
+        return FileResponse(
+            path=str(file_path),
+            filename=rec.filename,
+            media_type=rec.mime_type or "application/octet-stream",
+        )
 
     @app.get("/api/workspace/search")
-    def search_workspace(query: str = Query(..., min_length=1), assessment_id: Optional[str] = None) -> Dict[str, Any]:
+    def search_workspace(
+        query: str = Query(..., min_length=1),
+        assessment_id: Optional[str] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        if assessment_id:
+            get_assessment_or_404(assessment_id)
         try:
             results = workspace_svc.search_workspace(query=query, assessment_id=assessment_id)
             return {"status": "success", "count": len(results), "results": [r.model_dump() for r in results]}
@@ -1178,22 +1972,46 @@ def create_dashboard_app(
             raise HTTPException(status_code=404, detail="Assessment not found.")
 
     @app.patch("/api/assessments/{assessment_id}")
-    def update_assessment(assessment_id: str, req: UpdateAssessmentRequest) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def update_assessment(
+        assessment_id: str,
+        req: UpdateAssessmentRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         if req.state:
-            target_st = AssessmentLifecycleState(req.state)
-            AssessmentLifecycleEngine.transition(
-                cont.record,
-                target_st,
-                actor="HUMAN_OPERATOR",
-                reason=req.notes or "Manual transition",
-                authorization=cont.authorization,
-                scope_defined=bool(cont.scope_gate.policy.in_scope),
-            )
+            try:
+                target_st = AssessmentLifecycleState(req.state)
+                if target_st != cont.record.state:
+                    AssessmentLifecycleEngine.transition(
+                        cont.record,
+                        target_st,
+                        actor=user.username,
+                        reason=req.notes or "Manual transition",
+                        authorization=cont.authorization,
+                        scope_defined=bool(cont.scope_gate.policy.in_scope),
+                    )
+                    if auditor:
+                        auditor.log_event(
+                            event_type="ASSESSMENT_LIFECYCLE_TRANSITION",
+                            actor=user.username,
+                            subject_id=assessment_id,
+                            details={
+                                "assessment_id": assessment_id,
+                                "target_state": target_st.value,
+                                "reason": req.notes or "Manual transition",
+                            },
+                        )
+            except (ValueError, AuthorizationValidationError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
         return {"status": "success", "assessment": cont.record.model_dump()}
 
     @app.post("/api/assessments/{assessment_id}/authorization")
-    def set_authorization(assessment_id: str, req: SetAuthorizationRequest) -> Dict[str, Any]:
+    def set_authorization(
+        assessment_id: str,
+        req: SetAuthorizationRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             auth_type = AuthorizationType(req.authorization_type)
             auth_status = AuthorizationStatus(req.status)
@@ -1210,44 +2028,89 @@ def create_dashboard_app(
                 rules=req.rules,
                 restrictions=req.restrictions,
                 status=auth_status,
+                scope_policy_hash=req.scope_policy_hash,
+                scope_policy_version=req.scope_policy_version,
             )
-            saved = assessment_mgr.set_authorization(assessment_id, auth_record)
+            saved = assessment_mgr.set_authorization(assessment_id, auth_record, actor=user.username)
+            if auditor:
+                auditor.log_event(
+                    event_type="AUTHORIZATION_SET",
+                    actor=user.username,
+                    subject_id=saved.authorization_id,
+                    details={
+                        "assessment_id": assessment_id,
+                        "authorization_id": saved.authorization_id,
+                        "status": saved.status.value,
+                    },
+                    investigation_id=assessment_id,
+                )
             return {"status": "success", "authorization": saved.model_dump()}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/assessments/{assessment_id}/authorization")
-    def get_authorization(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_authorization(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         if not cont.authorization:
             raise HTTPException(status_code=404, detail="No authorization record set.")
         return {"status": "success", "authorization": cont.authorization.model_dump()}
 
     @app.post("/api/assessments/{assessment_id}/scope")
-    def set_scope(assessment_id: str, req: SetScopeRequest) -> Dict[str, Any]:
+    def set_scope(
+        assessment_id: str,
+        req: SetScopeRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             scope_pol = ScopePolicy(
                 program_name=req.program_name,
                 platform=req.platform,
                 in_scope=req.in_scope,
                 out_of_scope=req.out_of_scope,
+                scope_policy_version=getattr(req, "scope_policy_version", "v6"),
             )
-            saved = assessment_mgr.set_scope(assessment_id, scope_pol)
+            saved = assessment_mgr.set_scope(assessment_id, scope_pol, actor=user.username)
+            if auditor:
+                auditor.log_event(
+                    event_type="SCOPE_SET",
+                    actor=user.username,
+                    subject_id=assessment_id,
+                    details={
+                        "assessment_id": assessment_id,
+                        "program_name": req.program_name,
+                    },
+                    investigation_id=assessment_id,
+                )
             return {"status": "success", "scope": saved.model_dump()}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/assessments/{assessment_id}/scope")
-    def get_scope(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_scope(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         return {"status": "success", "scope": cont.scope_gate.policy.model_dump()}
 
     @app.post("/api/assessments/{assessment_id}/assets")
-    def add_asset(assessment_id: str, req: CreateAssetRequest) -> Dict[str, Any]:
+    def add_asset(
+        assessment_id: str,
+        req: CreateAssetRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         try:
-            cont = assessment_mgr.get_container(assessment_id)
             atype = AssetType(req.asset_type)
-            s_status = AssessmentScopeStatus(req.scope_status)
+            # DETERMINISTIC BACKEND SCOPE EVALUATION:
+            # Frontend-selected scope labels are not trusted.
+            s_status = evaluate_asset_scope_independent(req.canonical_identifier, cont.scope_gate)
+            if s_status == AssessmentScopeStatus.UNKNOWN:
+                s_status = AssessmentScopeStatus.OUT_OF_SCOPE
             asset = cont.asset_graph.add_asset(
                 asset_type=atype,
                 canonical_identifier=req.canonical_identifier,
@@ -1260,12 +2123,20 @@ def create_dashboard_app(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/assessments/{assessment_id}/assets")
-    def get_assets(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_assets(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         return {"status": "success", "assets": [a.model_dump() for a in cont.asset_graph.get_all_assets()]}
 
     @app.post("/api/assessments/{assessment_id}/observations")
-    def import_observations(assessment_id: str, req: ImportTelemetryRequest) -> Dict[str, Any]:
+    def import_observations(
+        assessment_id: str,
+        req: ImportTelemetryRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             report = assessment_mgr.import_telemetry(
                 assessment_id=assessment_id,
@@ -1284,24 +2155,37 @@ def create_dashboard_app(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/assessments/{assessment_id}/observations")
-    def get_observations(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_observations(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         obs = cont.telemetry_pipeline.get_observations(assessment_id=assessment_id)
         return {"status": "success", "observations": [o.model_dump() for o in obs]}
 
     @app.get("/api/assessments/{assessment_id}/attack-surface")
-    def get_attack_surface(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_attack_surface(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         return {"status": "success", "attack_surface": cont.attack_surface.export_summary()}
 
     @app.get("/api/assessments/{assessment_id}/hypotheses")
-    def get_hypotheses(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_hypotheses(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         hyps = list(cont.review_workspace.hypotheses.values())
         return {"status": "success", "hypotheses": [h.model_dump() for h in hyps]}
 
     @app.post("/api/assessments/{assessment_id}/hypotheses")
-    def generate_hypotheses(assessment_id: str) -> Dict[str, Any]:
+    def generate_hypotheses(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             hyps = assessment_mgr.generate_hypotheses(assessment_id)
             return {"status": "success", "generated_count": len(hyps), "hypotheses": [h.model_dump() for h in hyps]}
@@ -1309,8 +2193,11 @@ def create_dashboard_app(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/assessments/{assessment_id}/evidence-gaps")
-    def get_evidence_gaps(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_evidence_gaps(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         gaps = []
         for h in cont.review_workspace.hypotheses.values():
             for g in h.evidence_gaps:
@@ -1318,13 +2205,21 @@ def create_dashboard_app(
         return {"status": "success", "evidence_gaps": gaps}
 
     @app.get("/api/assessments/{assessment_id}/experiments")
-    def get_experiments(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_experiments(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         exps = list(cont.review_workspace.experiments.values())
         return {"status": "success", "experiments": [e.model_dump() for e in exps]}
 
     @app.post("/api/assessments/{assessment_id}/experiments")
-    def propose_experiment(assessment_id: str, req: ProposeExperimentRequest) -> Dict[str, Any]:
+    def propose_experiment(
+        assessment_id: str,
+        req: ProposeExperimentRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         try:
             risk = ExperimentRiskLevel(req.risk_level)
             exp = assessment_mgr.propose_experiment(
@@ -1343,39 +2238,97 @@ def create_dashboard_app(
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    @app.post("/api/experiments/{experiment_id}/result")
-    def import_experiment_result(experiment_id: str, req: ImportExperimentResultRequest) -> Dict[str, Any]:
+    @app.post("/api/assessments/{assessment_id}/experiments/{exp_id}/approve")
+    @app.post("/api/assessments/{assessment_id}/experiments/{exp_id}/approval")
+    def approve_assessment_experiment(
+        assessment_id: str,
+        exp_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Explicitly approve an experiment in the assessment before results can be imported."""
+        get_assessment_or_404(assessment_id)
         try:
-            exp = assessment_mgr.import_experiment_result(experiment_id, req.result_payload, req.executed_by)
+            exp = assessment_mgr.approve_experiment(exp_id, user.username)
+            if auditor:
+                auditor.log_event(
+                    event_type="EXPERIMENT_APPROVED",
+                    actor=user.username,
+                    subject_id=exp_id,
+                    details={"assessment_id": assessment_id, "experiment_id": exp_id, "approver": user.username},
+                    investigation_id=assessment_id,
+                )
             return {"status": "success", "experiment": exp.model_dump()}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    @app.post("/api/experiments/{experiment_id}/result")
+    @app.post("/api/assessments/{assessment_id}/experiments/{experiment_id}/results")
+    @app.post("/api/assessments/{assessment_id}/experiments/{experiment_id}/result")
+    def import_experiment_result(
+        experiment_id: str,
+        req: ImportExperimentResultRequest,
+        assessment_id: Optional[str] = None,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Import experiment result bound strictly to authenticated executor and approved state."""
+        authoritative_executor = user.username
+        try:
+            exp = assessment_mgr.import_experiment_result(experiment_id, req.result_payload, authoritative_executor)
+            aid = assessment_mgr._experiment_to_assessment.get(experiment_id) or assessment_id
+            if auditor and aid:
+                auditor.log_event(
+                    event_type="EXPERIMENT_RESULT_IMPORTED",
+                    actor=authoritative_executor,
+                    subject_id=experiment_id,
+                    details={"experiment_id": experiment_id, "status": exp.status.value},
+                    investigation_id=aid,
+                )
+            return {"status": "success", "experiment": exp.model_dump()}
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except (ValueError, PermissionError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/api/hypotheses/{hypothesis_id}/verify")
-    def verify_hypothesis(hypothesis_id: str, req: VerifyHypothesisRequest) -> Dict[str, Any]:
+    def verify_hypothesis(
+        hypothesis_id: str,
+        req: VerifyHypothesisRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
         aid = assessment_mgr._hypothesis_to_assessment.get(hypothesis_id)
         if not aid:
             raise HTTPException(status_code=404, detail="Hypothesis not found.")
-        cont = assessment_mgr.get_container(aid)
+        cont = get_container_or_404(aid)
         act = req.action.upper()
+        authoritative_reviewer = user.username
         if act == "ACCEPT":
-            hyp = cont.review_workspace.accept_hypothesis(hypothesis_id, req.human_reviewer, req.notes)
+            hyp = cont.review_workspace.accept_hypothesis(hypothesis_id, authoritative_reviewer, req.notes)
         elif act == "REQUEST_EVIDENCE":
-            hyp = cont.review_workspace.request_evidence(hypothesis_id, req.human_reviewer, req.notes)
+            hyp = cont.review_workspace.request_evidence(hypothesis_id, authoritative_reviewer, req.notes)
         elif act == "REFUTE":
-            hyp = cont.review_workspace.mark_hypothesis_refuted(hypothesis_id, req.human_reviewer, req.notes)
+            hyp = cont.review_workspace.mark_hypothesis_refuted(hypothesis_id, authoritative_reviewer, req.notes)
         else:
             raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}")
         return {"status": "success", "hypothesis": hyp.model_dump()}
 
     @app.get("/api/assessments/{assessment_id}/findings")
-    def get_findings(assessment_id: str) -> Dict[str, Any]:
-        cont = assessment_mgr.get_container(assessment_id)
+    def get_findings(
+        assessment_id: str,
+        user: DashboardSession = Depends(require_role(DashboardRole.OBSERVER)),
+    ) -> Dict[str, Any]:
+        cont = get_container_or_404(assessment_id)
         findings = list(cont.findings.values())
         return {"status": "success", "findings": [f.model_dump() for f in findings]}
 
     @app.post("/api/assessments/{assessment_id}/findings")
-    def create_finding(assessment_id: str, req: CreateFindingRequest) -> Dict[str, Any]:
+    def create_finding(
+        assessment_id: str,
+        req: CreateFindingRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
         seed = f"{assessment_id}:{req.title}:{req.asset}"
         fid = f"FIND-{hashlib.sha256(seed.encode()).hexdigest()[:12].upper()}"
         finding = AssessmentFinding(
@@ -1395,40 +2348,155 @@ def create_dashboard_app(
             references=req.references,
         )
         saved = assessment_mgr.register_candidate_finding(assessment_id, finding)
+        if auditor:
+            auditor.log_event(
+                event_type="FINDING_REGISTERED",
+                actor=user.username,
+                subject_id=saved.finding_id,
+                details={
+                    "assessment_id": assessment_id,
+                    "finding_id": saved.finding_id,
+                    "title": saved.title,
+                    "asset": saved.asset,
+                },
+                investigation_id=assessment_id,
+            )
         return {"status": "success", "finding": saved.model_dump()}
 
     @app.post("/api/findings/{finding_id}/verify")
-    def verify_finding(finding_id: str, req: VerifyFindingRequest) -> Dict[str, Any]:
+    def verify_finding(
+        finding_id: str,
+        req: VerifyFindingRequest,
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        """Verify finding validation-first and bound strictly to authenticated reviewer."""
+        authoritative_reviewer = user.username
         try:
-            confirmed = assessment_mgr.verify_finding(finding_id, req.human_reviewer, req.justification)
+            confirmed = assessment_mgr.verify_finding(finding_id, authoritative_reviewer, req.justification)
+            aid = assessment_mgr._finding_to_assessment.get(finding_id)
+            if auditor and aid:
+                auditor.log_event(
+                    event_type="FINDING_VERIFIED",
+                    actor=authoritative_reviewer,
+                    subject_id=finding_id,
+                    details={
+                        "finding_id": finding_id,
+                        "justification": req.justification,
+                        "verification_status": confirmed.verification_status.value,
+                    },
+                    investigation_id=aid,
+                )
             return {"status": "success", "finding": confirmed.model_dump()}
-        except Exception as e:
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except (ValueError, PermissionError, FindingValidationError) as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/api/assessments/{assessment_id}/report")
-    def generate_report(assessment_id: str) -> Dict[str, Any]:
+    def generate_report(
+        assessment_id: str,
+        format_type: Optional[str] = Query(None),
+        format: Optional[str] = Query(None),
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
+        raw_fmt = format or format_type or "markdown"
+        norm_fmt = raw_fmt.lower().strip()
+        if norm_fmt not in ("markdown", "md", "json", "html"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported report format: '{raw_fmt}'. Supported formats: markdown, json, html.",
+            )
         try:
-            md = assessment_mgr.generate_report(assessment_id)
-            return {"status": "success", "report_markdown": md}
-        except Exception as e:
+            content = assessment_mgr.generate_report(assessment_id, format_type=norm_fmt)
+            mime_map = {
+                "markdown": "text/markdown; charset=utf-8",
+                "md": "text/markdown; charset=utf-8",
+                "json": "application/json; charset=utf-8",
+                "html": "text/html; charset=utf-8",
+            }
+            ext_map = {
+                "markdown": "md",
+                "md": "md",
+                "json": "json",
+                "html": "html",
+            }
+            mime_type = mime_map.get(norm_fmt, "text/plain; charset=utf-8")
+            ext = ext_map.get(norm_fmt, "txt")
+            filename = f"{assessment_id}_security_assessment_report.{ext}"
+            return {
+                "status": "success",
+                "format": norm_fmt,
+                "report_markdown": content if norm_fmt in ("markdown", "md") else None,
+                "content": content,
+                "mime_type": mime_type,
+                "filename": filename,
+            }
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/api/assessments/{assessment_id}/reports/export")
-    def export_report(assessment_id: str, format_type: str = "markdown") -> Dict[str, Any]:
+    def export_report(
+        assessment_id: str,
+        format_type: Optional[str] = Query(None),
+        format: Optional[str] = Query(None),
+        user: DashboardSession = Depends(require_role(DashboardRole.REVIEWER)),
+    ) -> Dict[str, Any]:
+        get_assessment_or_404(assessment_id)
+        raw_fmt = format or format_type or "markdown"
+        norm_fmt = raw_fmt.lower().strip()
+        if norm_fmt not in ("markdown", "md", "json", "html"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported report format: '{raw_fmt}'. Supported formats: markdown, json, html.",
+            )
         try:
-            cont = assessment_mgr.get_container(assessment_id)
-            md = assessment_mgr.generate_report(assessment_id)
+            cont = get_container_or_404(assessment_id)
+            content = assessment_mgr.generate_report(assessment_id, format_type=norm_fmt)
+
+            mime_map = {
+                "markdown": "text/markdown; charset=utf-8",
+                "md": "text/markdown; charset=utf-8",
+                "json": "application/json; charset=utf-8",
+                "html": "text/html; charset=utf-8",
+            }
+            ext_map = {
+                "markdown": "md",
+                "md": "md",
+                "json": "json",
+                "html": "html",
+            }
+            mime_type = mime_map.get(norm_fmt, "text/plain; charset=utf-8")
+            ext = ext_map.get(norm_fmt, "txt")
+            filename = f"{assessment_id}_security_assessment_report.{ext}"
+
             cont.audit_logger.record_event(
                 event_type="REPORT_EXPORTED",
-                actor="HUMAN_OPERATOR",
+                actor=user.username,
                 component="AssessmentReportGenerator",
                 authorization_state=cont.authorization.status.value if cont.authorization else "ACTIVE",
                 scope_state="IN_SCOPE",
-                input_reference=format_type,
+                input_reference=norm_fmt,
             )
-            return {"status": "success", "format": format_type, "content": md}
-        except Exception as e:
+            return {
+                "status": "success",
+                "format": norm_fmt,
+                "content": content,
+                "mime_type": mime_type,
+                "filename": filename,
+            }
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     # -------------------------------------------------------------------------
     # Static Assets & Single-Origin SPA Serving

@@ -238,7 +238,7 @@ def test_conversational_7b_not_mislabeled_as_cascade(workspace_service: Workspac
     # Must NOT have cascade trace ID
     assert asst_msg.cascade_trace_id is None
     # Must NOT be labeled as cascade
-    assert asst_msg.model_name in ("qwen2.5-coder:7b", "local_rule_engine")
+    assert asst_msg.model_name in ("qwen2.5-coder:7b", "local_rule_engine", "local_knowledge_engine")
     assert "Cascade" not in (asst_msg.model_name or "")
 
 
@@ -363,8 +363,11 @@ def test_cascade_trace_api_lookup(workspace_service: WorkspaceService):
 
     inv = workspace_service.create_investigation(CreateInvestigationRequest(name="API Inv", target_host="api.target.local"))
 
-    app = create_dashboard_app(workspace_service=workspace_service)
-    client = TestClient(app)
+    from src.dashboard.auth import DashboardAuthManager, DashboardRole
+    auth_mgr = DashboardAuthManager(db_manager=workspace_service.db)
+    sess = auth_mgr.create_session("obs_tester", DashboardRole.ADMIN)
+    app = create_dashboard_app(workspace_service=workspace_service, auth_manager=auth_mgr)
+    client = TestClient(app, headers={"Authorization": f"Bearer {sess.token}"})
 
     # Insert test trace with valid foreign key
     trace = {
@@ -392,11 +395,14 @@ def test_cascade_trace_api_lookup(workspace_service: WorkspaceService):
 def test_message_trace_api_lookup(workspace_service: WorkspaceService):
     from fastapi.testclient import TestClient
     from src.dashboard.app import create_dashboard_app
+    from src.dashboard.auth import DashboardAuthManager, DashboardRole
 
     inv = workspace_service.create_investigation(CreateInvestigationRequest(name="API Inv 2", target_host="api.target.local"))
 
-    app = create_dashboard_app(workspace_service=workspace_service)
-    client = TestClient(app)
+    auth_mgr_2 = DashboardAuthManager(db_manager=workspace_service.db)
+    sess_2 = auth_mgr_2.create_session("obs_tester_2", DashboardRole.ADMIN)
+    app = create_dashboard_app(workspace_service=workspace_service, auth_manager=auth_mgr_2)
+    client = TestClient(app, headers={"Authorization": f"Bearer {sess_2.token}"})
 
     trace = {
         "run_id": "RUN-API-002",

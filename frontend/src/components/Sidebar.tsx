@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { InvestigationSummary } from '../types';
+import type { InvestigationSummary, UserSession } from '../types';
 
 interface SidebarProps {
   investigations: InvestigationSummary[];
@@ -10,6 +10,11 @@ interface SidebarProps {
   onOpenSystemStatus: () => void;
   systemStatusReady: boolean;
   onOpenWorkspace?: () => void;
+  onOpenKnowledgeLab?: () => void;
+  currentUser?: UserSession | null;
+  onLogout?: () => void;
+  theme?: 'light' | 'dark';
+  onToggleTheme?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -21,6 +26,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSystemStatus,
   systemStatusReady,
   onOpenWorkspace,
+  onOpenKnowledgeLab,
+  currentUser,
+  onLogout,
+  theme = 'dark',
+  onToggleTheme,
 }) => {
   const [search, setSearch] = useState('');
 
@@ -90,18 +100,72 @@ export const Sidebar: React.FC<SidebarProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '6px',
-              marginBottom: '10px',
+              gap: '7px',
+              marginBottom: '6px',
               padding: '8px 12px',
-              backgroundColor: 'var(--accent-primary)',
-              color: '#FFFFFF',
+              backgroundColor: 'rgba(225, 29, 72, 0.08)',
+              border: '1px solid rgba(225, 29, 72, 0.28)',
+              color: 'var(--text-primary)',
               borderRadius: 'var(--radius-md)',
               fontSize: '12px',
               fontWeight: 600,
               cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(225, 29, 72, 0.16)';
+              e.currentTarget.style.borderColor = 'rgba(225, 29, 72, 0.45)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(225, 29, 72, 0.08)';
+              e.currentTarget.style.borderColor = 'rgba(225, 29, 72, 0.28)';
             }}
           >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--accent-primary)' }}>
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
+            </svg>
             <span>Assessment Workspace</span>
+          </button>
+        )}
+
+        {/* Global Knowledge Lab Switcher Button */}
+        {onOpenKnowledgeLab && (
+          <button
+            onClick={onOpenKnowledgeLab}
+            data-testid="sidebar-open-knowledge-lab"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '7px',
+              marginBottom: '10px',
+              padding: '8px 12px',
+              backgroundColor: 'rgba(59, 130, 246, 0.08)',
+              border: '1px solid rgba(59, 130, 246, 0.28)',
+              color: 'var(--text-primary)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.16)';
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.45)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.08)';
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.28)';
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--badge-blue-text)' }}>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span>Knowledge Lab</span>
           </button>
         )}
 
@@ -252,8 +316,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Sidebar Footer with System Status */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-sidebar)' }}>
+      {/* Sidebar Footer with Theme Switcher & System Status */}
+      <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-sidebar)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {onToggleTheme && (
+          <button
+            id="theme-toggle-btn"
+            onClick={onToggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '7px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+              e.currentTarget.style.color = 'var(--text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+              e.currentTarget.style.color = 'var(--text-secondary)';
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '13px', lineHeight: 1 }}>{theme === 'light' ? '☀️' : '🌙'}</span>
+              <span style={{ fontWeight: 500 }}>Theme: {theme === 'light' ? 'Light' : 'Dark'}</span>
+            </div>
+            <span
+              style={{
+                fontSize: '10px',
+                padding: '1px 5px',
+                borderRadius: '3px',
+                backgroundColor: 'var(--bg-surface-muted)',
+                color: 'var(--text-muted)',
+                fontWeight: 600,
+              }}
+            >
+              {theme === 'light' ? 'LIGHT' : 'DARK'}
+            </span>
+          </button>
+        )}
+
         <button
           onClick={onOpenSystemStatus}
           style={{
@@ -292,6 +404,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>→</span>
         </button>
       </div>
+
+      {/* Authenticated Operator Session Banner */}
+      {currentUser && (
+        <div style={{
+          padding: '12px 16px',
+          borderTop: '1px solid var(--border-subtle)',
+          backgroundColor: 'var(--bg-sidebar)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <span style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {currentUser.username}
+            </span>
+            <span style={{
+              fontSize: '10.5px',
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}>
+              {currentUser.role}
+            </span>
+          </div>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              style={{
+                padding: '4px 8px',
+                fontSize: '11px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'transparent',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--accent-primary)';
+                e.currentTarget.style.borderColor = 'var(--accent-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--text-secondary)';
+                e.currentTarget.style.borderColor = 'var(--border-subtle)';
+              }}
+            >
+              Sign Out
+            </button>
+          )}
+        </div>
+      )}
     </aside>
   );
 };

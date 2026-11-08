@@ -63,6 +63,13 @@ class CybersecurityQueryRewriter:
         "dos": ("Denial of Service", ["resource exhaustion", "availability impact", "service disruption"]),
         "authn": ("Authentication", ["identity verification", "credentials", "401 Unauthorized"]),
         "authz": ("Authorization", ["access control", "permissions", "403 Forbidden"]),
+        "owasp": ("Open Web Application Security Project", ["OWASP Top 10", "ASVS"]),
+        "oswap": ("Open Web Application Security Project", ["OWASP Top 10", "ASVS"]),
+    }
+
+    # Conservative typo normalization mapping for standard security terms
+    TYPO_MAP: Dict[str, str] = {
+        "oswap": "owasp",
     }
 
     # Famous CVE mappings to authoritative names
@@ -81,7 +88,13 @@ class CybersecurityQueryRewriter:
     @classmethod
     def rewrite_query(cls, query: str) -> QueryExpansionResult:
         """Expands and normalizes technical terms while preserving non-leading intent."""
-        normalized_lower = query.lower()
+        # Apply conservative typo normalization for well-known security acronyms/terms
+        normalized_query = query
+        for typo, correction in cls.TYPO_MAP.items():
+            if re.search(r"\b" + re.escape(typo) + r"\b", normalized_query, re.IGNORECASE):
+                normalized_query = re.sub(r"\b" + re.escape(typo) + r"\b", correction, normalized_query, flags=re.IGNORECASE)
+
+        normalized_lower = normalized_query.lower()
         words = set(re.findall(r"\b[a-zA-Z0-9_\-]+\b", normalized_lower))
 
         expanded_terms: List[str] = []
@@ -121,11 +134,11 @@ class CybersecurityQueryRewriter:
                 seen.add(t_norm)
                 clean_expansions.append(term)
 
-        # Construct rewritten query string
+        # Construct rewritten query string using normalized query
         if clean_expansions:
-            rewritten_str = f"{query.strip()} ({' '.join(clean_expansions)})"
+            rewritten_str = f"{normalized_query.strip()} ({' '.join(clean_expansions)})"
         else:
-            rewritten_str = query.strip()
+            rewritten_str = normalized_query.strip()
 
         # Deduce broad domain
         domain = "GENERAL_VAPT"

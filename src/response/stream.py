@@ -17,10 +17,30 @@ class CancellationToken:
     def __init__(self) -> None:
         self._cancelled = threading.Event()
         self._reason = ""
+        self._callbacks: List[Callable[[], None]] = []
+        self._lock = threading.Lock()
+
+    def register_callback(self, cb: Callable[[], None]) -> None:
+        """Register a callback to be invoked immediately upon cancellation."""
+        with self._lock:
+            if self._cancelled.is_set():
+                try:
+                    cb()
+                except Exception:
+                    pass
+                return
+            self._callbacks.append(cb)
 
     def cancel(self, reason: str = "User stopped generation") -> None:
-        self._reason = reason
-        self._cancelled.set()
+        with self._lock:
+            self._reason = reason
+            self._cancelled.set()
+            callbacks = list(self._callbacks)
+        for cb in callbacks:
+            try:
+                cb()
+            except Exception:
+                pass
 
     @property
     def is_cancelled(self) -> bool:

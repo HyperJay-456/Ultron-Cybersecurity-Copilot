@@ -137,6 +137,21 @@ class AssessmentManager:
         is_valid, reason = AuthorizationValidator.validate_authorization(auth_record)
         if not is_valid:
             raise ValueError(f"Cannot accept invalid authorization: {reason}")
+        if not auth_record.is_currently_valid():
+            raise ValueError("Cannot accept expired or revoked authorization.")
+
+        # Bind to active scope policy hash if scope is already defined
+        active_scope_hash = cont.scope_gate.policy.policy_hash if cont.scope_gate.policy.in_scope else None
+        if active_scope_hash:
+            if auth_record.scope_policy_hash and auth_record.scope_policy_hash != active_scope_hash:
+                raise ValueError(
+                    f"AUTHORIZATION_SCOPE_MISMATCH: Authorization authorizes policy '{auth_record.scope_policy_hash}', "
+                    f"but active scope policy is '{active_scope_hash}'."
+                )
+            if not auth_record.scope_policy_hash:
+                auth_record.scope_policy_hash = active_scope_hash
+                auth_record.scope_policy_version = cont.scope_gate.policy.scope_policy_version
+                auth_record.content_hash = auth_record.compute_hash()
 
         cont.authorization = auth_record
         cont.record.authorization_id = auth_record.authorization_id
@@ -150,6 +165,15 @@ class AssessmentManager:
                 reason="Valid AuthorizationRecord bound to assessment.",
                 authorization=auth_record,
             )
+            if cont.scope_gate.policy.in_scope:
+                AssessmentLifecycleEngine.transition(
+                    cont.record,
+                    AssessmentLifecycleState.SCOPE_DEFINED,
+                    actor=actor,
+                    reason="ScopePolicy already defined for assessment.",
+                    authorization=auth_record,
+                    scope_defined=True,
+                )
 
         cont.audit_logger.record_event(
             event_type="AUTHORIZATION_ACCEPTED",
@@ -163,26 +187,65 @@ class AssessmentManager:
 
     def set_scope(self, assessment_id: str, scope_policy: ScopePolicy, actor: str = "HUMAN_AUTHORITY") -> ScopePolicy:
         cont = self.get_container(assessment_id)
+        old_policy_hash = cont.scope_gate.policy.policy_hash if cont.scope_gate.policy.in_scope else None
+        new_policy_hash = scope_policy.compute_policy_hash()
+
+        policy_changed = bool(old_policy_hash and old_policy_hash != new_policy_hash)
+
+        # Invalidate existing authorization if scope changed after approval
+        if policy_changed and cont.authorization:
+            if cont.authorization.scope_policy_hash != new_policy_hash:
+                cont.authorization.status = AuthorizationStatus.REVOKED
+                cont.audit_logger.record_event(
+                    event_type="AUTHORIZATION_REVOKED_SCOPE_CHANGED",
+                    actor=actor,
+                    component="AssessmentManager",
+                    authorization_state=AuthorizationStatus.REVOKED.value,
+                    scope_state=f"old_policy={old_policy_hash}, new_policy={new_policy_hash}",
+                    input_reference=cont.authorization.authorization_id,
+                )
+                if cont.record.state in (
+                    AssessmentLifecycleState.ASSESSMENT_ACTIVE,
+                    AssessmentLifecycleState.SCOPE_DEFINED,
+                    AssessmentLifecycleState.AUTHORIZED,
+                ):
+                    prev_state = cont.record.state.value
+                    cont.record.state = AssessmentLifecycleState.AUTHORIZATION_PENDING
+                    cont.record.updated_at = datetime.now(timezone.utc).isoformat()
+                    cont.record.state_history.append({
+                        "from_state": prev_state,
+                        "to_state": AssessmentLifecycleState.AUTHORIZATION_PENDING.value,
+                        "actor": actor,
+                        "reason": "Scope policy changed after approval; authorization invalidated pending re-approval.",
+                        "timestamp": cont.record.updated_at,
+                    })
+
         cont.scope_gate.policy = scope_policy
         cont.record.scope_policy_id = scope_policy.program_name
+        cont.record.scope_policy_hash = new_policy_hash
+        cont.record.scope_policy_version = scope_policy.scope_policy_version
 
         # Advance lifecycle to SCOPE_DEFINED if AUTHORIZED
         if cont.record.state == AssessmentLifecycleState.AUTHORIZED:
-            AssessmentLifecycleEngine.transition(
-                cont.record,
-                AssessmentLifecycleState.SCOPE_DEFINED,
-                actor=actor,
-                reason="ScopePolicy defined for assessment.",
-                authorization=cont.authorization,
-                scope_defined=True,
-            )
+            if cont.authorization and (not cont.authorization.scope_policy_hash or cont.authorization.scope_policy_hash == new_policy_hash):
+                cont.authorization.scope_policy_hash = new_policy_hash
+                cont.authorization.scope_policy_version = scope_policy.scope_policy_version
+                cont.authorization.content_hash = cont.authorization.compute_hash()
+                AssessmentLifecycleEngine.transition(
+                    cont.record,
+                    AssessmentLifecycleState.SCOPE_DEFINED,
+                    actor=actor,
+                    reason="ScopePolicy defined for assessment.",
+                    authorization=cont.authorization,
+                    scope_defined=True,
+                )
 
         cont.audit_logger.record_event(
             event_type="SCOPE_DEFINED",
             actor=actor,
             component="AssessmentManager",
             authorization_state=cont.authorization.status.value if cont.authorization else "NONE",
-            scope_state=f"in_scope={len(scope_policy.in_scope)}",
+            scope_state=f"in_scope={len(scope_policy.in_scope)}, policy_hash={new_policy_hash}",
         )
         return scope_policy
 
@@ -190,6 +253,17 @@ class AssessmentManager:
 
     def activate_assessment(self, assessment_id: str, actor: str = "HUMAN_AUTHORITY") -> AssessmentRecord:
         cont = self.get_container(assessment_id)
+        if not cont.authorization:
+            raise ValueError("PRECONDITION_FAILED: Assessment lacks authorization record.")
+        if not cont.authorization.is_currently_valid():
+            raise ValueError("PRECONDITION_FAILED: Cannot activate assessment with expired or revoked authorization.")
+        active_hash = cont.scope_gate.policy.policy_hash
+        if cont.authorization.scope_policy_hash and cont.authorization.scope_policy_hash != active_hash:
+            raise ValueError(
+                f"PRECONDITION_FAILED: Scope policy hash mismatch. "
+                f"Authorization authorizes '{cont.authorization.scope_policy_hash}', "
+                f"but active policy is '{active_hash}'."
+            )
         AssessmentLifecycleEngine.transition(
             cont.record,
             AssessmentLifecycleState.ASSESSMENT_ACTIVE,
@@ -284,19 +358,42 @@ class AssessmentManager:
         self._experiment_to_assessment[exp.experiment_id] = assessment_id
         return exp
 
+    def approve_experiment(self, experiment_id: str, approver_name: str) -> AssessmentExperiment:
+        aid = self._experiment_to_assessment.get(experiment_id)
+        if not aid:
+            raise KeyError(f"Experiment '{experiment_id}' not found.")
+        cont = self.get_container(aid)
+        if not approver_name or not str(approver_name).strip():
+            raise ValueError("Approver name is required.")
+        if any(t in str(approver_name).upper() for t in ("LLM", "MODEL", "AI", "AUTO", "BOT", "SYSTEM", "AGENT", "ORCHESTRATOR", "COPILOT")):
+            raise ValueError(f"Automated entity '{approver_name}' cannot approve experiments.")
+        exp = cont.experiment_engine.approve_experiment(experiment_id, approver_name)
+        cont.audit_logger.record_event(
+            event_type="EXPERIMENT_APPROVED",
+            actor=approver_name,
+            component="AssessmentManager",
+            authorization_state=cont.authorization.status.value if cont.authorization else "UNKNOWN",
+            scope_state="VERIFIED",
+            input_reference=experiment_id,
+        )
+        return exp
+
     def import_experiment_result(self, experiment_id: str, result_payload: Dict[str, Any], executed_by: str) -> AssessmentExperiment:
         aid = self._experiment_to_assessment.get(experiment_id)
         if not aid:
             raise KeyError(f"Experiment '{experiment_id}' not found.")
         cont = self.get_container(aid)
+        if not cont.authorization or not cont.authorization.is_currently_valid():
+            raise PermissionError("Cannot import experiment result: Assessment lacks active, valid authorization.")
         exp = cont.experiment_engine.import_human_result(experiment_id, result_payload, executed_by)
         cont.audit_logger.record_event(
             event_type="EXPERIMENT_RESULT_IMPORTED",
             actor=executed_by,
             component="SafeExperimentEngine",
-            authorization_state="ACTIVE",
+            authorization_state=cont.authorization.status.value if cont.authorization else "UNKNOWN",
             scope_state="VERIFIED",
             input_reference=experiment_id,
+            provenance={"executed_by": executed_by, "result_keys": list(result_payload.keys())},
         )
         return exp
 
@@ -305,9 +402,20 @@ class AssessmentManager:
         if not aid:
             raise KeyError(f"Finding '{finding_id}' not found.")
         cont = self.get_container(aid)
+        if finding_id not in cont.findings:
+            raise KeyError(f"Finding '{finding_id}' not found in assessment '{aid}'.")
         finding = cont.findings[finding_id]
 
-        # 13-point checklist validation
+        # 1. Authorize human reviewer
+        if not human_reviewer or not str(human_reviewer).strip():
+            raise ValueError("Human reviewer identity is required.")
+        if any(t in str(human_reviewer).upper() for t in ("LLM", "MODEL", "AI", "AUTO", "BOT", "SYSTEM", "AGENT", "ORCHESTRATOR", "COPILOT")):
+            raise PermissionError(f"AUTO-CONFIRM IS BLOCKED: Automated entity '{human_reviewer}' cannot verify finding.")
+
+        if not justification or len(justification.strip()) < 10:
+            raise ValueError("Substantive human justification (at least 10 characters) required for finding verification.")
+
+        # 2. Build validation context
         context = AssessmentValidationContext(
             assessment=cont.record,
             authorization=cont.authorization,
@@ -317,21 +425,33 @@ class AssessmentManager:
             experiments=cont.review_workspace.experiments,
         )
 
-        # First mark human verified in workspace
-        cont.review_workspace.verify_finding(finding_id, human_reviewer, justification)
+        # 3. Deterministic 13-point validation check BEFORE ANY MUTATION
+        FindingValidator.assert_candidate_valid(finding, context, candidate_reviewer=human_reviewer)
 
-        # Deterministic 13-point validation check
-        FindingValidator.assert_finding_valid(finding, context)
+        # 4. Commit verification state only after validation succeeds, with rollback safety
+        orig_status = finding.verification_status
+        orig_reviewer = finding.verified_by
+        orig_at = finding.verified_at
+        try:
+            cont.review_workspace.verify_finding(finding_id, human_reviewer, justification)
+            FindingValidator.assert_finding_valid(finding, context)
+            cont.audit_logger.record_event(
+                event_type="FINDING_VERIFIED",
+                actor=human_reviewer,
+                component="FindingValidator",
+                authorization_state=cont.authorization.status.value if cont.authorization else "ACTIVE",
+                scope_state="IN_SCOPE",
+                epistemic_state="HUMAN_VERIFIED_FINDING",
+                input_reference=finding_id,
+                provenance={"justification": justification},
+            )
+        except Exception:
+            # Atomic rollback on any downstream error
+            finding.verification_status = orig_status
+            finding.verified_by = orig_reviewer
+            finding.verified_at = orig_at
+            raise
 
-        cont.audit_logger.record_event(
-            event_type="FINDING_VERIFIED",
-            actor=human_reviewer,
-            component="FindingValidator",
-            authorization_state="ACTIVE",
-            scope_state="IN_SCOPE",
-            epistemic_state="HUMAN_VERIFIED_FINDING",
-            input_reference=finding_id,
-        )
         return finding
 
     def register_candidate_finding(self, assessment_id: str, finding: AssessmentFinding) -> AssessmentFinding:
@@ -342,10 +462,12 @@ class AssessmentManager:
         self._finding_to_assessment[finding.finding_id] = assessment_id
         return finding
 
-    def generate_report(self, assessment_id: str) -> str:
+    def generate_report(self, assessment_id: str, format_type: str = "markdown") -> str:
         cont = self.get_container(assessment_id)
         if not cont.authorization:
             raise ValueError("Cannot generate report: Authorization missing.")
+        if cont.authorization.status in (AuthorizationStatus.REVOKED, AuthorizationStatus.EXPIRED, AuthorizationStatus.INVALID):
+            raise PermissionError(f"Cannot generate report: Authorization status is {cont.authorization.status.value}.")
 
         ctx = AssessmentReportContext(
             assessment=cont.record,
@@ -356,4 +478,4 @@ class AssessmentManager:
             hypotheses=list(cont.review_workspace.hypotheses.values()),
             findings=list(cont.findings.values()),
         )
-        return AssessmentReportGenerator.generate_markdown(ctx)
+        return AssessmentReportGenerator.generate(ctx, format_type=format_type)

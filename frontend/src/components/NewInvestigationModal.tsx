@@ -43,6 +43,9 @@ export const NewInvestigationModal: React.FC<NewInvestigationModalProps> = ({ on
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-investigation-title"
         className="card-base"
         style={{
           width: '460px',
@@ -58,12 +61,13 @@ export const NewInvestigationModal: React.FC<NewInvestigationModalProps> = ({ on
             <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary)', letterSpacing: '0.06em' }}>
               ULTRON TARGET INVESTIGATION
             </span>
-            <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
+            <h3 id="new-investigation-title" style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
               Create Investigation
             </h3>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close dialog"
             style={{ fontSize: '18px', color: 'var(--text-muted)', padding: '4px 8px', borderRadius: '4px' }}
           >
             ✕

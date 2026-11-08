@@ -46,8 +46,12 @@ def client_factory(service_factory):
     """Factory creating FastAPI test clients bound to a given WorkspaceService."""
     def _create(service=None):
         srv = service or service_factory()
-        app = create_dashboard_app(workspace_service=srv)
-        return TestClient(app), srv
+        from src.dashboard.auth import DashboardAuthManager, DashboardRole
+        auth_mgr = DashboardAuthManager(db_manager=srv.db)
+        sess = auth_mgr.create_session("persist_tester", DashboardRole.ADMIN)
+        app = create_dashboard_app(workspace_service=srv, auth_manager=auth_mgr)
+        client = TestClient(app, headers={"Authorization": f"Bearer {sess.token}"})
+        return client, srv
     return _create
 
 

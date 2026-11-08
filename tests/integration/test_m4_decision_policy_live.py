@@ -24,6 +24,8 @@ Validates:
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.live_ollama]
+
 from src.engine.models import (
     HypothesisDecision,
     I5ExecutionResult,

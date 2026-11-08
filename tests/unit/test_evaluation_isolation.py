@@ -90,7 +90,7 @@ def test_experiment_log_has_no_premature_superiority_claims():
     Priority 6: Verify EXPERIMENT_LOG.md does not claim v6 outperforms RAG
     before formal evaluation has taken place.
     """
-    log_path = Path("EXPERIMENT_LOG.md")
+    log_path = Path("docs/EXPERIMENT_LOG.md") if Path("docs/EXPERIMENT_LOG.md").exists() else Path("EXPERIMENT_LOG.md")
     assert log_path.exists()
     content = log_path.read_text(encoding="utf-8")
 

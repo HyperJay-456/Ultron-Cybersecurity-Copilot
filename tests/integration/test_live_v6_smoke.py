@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 import pytest
 
+pytestmark = [pytest.mark.live_ollama]
+
 from src.database.manager import DatabaseManager
 from src.engine.models import (
     AppModelDelta,

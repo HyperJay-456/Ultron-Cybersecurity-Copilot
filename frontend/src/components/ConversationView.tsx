@@ -26,6 +26,8 @@ interface ConversationViewProps {
   onExecuteExperiment: (id: string) => Promise<any>;
   onOpenDrawer: (tab: string) => void;
   onSendFollowUp?: (prompt: string) => void;
+  onUpdateMessageContent?: (messageId: string, newContent: string) => void;
+  onEditPrompt?: (messageId: string, newContent: string) => Promise<void>;
 }
 
 export const ConversationView: React.FC<ConversationViewProps> = ({
@@ -45,12 +47,17 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   onExecuteExperiment,
   onOpenDrawer,
   onSendFollowUp,
+  onUpdateMessageContent,
+  onEditPrompt,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
   const [loadedTraces, setLoadedTraces] = useState<Record<string, CascadeExecutionTrace>>({});
   const [loadingTraces, setLoadingTraces] = useState<Record<string, boolean>>({});
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editPromptContent, setEditPromptContent] = useState<string>('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -123,9 +130,9 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                   <div style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
                     {presentation.submessage}
                   </div>
-                  <div>ℹ <strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped (already present)</div>
+                  <div><strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped (already present)</div>
                   {presentation.counts.redactedSecrets > 0 && (
-                    <div>🔒 <strong>{presentation.counts.redactedSecrets}</strong> sensitive tokens redacted</div>
+                    <div><strong>{presentation.counts.redactedSecrets}</strong> sensitive tokens redacted</div>
                   )}
                 </>
               ) : isOutOfScopeOnly ? (
@@ -133,14 +140,14 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                   <div style={{ color: 'var(--badge-amber-text)', fontWeight: 500 }}>
                     {presentation.submessage}
                   </div>
-                  <div>⛔ <strong>{presentation.counts.outOfScope}</strong> out-of-scope transaction{presentation.counts.outOfScope === 1 ? '' : 's'} excluded</div>
+                  <div><strong>{presentation.counts.outOfScope}</strong> out-of-scope transaction{presentation.counts.outOfScope === 1 ? '' : 's'} excluded</div>
                 </>
               ) : isParseErrorOnly ? (
                 <>
                   <div style={{ color: 'var(--badge-red-text)', fontWeight: 500 }}>
                     {presentation.submessage}
                   </div>
-                  <div>⚠ <strong>{presentation.counts.parseFailures}</strong> parsing failure{presentation.counts.parseFailures === 1 ? '' : 's'}</div>
+                  <div><strong>{presentation.counts.parseFailures}</strong> parsing failure{presentation.counts.parseFailures === 1 ? '' : 's'}</div>
                 </>
               ) : (
                 <>
@@ -150,19 +157,19 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                     </div>
                   )}
                   {presentation.counts.duplicates > 0 && (
-                    <div>ℹ <strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped</div>
+                    <div><strong>{presentation.counts.duplicates}</strong> duplicate transaction{presentation.counts.duplicates === 1 ? '' : 's'} skipped</div>
                   )}
                   {presentation.counts.outOfScope > 0 && (
                     <div style={{ color: 'var(--badge-amber-text)' }}>
-                      ⛔ <strong>{presentation.counts.outOfScope}</strong> out-of-scope excluded
+                      <strong>{presentation.counts.outOfScope}</strong> out-of-scope excluded
                     </div>
                   )}
                   {presentation.counts.redactedSecrets > 0 && (
-                    <div>🔒 <strong>{presentation.counts.redactedSecrets}</strong> sensitive tokens redacted</div>
+                    <div><strong>{presentation.counts.redactedSecrets}</strong> sensitive tokens redacted</div>
                   )}
                   {presentation.counts.parseFailures > 0 && (
                     <div style={{ color: 'var(--badge-red-text)' }}>
-                      ⚠ <strong>{presentation.counts.parseFailures}</strong> parsing failures
+                      <strong>{presentation.counts.parseFailures}</strong> parsing failures
                     </div>
                   )}
                 </>
@@ -348,15 +355,15 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
               <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
                 {presentation.isAllDuplicates ? (
                   <span>
-                    ℹ <strong>All imported transactions were already present.</strong> No new observations were created ({presentation.counts.duplicates} duplicate transactions skipped).
+                    <strong>All imported transactions were already present.</strong> No new observations were created ({presentation.counts.duplicates} duplicate transactions skipped).
                   </span>
                 ) : presentation.isAllOutOfScope ? (
                   <span style={{ color: 'var(--badge-amber-text)' }}>
-                    ⛔ All transactions were out of scope for <strong>{targetHost || 'target'}</strong> ({presentation.counts.outOfScope} excluded).
+                    All transactions were out of scope for <strong>{targetHost || 'target'}</strong> ({presentation.counts.outOfScope} excluded).
                   </span>
                 ) : presentation.isAllParseFailures ? (
                   <span style={{ color: 'var(--badge-red-text)' }}>
-                    ⚠ Import failed due to syntax errors ({presentation.counts.parseFailures} parsing errors).
+                    Import failed due to syntax errors ({presentation.counts.parseFailures} parsing errors).
                   </span>
                 ) : (
                   <span>
@@ -372,10 +379,10 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                       <span style={{ color: 'var(--badge-amber-text)' }}> · <strong>{presentation.counts.outOfScope}</strong> out of scope</span>
                     )}
                     {presentation.counts.redactedSecrets > 0 && (
-                      <span> · 🔒 {presentation.counts.redactedSecrets} secrets redacted</span>
+                      <span> · {presentation.counts.redactedSecrets} secrets redacted</span>
                     )}
                     {presentation.counts.parseFailures > 0 && (
-                      <span style={{ color: 'var(--badge-red-text)' }}> · ⚠ {presentation.counts.parseFailures} errors</span>
+                      <span style={{ color: 'var(--badge-red-text)' }}> · {presentation.counts.parseFailures} errors</span>
                     )}
                   </span>
                 )}
@@ -452,25 +459,151 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
 
               {/* Message Content Container */}
               {isUser ? (
-                <div
-                  style={{
-                    maxWidth: '85%',
-                    backgroundColor: 'var(--bg-surface-hover)',
-                    padding: '10px 16px',
-                    borderRadius: 'var(--radius-lg)',
-                    fontSize: '14.5px',
-                    lineHeight: 1.6,
-                    color: 'var(--text-primary)',
-                    whiteSpace: 'pre-line',
-                  }}
-                >
-                  {msg.content}
-                </div>
+                editingMessageId === msg.id ? (
+                  <div
+                    style={{
+                      width: '100%',
+                      maxWidth: '85%',
+                      backgroundColor: 'var(--bg-surface)',
+                      border: '1px solid var(--accent-primary)',
+                      borderRadius: 'var(--radius-lg)',
+                      padding: '12px 14px',
+                      boxShadow: 'var(--shadow-subtle)',
+                    }}
+                  >
+                    <textarea
+                      value={editPromptContent}
+                      onChange={(e) => setEditPromptContent(e.target.value)}
+                      disabled={isSavingEdit}
+                      aria-label="Edit prompt"
+                      rows={Math.max(2, editPromptContent.split('\n').length)}
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        outline: 'none',
+                        backgroundColor: 'transparent',
+                        fontSize: '14.5px',
+                        lineHeight: 1.6,
+                        color: 'var(--text-primary)',
+                        resize: 'vertical',
+                        minHeight: '60px',
+                        fontFamily: 'inherit',
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    />
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '8px',
+                        marginTop: '8px',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingMessageId(null);
+                          setEditPromptContent('');
+                        }}
+                        disabled={isSavingEdit}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--border-subtle)',
+                          backgroundColor: 'var(--bg-surface-hover)',
+                          color: 'var(--text-secondary)',
+                          cursor: isSavingEdit ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (isSavingEdit || !editPromptContent.trim()) return;
+                          setIsSavingEdit(true);
+                          try {
+                            if (onEditPrompt) {
+                              await onEditPrompt(msg.id, editPromptContent.trim());
+                            }
+                            setEditingMessageId(null);
+                            setEditPromptContent('');
+                          } finally {
+                            setIsSavingEdit(false);
+                          }
+                        }}
+                        disabled={isSavingEdit || !editPromptContent.trim()}
+                        style={{
+                          padding: '4px 12px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          borderRadius: 'var(--radius-sm)',
+                          border: 'none',
+                          backgroundColor: 'var(--accent-primary)',
+                          color: '#FFFFFF',
+                          cursor: isSavingEdit || !editPromptContent.trim() ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {isSavingEdit ? 'Saving…' : 'Save & Regenerate'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', maxWidth: '85%' }}>
+                    <div
+                      style={{
+                        backgroundColor: 'var(--bg-surface-hover)',
+                        padding: '10px 16px',
+                        borderRadius: 'var(--radius-lg)',
+                        fontSize: '14.5px',
+                        lineHeight: 1.6,
+                        color: 'var(--text-primary)',
+                        whiteSpace: 'pre-line',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {msg.content}
+                    </div>
+                    {onEditPrompt && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingMessageId(msg.id);
+                          setEditPromptContent(msg.content);
+                        }}
+                        aria-label="Edit prompt"
+                        style={{
+                          marginTop: '4px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'color 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = 'var(--text-primary)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = 'var(--text-muted)';
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                )
               ) : (
                 <div style={{ width: '100%' }}>
                   <LargeResponseView
                     message={msg}
                     onSendFollowUp={onSendFollowUp}
+                    onUpdateMessageContent={onUpdateMessageContent}
                   />
                 </div>
               )}
@@ -548,10 +681,9 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
               )}
 
               {/* Progressive Disclosure: AI Runtime Observability */}
-              {!isUser && (
+              {!isUser && hasTrace && (
                 <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', width: '100%' }}>
-                  {hasTrace ? (
-                    <div>
+                  <div>
                       <button
                         onClick={() => toggleTrace(msg.id, traceId)}
                         style={{
@@ -717,30 +849,6 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        fontSize: '11px',
-                        color: 'var(--text-muted)',
-                        padding: '2px 0',
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: '4px',
-                          height: '4px',
-                          borderRadius: '50%',
-                          backgroundColor: 'var(--text-muted)',
-                        }}
-                      />
-                      <span>
-                        Local AI · {msg.model_name === 'qwen2.5-coder:7b' ? '7B' : msg.model_name || 'Conversational'}
-                      </span>
-                    </div>
-                  )}
                 </div>
               )}
             </div>

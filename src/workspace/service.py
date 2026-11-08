@@ -170,6 +170,8 @@ class UnifiedWorkspaceService:
             valid_from=cont.authorization.valid_from if cont.authorization else None,
             valid_until=cont.authorization.valid_until if cont.authorization else None,
             scope_policy_id=cont.record.scope_policy_id,
+            scope_policy_version=getattr(cont.scope_gate.policy, "scope_policy_version", "v6"),
+            scope_policy_hash=cont.scope_gate.policy.policy_hash if hasattr(cont.scope_gate.policy, "policy_hash") else None,
             in_scope_count=len(in_scope_assets),
             out_of_scope_count=len(out_of_scope_assets),
             asset_count=len(assets),
@@ -278,24 +280,81 @@ class UnifiedWorkspaceService:
         """Authoritatively checks whether a given URL, domain, or IP is in-scope.
 
         INVARIANT M13-03: This validation operation NEVER modifies or expands scope.
+        Deterministic backend scope evaluation with explicit error and boundary outcomes:
+        - IN_SCOPE
+        - OUT_OF_SCOPE
+        - SCOPE_UNVERIFIABLE
+        - AUTHORIZATION_EXPIRED
+        - POLICY_VERSION_MISMATCH
+        - SCOPE_EVALUATION_ERROR
         """
         cont = self.assessment_mgr.get_container(assessment_id)
+        pol = cont.scope_gate.policy
+        pol_hash = pol.policy_hash if hasattr(pol, "policy_hash") else pol.program_name
+        pol_ver = getattr(pol, "scope_policy_version", "v6")
+
+        # 1. Authorization & Policy Version Binding Pre-check
+        if cont.authorization:
+            if not cont.authorization.is_currently_valid():
+                return {
+                    "assessment_id": assessment_id,
+                    "target": target,
+                    "is_in_scope": False,
+                    "is_allowed": False,
+                    "outcome": AssessmentScopeStatus.AUTHORIZATION_EXPIRED.value,
+                    "scope_policy_version": pol_ver,
+                    "scope_policy_hash": pol_hash,
+                    "scope_program": pol.program_name,
+                    "reason": "Authorization has expired or is revoked.",
+                    "evaluation_reason": "Authorization has expired or is revoked.",
+                }
+            if cont.authorization.scope_policy_hash and cont.authorization.scope_policy_hash != pol_hash:
+                return {
+                    "assessment_id": assessment_id,
+                    "target": target,
+                    "is_in_scope": False,
+                    "is_allowed": False,
+                    "outcome": AssessmentScopeStatus.POLICY_VERSION_MISMATCH.value,
+                    "scope_policy_version": pol_ver,
+                    "scope_policy_hash": pol_hash,
+                    "scope_program": pol.program_name,
+                    "reason": "Active scope policy version/hash does not match approved authorization.",
+                    "evaluation_reason": "Active scope policy version/hash does not match approved authorization.",
+                }
+
+        # 2. Scope Evaluation
         try:
             decision = cont.scope_gate.evaluate_extended_scope(target)
             is_in_scope = decision.is_permitted
-            reason = decision.reason
-        except Exception as e:
+            if is_in_scope:
+                outcome = AssessmentScopeStatus.IN_SCOPE.value
+                reason = decision.reason or "Target is within authorized boundaries"
+            elif decision.scope_status == AssessmentScopeStatus.OUT_OF_SCOPE:
+                outcome = AssessmentScopeStatus.OUT_OF_SCOPE.value
+                reason = decision.reason or "Target is explicitly out of scope"
+            else:
+                outcome = AssessmentScopeStatus.OUT_OF_SCOPE.value
+                reason = decision.reason or "Target is not within authorized scope rules"
+        except (TimeoutError, OSError) as e:
+            outcome = AssessmentScopeStatus.SCOPE_UNVERIFIABLE.value
             is_in_scope = False
-            reason = str(e)
+            reason = f"Network boundary/resolver unverifiable: {e}"
+        except Exception as e:
+            outcome = AssessmentScopeStatus.SCOPE_EVALUATION_ERROR.value
+            is_in_scope = False
+            reason = f"Scope evaluation error: {e}"
 
         return {
             "assessment_id": assessment_id,
             "target": target,
             "is_in_scope": is_in_scope,
             "is_allowed": is_in_scope,
-            "scope_program": cont.scope_gate.policy.program_name,
-            "reason": reason or ("Target is within authorized boundaries" if is_in_scope else "Target is out of scope"),
-            "evaluation_reason": reason or ("Target is within authorized boundaries" if is_in_scope else "Target is out of scope"),
+            "outcome": outcome,
+            "scope_policy_version": pol_ver,
+            "scope_policy_hash": pol_hash,
+            "scope_program": pol.program_name,
+            "reason": reason,
+            "evaluation_reason": reason,
         }
 
     def register_artifact(

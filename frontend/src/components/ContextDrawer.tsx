@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   fetchApplicationModel,
-  fetchAuditLog,
+  fetchInvestigationAudit,
   fetchEvidence,
   fetchGaps,
   fetchInvariants,
@@ -36,10 +36,6 @@ export const ContextDrawer: React.FC<ContextDrawerProps> = ({
     setActiveTab(initialTab);
   }, [initialTab]);
 
-  useEffect(() => {
-    loadData();
-  }, [investigationId, activeTab]);
-
   const loadData = async () => {
     setLoading(true);
     try {
@@ -56,8 +52,8 @@ export const ContextDrawer: React.FC<ContextDrawerProps> = ({
         const data = await fetchGaps(investigationId);
         setGaps(data);
       } else if (activeTab === 'audit') {
-        const data = await fetchAuditLog(25);
-        setAudit(data);
+        const auditRes = await fetchInvestigationAudit(investigationId, 50);
+        setAudit(auditRes.records || []);
       }
     } catch (err) {
       console.error(err);
@@ -65,6 +61,10 @@ export const ContextDrawer: React.FC<ContextDrawerProps> = ({
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadData();
+  }, [investigationId, activeTab]);
 
   const toggleObs = (id: string) => {
     setExpandedObs((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -348,7 +348,6 @@ export const ContextDrawer: React.FC<ContextDrawerProps> = ({
                                 )}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
                                   <span>
-                                    🔒{' '}
                                     {ev.redacted_secret_count > 0
                                       ? `${ev.redacted_secret_count} secrets redacted in RedactionVault`
                                       : 'No secrets detected'}
