@@ -310,14 +310,6 @@ All technical reports, architecture specifications, and decision records are cen
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): Foundational system architecture.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): Architectural Decision Records (ADRs).
-- [`docs/M13_WORKSPACE_ARCHITECTURE.md`](docs/M13_WORKSPACE_ARCHITECTURE.md): Assessment workspace design.
-- [`docs/M13_SECURITY.md`](docs/M13_SECURITY.md): Formal proof of all 35 security invariants.
-- [`docs/UI_AND_KNOWLEDGE_QA_REMEDIATION_REPORT.md`](docs/UI_AND_KNOWLEDGE_QA_REMEDIATION_REPORT.md): UI and Knowledge Q&A remediation log.
-- [`docs/ULTRON_FINAL_ACCEPTANCE_AUDIT_REPORT.md`](docs/ULTRON_FINAL_ACCEPTANCE_AUDIT_REPORT.md): Final acceptance audit and verification evidence.
-- [`docs/STAGE_C_LOCAL_AI_KNOWLEDGE_GRAPH_REPORT.md`](docs/STAGE_C_LOCAL_AI_KNOWLEDGE_GRAPH_REPORT.md): Stage C Local AI Knowledge Graph Extraction.
-- [`docs/STAGE_D_GRAPH_ASSISTED_RAG_REPORT.md`](docs/STAGE_D_GRAPH_ASSISTED_RAG_REPORT.md): Stage D Graph-Assisted RAG & Retrieval.
-- [`docs/STAGE_E_GRAPH_INTEGRITY_REPORT.md`](docs/STAGE_E_GRAPH_INTEGRITY_REPORT.md): Stage E Graph Integrity Auditor.
-- [`docs/RESPONSE_RELIABILITY_ANSWER_QUALITY_REPORT.md`](docs/RESPONSE_RELIABILITY_ANSWER_QUALITY_REPORT.md): Response reliability, merger, and citation reports.
 - [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md): Reproduction setup guide.
 - [`docs/SECURITY_VAULT.md`](docs/SECURITY_VAULT.md): Secret quarantine boundaries and typed redaction.
 
