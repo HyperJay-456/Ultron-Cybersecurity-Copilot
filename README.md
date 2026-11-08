@@ -1,32 +1,32 @@
 # Ultron — Autonomous Cybersecurity Intelligence & Analyst Workstation
 ### Local-First, Evidence-Grounded Security Copilot & Full Assessment Platform
 
-[![Python](https://img.shields.io/badge/python-3.11%2B%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/backend%20tests-100%25%20passing-brightgreen.svg)](tests/)
-[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-36%2F36%20passing-brightgreen.svg)](frontend/)
+[![Backend Tests](https://img.shields.io/badge/backend%20tests-124%20passed-brightgreen.svg)](tests/)
+[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-36%20passed-brightgreen.svg)](frontend/)
 [![Security Invariants](https://img.shields.io/badge/security%20invariants-100%25%20enforced%20(35%2F35)-success.svg)](docs/M13_SECURITY.md)
 [![Hardware Target](https://img.shields.io/badge/hardware-Ryzen%205%205600H%20%7C%20RTX%203050%204GB%20%7C%2024GB%20RAM-orange.svg)](#hardware-aware-resource-governance)
 [![Local Inference](https://img.shields.io/badge/inference-Ollama%20(Qwen%202.5%20Coder%203B%2F7B)-purple.svg)](#quickstart--installation)
 
 ---
 
-**Ultron** is an evidence-grounded, local-first, human-in-the-loop cybersecurity research platform and analyst workstation. Designed to operate strictly on consumer hardware without cloud inference, external telemetry, or unconstrained autonomous exploitation, Ultron pairs conversational intelligence with mathematically verified security invariants, structured hypotheses, controlled non-destructive experiments, and a full 12-section Security Assessment Workspace.
+**Ultron** is an evidence-grounded, local-first, human-in-the-loop cybersecurity research platform and professional analyst workstation. Engineered to run strictly on consumer hardware without external cloud APIs, third-party telemetry, or unconstrained autonomous execution, Ultron pairs conversational intelligence with mathematically verified security invariants, structured hypotheses, controlled non-destructive experiments, and an end-to-end 12-section Security Assessment Workspace.
 
 ---
 
 ## Key Highlights
 
-- **Shared Analyst Workstation Shell**: Clean dark workstation aesthetic (charcoal surfaces, deep navy panels, restrained crimson accents, crisp typography) with accessible contrast, responsive drawer layouts, and light/dark theme toggle.
+- **Shared Analyst Workstation Shell**: Crisp dark analyst-workstation aesthetic featuring charcoal surfaces, deep navy panels, restrained crimson accents, high-contrast typography, responsive drawers, and a persistent dark/light theme switcher.
 - **Two Distinct Operating Workspaces**:
-  1. **Copilot Investigations**: Conversational research assistant with multi-turn reasoning, streaming SSE responses, live model attribution, stop/edit-prompt controls, and deduplicated response merging.
+  1. **Copilot Investigations**: Conversational research assistant with multi-turn reasoning, streaming SSE responses, live model attribution, stop/edit-prompt controls, response deduplication, and passive telemetry ingestion.
   2. **Security Assessment Workspace**: Formal, authorized pentesting and bug bounty assessments with strict rules of engagement across 12 dedicated lifecycle tabs.
 - **Global Knowledge Lab & Graph-Assisted RAG**:
-  - Persistent multi-format textbook ingestion (PDF, Markdown, Plain Text) with page-by-page progress reporting.
+  - Persistent multi-format textbook and document ingestion (PDF, Markdown, Plain Text) with page-by-page progress reporting.
   - Native embedded CFF Type 1 font decoding (`fonttools` + `pypdf`) with zero font-decoding warnings.
   - Schema-constrained knowledge graph extraction via local Ollama inference (`qwen2.5-coder:7b` and `3b`), with bounded token budgets and adaptive local timeouts.
-  - Truthful evidence retrieval with verbatim source quotes, real active chunk citations, and explicit labeling for general-model fallback knowledge (`General model knowledge — not verified against ingested sources`). Never fabricates citations or page numbers.
-- **Strict Concurrency & VRAM Governance**: Single-worker inference gate (`InferenceConcurrencyGate`) with priority scheduling (interactive chat preempts background graph extraction), optimized for laptops with 4 GB GPU VRAM.
+  - Truthful evidence retrieval with verbatim source quotes, real active chunk citations, and explicit labeling for general-model fallback knowledge (`General model knowledge — not verified against ingested sources`). Never fabricates citations, sources, or page numbers.
+- **Strict Concurrency & VRAM Governance**: Single-worker inference gate (`InferenceConcurrencyGate`) with priority scheduling (interactive chat preempts background graph extraction), optimized for consumer laptops with 4 GB GPU VRAM.
 
 ---
 
@@ -34,7 +34,12 @@
 
 1. [Architecture & System Overview](#architecture--system-overview)
 2. [Dual Workspace Architecture](#dual-workspace-architecture)
-3. [Knowledge Lab & Graph-Assisted RAG](#knowledge-lab--graph-assisted-rag)
+   - [Copilot Investigations](#1-copilot-investigations)
+   - [Security Assessment Workspace (12 Tabs)](#2-security-assessment-workspace-12-tabs)
+3. [Global Knowledge Lab & Graph RAG](#global-knowledge-lab--graph-rag)
+   - [Textbook Ingestion & CFF Font Support](#textbook-ingestion--cff-font-support)
+   - [Knowledge Graph Extraction](#knowledge-graph-extraction)
+   - [Epistemic Grounding & Citation Validation](#epistemic-grounding--citation-validation)
 4. [Hardware-Aware Resource Governance](#hardware-aware-resource-governance)
 5. [Zero-Tolerance Security Invariants](#zero-tolerance-security-invariants)
 6. [Repository Structure](#repository-structure)
@@ -84,51 +89,71 @@ Copilot Investigations Workspace            Security Assessment Workspace
 
 ## Dual Workspace Architecture
 
-Ultron provides two purpose-built workspaces sharing a unified application shell without merging security contexts or permissions:
+Ultron provides two purpose-built workspaces sharing a unified application shell without merging underlying security contexts or permissions:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             ULTRON ANALYST SHELL                            │
+├───────────────────────┬─────────────────────────────────────────────────────┤
+│  NAVIGATION           │  WORKSPACE VIEW                                     │
+│  ───────────────────  │  ─────────────────────────────────────────────────  │
+│  • Copilot            │  [Investigations View]                              │
+│    Investigations     │  Multi-turn conversational reasoning, streaming      │
+│                       │  responses, stop/edit-prompt controls, traffic intake│
+│  • Security           │  ─────────────────────────────────────────────────  │
+│    Assessment         │  [12-Tab Assessment Cockpit]                        │
+│    Workspace          │  Scope, Attack Surface, Findings, Evidence DAG,     │
+│                       │  Hypotheses, Plane A/B Experiments, Human Review    │
+│  ───────────────────  │  ─────────────────────────────────────────────────  │
+│  • Global Knowledge   │  [Knowledge Lab Drawer]                             │
+│    Lab                │  Corpus management, PDF ingestion, graph extraction │
+└───────────────────────┴─────────────────────────────────────────────────────┘
+```
 
 ### 1. Copilot Investigations
-- **Conversational Security Copilot**: Context-aware multi-turn reasoning with full investigation history.
-- **Progressive Streaming & Real-Time Controls**: Stop generation, inline edit & regenerate prompt, and granular turn regeneration.
-- **Intelligent Response Merger**: Eliminates repetitive conversational boilerplate, normalizes fragmented code fences, and guarantees single-line model attribution (`Model: qwen2.5-coder:7b | Runtime: 0.82s`).
-- **Target Context & Traffic Ingestion**: Ingests HAR captures, Burp logs, PCAPdroid captures, and OpenAPI definitions, separating new observations, duplicates, and out-of-scope traffic.
+- **Conversational Security Copilot**: Context-aware multi-turn reasoning with full investigation session persistence in SQLite.
+- **Progressive Streaming & Real-Time Controls**: Server-Sent Events (SSE) streaming with graceful mid-stream Stop generation and inline Turn Edit & Regenerate controls.
+- **Intelligent Response Merger**: Automatically prunes repetitive conversational boilerplate, normalizes unclosed code fences, and formats single-line model attribution (`Model: qwen2.5-coder:7b | Runtime: 0.82s`).
+- **Telemetry & Traffic Ingestion**: Ingests HTTP traffic from Burp Suite, Reqable, PCAPdroid, and OpenAPI specs, reporting new observations, duplicates, and out-of-scope transactions separately.
 
-### 2. Security Assessment Workspace
+### 2. Security Assessment Workspace (12 Tabs)
 Organized across 12 formal operational lifecycle sections:
 1. **Overview & Lifecycle Dashboard**: Rules of engagement, progress gauges, and real-time activity metrics.
 2. **Authorization & Scope Boundaries**: Cryptographic authorization records, permitted domains, IP ranges, rate limits, and live `ScopeGate` preflight testing.
-3. **Target Asset Inventory**: Criticality ratings, hostnames, IP addresses, APIs, and mobile packages.
-4. **Attack Surface & Endpoints**: HTTP endpoints, HTTP methods, authentication requirements, and parameter inventories.
+3. **Target Asset Inventory**: Interactive inventory of hostnames, IP addresses, APIs, web applications, and mobile packages with criticality ratings.
+4. **Attack Surface & Endpoints**: Discovered HTTP endpoints, methods, authentication requirements, and parameter inventories.
 5. **Cryptographic Artifact Registry**: SHA-256 verified artifact storage, quarantine states, and metadata.
-6. **Research & Prior Art Knowledge**: Vector and BM25 search over MITRE ATT&CK, CWE, OWASP, and textbooks.
-7. **Hypotheses & Security Invariants**: Active security hypotheses with epistemic origin tracking.
+6. **Research & Prior Art Knowledge**: Hybrid vector and BM25 search over MITRE ATT&CK, CWE, OWASP, and textbooks.
+7. **Hypotheses & Security Invariants**: Active security hypotheses with epistemic origin tracking and grounding validation.
 8. **Evidence Lineage Graph & Provenance**: Visual directed acyclic graph (DAG) tracing artifacts to observations and hypotheses.
 9. **Controlled Experiments & Safe PoCs**:
    - *Plane A (Safe Lab)*: Automated deterministic execution against headless sandboxes.
    - *Plane B (Safe PoC)*: Non-destructive, human-guided manual reproduction steps with rollback templates.
 10. **Findings Review & 13-Point Checklist**: Authoritative human verification modal enforcing all 13 verification criteria.
 11. **Executive & Technical Reporting**: Export engine generating executive summaries, compliance matrices, and markdown reports.
-12. **Memory, Knowledge & Audit Timeline**: Multi-tier research memory (episodic, semantic, procedural) with an immutable audit log.
+12. **Memory, Knowledge & Audit Timeline**: Multi-tier research memory (episodic, semantic, procedural) with an immutable cryptographic audit log.
 
 ---
 
-## Knowledge Lab & Graph-Assisted RAG
+## Global Knowledge Lab & Graph RAG
 
-### Ingestion Pipeline
+### Textbook Ingestion & CFF Font Support
 - Supports PDF, Markdown, and Plain Text files up to 100 MB.
-- Embedded CFF Type 1 fonts (e.g. MinionPro-Regular) are decoded via `fonttools`, preserving complete character mapping.
+- Embedded CFF Type 1 fonts (such as MinionPro-Regular commonly used in security books) are decoded via `fonttools` + `pypdf`, preserving complete glyph mapping with zero font-decoding warnings.
 - Background persistent ingestion jobs with FIFO queueing, crash recovery, and cancellation support.
 
 ### Knowledge Graph Extraction
 - Local extraction using Ollama (`qwen2.5-coder:7b` or `qwen2.5-coder:3b`).
 - Schema-constrained JSON decoding extracting entities and relationships with exact supporting quotes.
 - Workload-bounded generation (`num_predict=700`) with adaptive timeouts (60s for 3B, 120s for 7B).
-- Bounded 3-retry handling: failed chunks are recorded in the ledger and can be retried independently without affecting successful extractions or document ingestion status.
+- Bounded 3-retry handling: failed chunks are recorded in the ledger and can be retried independently without affecting successful extractions or document ingestion status (`INDEXED`).
+- Graph integrity auditor detecting orphaned edges, ungrounded citations, and lifecycle staleness.
 
-### Epistemic Grounding & Fallback
+### Epistemic Grounding & Citation Validation
 - Answers are verified against ingested corpus chunks first.
 - If corpus evidence is insufficient, local model responses are explicitly disclaimed:
   > *General model knowledge — not verified against ingested sources*
-- Fabricated citations and synthetic page numbers are structurally prohibited.
+- Fabricated citations, hallucinated document IDs, and synthetic page numbers are structurally rejected.
 
 ---
 
@@ -216,7 +241,7 @@ Ultron - Cybersecurity Copilot/
 ### 2. Environment Setup
 ```powershell
 # Clone the repository
-git clone https://github.com/HyperJay-456/Bug-Bounty-AI.git
+git clone https://github.com/HyperJay-456/Ultron-Cybersecurity-Copilot.git
 cd "Ultron - Cybersecurity Copilot"
 
 # Create and activate virtual environment
@@ -258,14 +283,15 @@ Open your browser at `http://127.0.0.1:5173`.
 
 ### Backend Unit & Integration Tests
 ```powershell
-# Run all knowledge, graph, and response reliability unit tests
+# Run all knowledge, graph, and response reliability unit tests (124 tests)
 pytest tests/unit/test_persistent_ingestion_jobs.py \
        tests/unit/test_owasp_remediation.py \
        tests/unit/test_response_reliability.py \
        tests/unit/test_knowledge_parsers.py \
        tests/unit/test_knowledge_graph_extraction.py \
        tests/unit/test_knowledge_graph_retrieval.py \
-       tests/unit/test_knowledge_graph_auditor.py -v
+       tests/unit/test_knowledge_graph_auditor.py \
+       tests/unit/test_evaluation_isolation.py -v
 
 # Run the formal security invariant verification suite (35 invariants)
 pytest tests/unit/test_m13_security_invariants.py -v
@@ -288,6 +314,10 @@ All technical reports, architecture specifications, and decision records are cen
 - [`docs/M13_SECURITY.md`](docs/M13_SECURITY.md): Formal proof of all 35 security invariants.
 - [`docs/UI_AND_KNOWLEDGE_QA_REMEDIATION_REPORT.md`](docs/UI_AND_KNOWLEDGE_QA_REMEDIATION_REPORT.md): UI and Knowledge Q&A remediation log.
 - [`docs/ULTRON_FINAL_ACCEPTANCE_AUDIT_REPORT.md`](docs/ULTRON_FINAL_ACCEPTANCE_AUDIT_REPORT.md): Final acceptance audit and verification evidence.
+- [`docs/STAGE_C_LOCAL_AI_KNOWLEDGE_GRAPH_REPORT.md`](docs/STAGE_C_LOCAL_AI_KNOWLEDGE_GRAPH_REPORT.md): Stage C Local AI Knowledge Graph Extraction.
+- [`docs/STAGE_D_GRAPH_ASSISTED_RAG_REPORT.md`](docs/STAGE_D_GRAPH_ASSISTED_RAG_REPORT.md): Stage D Graph-Assisted RAG & Retrieval.
+- [`docs/STAGE_E_GRAPH_INTEGRITY_REPORT.md`](docs/STAGE_E_GRAPH_INTEGRITY_REPORT.md): Stage E Graph Integrity Auditor.
+- [`docs/RESPONSE_RELIABILITY_ANSWER_QUALITY_REPORT.md`](docs/RESPONSE_RELIABILITY_ANSWER_QUALITY_REPORT.md): Response reliability, merger, and citation reports.
 - [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md): Reproduction setup guide.
 - [`docs/SECURITY_VAULT.md`](docs/SECURITY_VAULT.md): Secret quarantine boundaries and typed redaction.
 
